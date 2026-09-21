@@ -1,0 +1,107 @@
+name: AEM Automatic GitHub Builder
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "*/5 * * * *"
+permissions:
+  contents: read
+jobs:
+  build-queue:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Claim queued build
+        id: claim
+        shell: bash
+        env:
+          SUPABASE_URL: https://wfvvmyixqcwosmuldxoq.supabase.co
+          SUPABASE_KEY: sb_publishable_Imgtr_W_Z868cBsNEcWpeg_89FE2Mvb
+        run: |
+          set -euo pipefail
+          rows="$(curl -fsS "$SUPABASE_URL/rest/v1/build_requests?select=*&status=eq.queued&order=created_at.asc&limit=1" -H "apikey: $SUPABASE_KEY" -H "Authorization: Bearer $SUPABASE_KEY")"
+          if [ "$(jq 'length' <<<"$rows")" = "0" ]; then echo "found=false" >> "$GITHUB_OUTPUT"; exit 0; fi
+          id="$(jq -r '.[0].id' <<<"$rows")"
+          repo="$(jq -r '.[0].repository' <<<"$rows")"
+          ref="$(jq -r '.[0].ref' <<<"$rows")"
+          module="$(jq -r '.[0].module // empty' <<<"$rows")"
+          variant="$(jq -r '.[0].variant // "debug"' <<<"$rows")"
+          channel="$(jq -r '.[0].channel // "development"' <<<"$rows")"
+          curl -fsS -X PATCH "$SUPABASE_URL/rest/v1/build_requests?id=eq.$id" -H "apikey: $SUPABASE_KEY" -H "Authorization: Bearer $SUPABASE_KEY" -H "Content-Type: application/json" --data "{\"status\":\"running\",\"updated_at\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}"
+          for x in id repo ref module variant channel; do echo "$x=$(eval echo \\\$$x)" >> "$GITHUB_OUTPUT"; done
+          echo "found=true" >> "$GITHUB_OUTPUT"
+      - name: Checkout requested repository
+        if: steps.claim.outputs.found == 'true'
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ steps.claim.outputs.repo }}
+          ref: ${{ steps.claim.outputs.ref }}
+          path: source
+      - name: Set up Java
+        if: steps.claim.outputs.found == 'true'
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - name: Set up Gradle
+        if: steps.claim.outputs.found == 'true'
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.10.2"
+      - name: Build APK
+        if: steps.claim.outputs.found == 'true'
+        id: build
+        working-directory: source
+        env:
+          MODULE: ${{ steps.claim.outputs.module }}
+          VARIANT: ${{ steps.claim.outputs.variant }}
+        run: |
+          set -euo pipefail
+          v="$(tr '[:lower:]' '[:upper:]' <<<"${VARIANT:0:1}")${VARIANT:1}"
+          if [ -n "$MODULE" ]; then task=":$MODULE:assemble$v"; else task="assemble$v"; fi
+          if [ -x "./gradlew" ]; then ./gradlew "$task"; else gradle "$task"; fi
+          apk="$(find . -type f -path "*/build/outputs/apk/*.apk" | head -n 1)"
+          test -n "$apk"
+          echo "apk=$apk" >> "$GITHUB_OUTPUT"
+      - name: Publish APK to AEM
+        if: steps.claim.outputs.found == 'true'
+        env:
+          SUPABASE_URL: https://wfvvmyixqcwosmuldxoq.supabase.co
+          SUPABASE_KEY: sb_publishable_Imgtr_W_Z868cBsNEcWpeg_89FE2Mvb
+          REQUEST_ID: ${{ steps.claim.outputs.id }}
+          REPO: ${{ steps.claim.outputs.repo }}
+          REF: ${{ steps.claim.outputs.ref }}
+          CHANNEL: ${{ steps.claim.outputs.channel }}
+          APK: source/${{ steps.build.outputs.apk }}
+        run: |
+          set -euo pipefail
+          badging="$(aapt dump badging "$APK" | head -n 1)"
+          package="$(sed -n "s/.*package: name='\\([^']*\\)'.*/\\1/p" <<<"$badging")"
+          version_code="$(sed -n "s/.*versionCode='\\([^']*\\)'.*/\\1/p" <<<"$badging")"
+          version_name="$(sed -n "s/.*versionName='\\([^']*\\)'.*/\\1/p" <<<"$badging")"
+          filename="$(basename "$APK")"
+          size="$(stat -c%s "$APK")"
+          sha="$(sha256sum "$APK" | cut -d' ' -f1)"
+          test -n "$package"
+          test -n "$version_name"
+          app="$(curl -fsS "$SUPABASE_URL/rest/v1/applications?select=id&provider=eq.github&project=eq.$(python3 -c 'import os,urllib.parse; print(urllib.parse.quote(os.environ["REPO"],safe=""))')" -H "apikey: $SUPABASE_KEY" -H "Authorization: Bearer $SUPABASE_KEY")"
+          app_id="$(jq -r '.[0].id // empty' <<<"$app")"
+          if [ -z "$app_id" ]; then
+            created="$(curl -fsS -X POST "$SUPABASE_URL/rest/v1/applications" -H "apikey: $SUPABASE_KEY" -H "Authorization: Bearer $SUPABASE_KEY" -H "Content-Type: application/json" -H "Prefer: return=representation" --data "$(jq -nc --arg p "$REPO" --arg n "$${REPO##*/}" --arg pkg "$package" --arg url "https://github.com/$REPO" '{provider:"github",project:$p,name:$n,package_identity:$pkg,source_url:$url,platforms:["android"],category:"Other"}')")"
+            app_id="$(jq -r '.[0].id' <<<"$created")"
+          fi
+          release_json="$(curl -fsS -X POST "$SUPABASE_URL/rest/v1/releases" -H "apikey: $SUPABASE_KEY" -H "Authorization: Bearer $SUPABASE_KEY" -H "Content-Type: application/json" -H "Prefer: return=representation" --data "$(jq -nc --argjson aid "$app_id" --arg sid "aem-build-$REQUEST_ID" --arg vn "$version_name" --argjson vc "$version_code" --arg ch "$CHANNEL" --arg ref "$REF" '{application_id:$aid,source_release_id:$sid,version_name:$vn,version_code:$vc,channel:$ch,status:"published",title:("AEM build · "+$ref),published_at:(now|todate)}')")"
+          release_id="$(jq -r '.[0].id' <<<"$release_json")"
+          path="$REPO/$version_name/$filename"
+          curl -fsS -X POST "$SUPABASE_URL/storage/v1/object/aem-artifacts/$path" -H "apikey: $SUPABASE_KEY" -H "Authorization: Bearer $SUPABASE_KEY" -H "Content-Type: application/vnd.android.package-archive" -H "x-upsert: true" --data-binary @"$APK" >/dev/null
+          public_url="$SUPABASE_URL/storage/v1/object/public/aem-artifacts/$path"
+          artifact_json="$(curl -fsS -X POST "$SUPABASE_URL/rest/v1/artifacts" -H "apikey: $SUPABASE_KEY" -H "Authorization: Bearer $SUPABASE_KEY" -H "Content-Type: application/json" -H "Prefer: return=representation" --data "$(jq -nc --argjson rid "$release_id" --arg url "$public_url" --arg fn "$filename" --arg sha "$sha" --arg pkg "$package" --argjson size "$size" --argjson vc "$version_code" '{release_id:$rid,platform:"android",kind:"apk",filename:$fn,download_url:$url,size_bytes:$size,sha256:$sha,package_identity:$pkg,version_code:$vc}')")"
+          artifact_id="$(jq -r '.[0].id' <<<"$artifact_json")"
+          curl -fsS -X PATCH "$SUPABASE_URL/rest/v1/build_requests?id=eq.$REQUEST_ID" -H "apikey: $SUPABASE_KEY" -H "Authorization: Bearer $SUPABASE_KEY" -H "Content-Type: application/json" --data "$(jq -nc --argjson rid "$release_id" --argjson aid "$artifact_id" '{status:"succeeded",release_id:$rid,artifact_id:$aid,updated_at:(now|todate)}')"
+      - name: Mark failed
+        if: failure() && steps.claim.outputs.found == 'true'
+        env:
+          SUPABASE_URL: https://wfvvmyixqcwosmuldxoq.supabase.co
+          SUPABASE_KEY: sb_publishable_Imgtr_W_Z868cBsNEcWpeg_89FE2Mvb
+          REQUEST_ID: ${{ steps.claim.outputs.id }}
+        run: |
+          curl -fsS -X PATCH "$SUPABASE_URL/rest/v1/build_requests?id=eq.$REQUEST_ID" -H "apikey: $SUPABASE_KEY" -H "Authorization: Bearer $SUPABASE_KEY" -H "Content-Type: application/json" --data '{"status":"failed","error":"Build or publication failed","updated_at":"'"$(date -u +%Y-%m-%dT%H:%M:%SZ)"'"}'
