@@ -30,7 +30,7 @@ jobs:
       - run: npx --yes @capacitor/cli@7 copy android
       - name: Stamp CI version
         env:
-          RUN_NUMBER: \${{ github.run_number }}
+          RUN_NUMBER: ${{ github.run_number }}
         run: |
           set -euo pipefail
           python3 - <<'PY'
