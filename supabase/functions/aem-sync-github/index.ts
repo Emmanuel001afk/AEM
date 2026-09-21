@@ -70,7 +70,6 @@ Deno.serve(async (req) => {
   try {
     const body = req.method === "POST" ? await req.json().catch(() => ({})) : {};
     const token = (req.headers.get("x-github-token") || Deno.env.get("GITHUB_TOKEN") || "").trim();
-    const requestedOwner = String(body.owner || "Emmanuel001afk").trim();
 
     if (!token) {
       return json({
@@ -87,10 +86,6 @@ Deno.serve(async (req) => {
 
     const who = await ghJson(`${GH}/user`, gh);
     const owner = String(who.login || "");
-    if (requestedOwner && owner.toLowerCase() !== requestedOwner.toLowerCase()) {
-      return json({ error: `Authenticated GitHub account is ${owner}, not ${requestedOwner}` }, 403);
-    }
-
     const sb = adminClient();
     await sb.from("source_sync_state").upsert({
       provider: "github",
@@ -107,7 +102,7 @@ Deno.serve(async (req) => {
         gh
       );
       if (!Array.isArray(rows) || rows.length === 0) break;
-      repos.push(...rows.filter((r: any) => String(r.full_name).toLowerCase().startsWith(owner.toLowerCase() + "/")));
+      repos.push(...rows);
       if (rows.length < 100) break;
     }
 
