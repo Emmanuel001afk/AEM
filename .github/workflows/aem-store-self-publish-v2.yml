@@ -26,13 +26,26 @@ jobs:
       - name: Publish through AEM Supabase gateway
         env:
           APK: release/app-debug.apk
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
           SUPABASE_KEY="$(sed -n 's/.*DEFAULT_PUBLISHABLE_KEY="\([^"]*\)".*/\1/p' src/services/supabase/client.ts)"
           AAPT="$(find "${ANDROID_HOME:-/opt/android-sdk}" -type f -name aapt | sort -V | tail -n 1)"
           badging="$("$AAPT" dump badging "$APK" | head -n 1)"
-          package="$(sed -n "s/.*package: name='\([^']*\)'.*/\1/p" <<<"$badging")"
-          version_code="$(sed -n "s/.*versionCode='\([^']*\)'.*/\1/p" <<<"$badging")"
-          version_name="$(sed -n "s/.*versionName='\([^']*\)'.*/\1/p" <<<"$badging")"
-          curl -fsS -X POST "https://wfvvmyixqcwosmuldxoq.supabase.co/functions/v1/aem-publish-github-artifact"             -H "apikey: $SUPABASE_KEY" -H "Content-Type: application/json" -H "x-github-token: $GH_TOKEN"             --data "$(jq -nc --arg repo "Emmanuel001afk/AEM" --argjson run_id "${{ github.event.workflow_run.id }}" --arg artifact_name "aem-store-debug-apk-final" --arg project "Emmanuel001afk/AEM" --arg vn "$version_name" --argjson vc "$version_code" --arg pkg "$package" --arg app_name "$app_name" '{repo:$repo,run_id:$run_id,artifact_name:$artifact_name,app_project:$project,application_name:$app_name,version_name:$vn,version_code:$vc,package_identity:$pkg,channel:"development",title:"AEM Store APK"}')"
+          package="$(sed -n "s/.*package: name='\\([^\']*\\)'.*/\\1/p" <<<"$badging")"
+          version_code="$(sed -n "s/.*versionCode='\\([^\']*\\)'.*/\\1/p" <<<"$badging")"
+          version_name="$(sed -n "s/.*versionName='\\([^\']*\\)'.*/\\1/p" <<<"$badging")"
+          app_name="$(sed -n "s/.*application-label='\\([^\']*\\)'.*/\\1/p" <<<"$badging")"
+          curl -fsS --data-binary "@$APK" "https://wfvvmyixqcwosmuldxoq.supabase.co/functions/v1/aem-publish-github-artifact" \
+            -H "apikey: $SUPABASE_KEY" \
+            -H "Authorization: Bearer $SUPABASE_KEY" \
+            -H "Content-Type: application/vnd.android.package-archive" \
+            -H "x-aem-repo: Emmanuel001afk/AEM" \
+            -H "x-aem-run-id: ${{ github.event.workflow_run.id }}" \
+            -H "x-aem-filename: $(basename "$APK")" \
+            -H "x-aem-app-name: $app_name" \
+            -H "x-aem-version-name: $version_name" \
+            -H "x-aem-version-code: $version_code" \
+            -H "x-aem-channel: development" \
+            -H "x-aem-package: $package" \
+            -H "x-aem-title: AEM Store APK" \
+            -H "x-aem-source-release-id: github-actions-${{ github.event.workflow_run.id }}"
