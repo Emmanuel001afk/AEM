@@ -10,6 +10,12 @@ import android.os.Bundle
 import android.os.Build
 import android.os.Environment
 import android.provider.Settings
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import org.json.JSONArray
+import org.json.JSONObject
+import java.net.HttpURLConnection
+import java.net.URL
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.core.content.FileProvider
@@ -36,6 +42,50 @@ private data class StoreApp(
     val functionality:List<String>,val permissions:List<String>,val platform:String,
     val packageName:String?,val downloadUrl:String?,val versionCode:Long?=null
 )
+
+private const val AEM_SUPABASE_URL="https://wfvvmyixqcwosmuldxoq.supabase.co"
+private const val AEM_SUPABASE_KEY="sb_publishable_Imgtr_W_Z868cBsNEcWpeg_89FE2Mvb"
+
+private suspend fun loadRemoteApps():List<StoreApp> = withContext(Dispatchers.IO) {
+    val url=URL(AEM_SUPABASE_URL+"/rest/v1/applications?select=*,releases(*,artifacts(*))&order=name.asc")
+    val conn=url.openConnection() as HttpURLConnection
+    conn.setRequestProperty("apikey",AEM_SUPABASE_KEY)
+    conn.setRequestProperty("Authorization","Bearer "+AEM_SUPABASE_KEY)
+    conn.connectTimeout=10000
+    conn.readTimeout=15000
+    try {
+        if(conn.responseCode !in 200..299) return@withContext emptyList()
+        val body=conn.inputStream.bufferedReader().use{it.readText()}
+        val rows=JSONArray(body)
+        buildList {
+            for(i in 0 until rows.length()){
+                val a=rows.getJSONObject(i)
+                val releases=a.optJSONArray("releases") ?: JSONArray()
+                var best:JSONObject?=null
+                var bestTime=Long.MIN_VALUE
+                for(j in 0 until releases.length()){
+                    val r=releases.getJSONObject(j)
+                    if(r.optString("status")!="published") continue
+                    val arts=r.optJSONArray("artifacts") ?: JSONArray()
+                    var hasApk=false
+                    for(k in 0 until arts.length()) if(arts.getJSONObject(k).optString("kind")=="apk") hasApk=true
+                    val t=try{java.time.Instant.parse(r.optString("published_at")).toEpochMilli()}catch(_:Exception){0L}
+                    if(hasApk && t>=bestTime){best=r;bestTime=t}
+                }
+                val r=best ?: continue
+                val arts=r.optJSONArray("artifacts") ?: JSONArray()
+                var apk:JSONObject?=null
+                for(k in 0 until arts.length()) if(arts.getJSONObject(k).optString("kind")=="apk"){apk=arts.getJSONObject(k);break}
+                val z=apk ?: continue
+                add(StoreApp(a.optString("name"),a.optString("description"),a.optString("category","Other"),
+                    "GitHub · "+a.optString("project"),listOf("Android APK","Automatic GitHub build"),
+                    emptyList(),"Android",a.optString("package_identity").takeIf{it.isNotBlank()},
+                    z.optString("download_url").takeIf{it.isNotBlank()},
+                    z.optLong("version_code").takeIf{z.has("version_code") && !z.isNull("version_code")}))
+            }
+        }
+    } finally { conn.disconnect() }
+}
 
 private fun installedState(context:Context, app:StoreApp):String {
     val pkg=app.packageName ?: return "INSTALL"
@@ -120,14 +170,13 @@ private fun AemApp(onDownload:(StoreApp)->Unit,onOpen:(StoreApp)->Unit) {
     var dark by remember { mutableStateOf(true) }
     var query by remember { mutableStateOf("") }
     var selectedApp by remember { mutableStateOf<StoreApp?>(null) }
-    val apps=remember { listOf(
+    var apps by remember { mutableStateOf(listOf(
         StoreApp("Phormi","Private Android browser partner for AEM.","Browsers","GitHub · phormi-android",
-            listOf("Web browsing","Downloads","AI/API integration"),listOf("Internet"),"Android","com.uong.phormi",
-            "https://github.com/Emmanuel001afk/phormi-android/releases/latest"),
+            listOf("Web browsing","Downloads","AI/API integration"),listOf("Internet"),"Android","com.uong.phormi",null),
         StoreApp("Lite Read","PDF and document platform.","Productivity","GitHub · lite-read",
-            listOf("PDF reading","Document handling"),emptyList(),"Android + Web",null,
-            "https://github.com/Emmanuel001afk/lite-read/releases/latest")
-    )}
+            listOf("PDF reading","Document handling"),emptyList(),"Android + Web",null,null)
+    ))}
+    LaunchedEffect(Unit) { try { val remote=loadRemoteApps(); if(remote.isNotEmpty()) apps=remote } catch(_:Exception) {} }
     val visible=apps.filter { query.isBlank() || listOf(it.name,it.description,it.category,it.source,*it.functionality).joinToString(" ").contains(query,true) }
     val scheme=if(dark) darkColorScheme(primary=Color(0xFFF04444),background=Color(0xFF09090C),surface=Color(0xFF15151B),surfaceVariant=Color(0xFF202027)) else lightColorScheme(primary=Color(0xFFC92F35))
     MaterialTheme(colorScheme=scheme) {
