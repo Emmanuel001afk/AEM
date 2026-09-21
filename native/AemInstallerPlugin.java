@@ -7,6 +7,7 @@ import android.net.Uri;
 import android.os.Build;
 import android.provider.Settings;
 import com.getcapacitor.JSObject;
+import com.getcapacitor.JSArray;
 import com.getcapacitor.Plugin;
 import com.getcapacitor.PluginCall;
 import com.getcapacitor.PluginMethod;
@@ -21,6 +22,21 @@ import java.util.zip.ZipInputStream;
 @CapacitorPlugin(name="AemInstaller")
 public class AemInstallerPlugin extends Plugin {
     private static final int INSTALL_RESULT = 7412;
+
+    @PluginMethod
+    public void getInstalledVersions(PluginCall call) {
+        JSArray apps = new JSArray();
+        for (android.content.pm.PackageInfo p : getContext().getPackageManager().getInstalledPackages(0)) {
+            JSObject item = new JSObject();
+            item.put("packageName", p.packageName);
+            item.put("versionName", p.versionName == null ? "" : p.versionName);
+            item.put("versionCode", android.os.Build.VERSION.SDK_INT >= 28 ? p.getLongVersionCode() : p.versionCode);
+            apps.put(item);
+        }
+        JSObject out = new JSObject();
+        out.put("apps", apps);
+        call.resolve(out);
+    }
 
     @PluginMethod
     public void getInstallCapability(PluginCall call) {
