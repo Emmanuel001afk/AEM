@@ -131,6 +131,7 @@ jobs:
           package="$(sed -n "s/.*package: name='\\([^']*\\)'.*/\\1/p" <<<"$badging")"
           version_code="$(sed -n "s/.*versionCode='\\([^']*\\)'.*/\\1/p" <<<"$badging")"
           version_name="$(sed -n "s/.*versionName='\\([^']*\\)'.*/\\1/p" <<<"$badging")"
+          app_name="$(sed -n "s/.*application-label=\x27\\([^\x27]*\\).*/\\1/p" <<<"$badging")"
           test -n "$package"
           test -n "$version_name"
           curl -fsS -X POST "$SUPABASE_URL/functions/v1/aem-publish-github-artifact" \
