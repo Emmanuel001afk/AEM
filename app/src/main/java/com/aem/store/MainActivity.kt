@@ -5,6 +5,7 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Bundle
 import android.os.Build
@@ -16,6 +17,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
+import java.security.MessageDigest
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.core.content.FileProvider
@@ -41,7 +43,7 @@ import androidx.compose.ui.platform.LocalContext
 private data class StoreApp(
     val name:String,val description:String,val category:String,val source:String,
     val functionality:List<String>,val permissions:List<String>,val platform:String,
-    val packageName:String?,val downloadUrl:String?,val versionCode:Long?=null
+    val packageName:String?,val downloadUrl:String?,val versionCode:Long?=null,val signingCertificateSha256:String?=null
 )
 
 private const val AEM_SUPABASE_URL="https://wfvvmyixqcwosmuldxoq.supabase.co"
@@ -82,10 +84,19 @@ private suspend fun loadRemoteApps():List<StoreApp> = withContext(Dispatchers.IO
                     "GitHub · "+a.optString("project"),listOf("Android APK","Automatic GitHub build"),
                     emptyList(),"Android",a.optString("package_identity").takeIf{it.isNotBlank()},
                     z.optString("download_url").takeIf{it.isNotBlank()},
-                    z.optLong("version_code").takeIf{z.has("version_code") && !z.isNull("version_code")}))
+                    z.optLong("version_code").takeIf{z.has("version_code") && !z.isNull("version_code")},
+                    z.optString("signing_certificate_sha256").takeIf{it.isNotBlank()}))
             }
         }
     } finally { conn.disconnect() }
+}
+
+private fun installedSigningSha256(context:Context,pkg:String):String? {
+    return try {
+        val info=context.packageManager.getPackageInfo(pkg,PackageManager.GET_SIGNING_CERTIFICATES)
+        val signatures=if(Build.VERSION.SDK_INT>=28) info.signingInfo.apkContentsSigners else info.signatures
+        signatures.firstOrNull()?.let { MessageDigest.getInstance("SHA-256").digest(it.toByteArray()).joinToString("") { b->"%02x".format(b) } }
+    } catch(_:Exception) { null }
 }
 
 private fun installedState(context:Context, app:StoreApp):String {
@@ -93,6 +104,10 @@ private fun installedState(context:Context, app:StoreApp):String {
     return try {
         val info=context.packageManager.getPackageInfo(pkg,0)
         val installed=if(Build.VERSION.SDK_INT>=28) info.longVersionCode else info.versionCode.toLong()
+        if(app.signingCertificateSha256!=null) {
+            val actual=installedSigningSha256(context,pkg)
+            if(actual!=null && !actual.equals(app.signingCertificateSha256,true)) return "INCOMPATIBLE"
+        }
         when {
             app.versionCode!=null && installed<app.versionCode -> "UPDATE"
             app.versionCode!=null && installed>app.versionCode -> "CURRENT"
