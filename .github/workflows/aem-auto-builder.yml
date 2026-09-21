@@ -75,7 +75,7 @@ jobs:
           APK: source/${{ steps.build.outputs.apk }}
         run: |
           set -euo pipefail
-          badging="$(aapt dump badging "$APK" | head -n 1)"
+          AAPT="$(find "${ANDROID_HOME:-/opt/android-sdk}" -type f -name aapt | sort -V | tail -n 1)"; test -n "$AAPT"; badging="$("$AAPT" dump badging "$APK" | head -n 1)"
           package="$(sed -n "s/.*package: name='\\([^']*\\)'.*/\\1/p" <<<"$badging")"
           version_code="$(sed -n "s/.*versionCode='\\([^']*\\)'.*/\\1/p" <<<"$badging")"
           version_name="$(sed -n "s/.*versionName='\\([^']*\\)'.*/\\1/p" <<<"$badging")"
@@ -87,7 +87,7 @@ jobs:
           app="$(curl -fsS "$SUPABASE_URL/rest/v1/applications?select=id&provider=eq.github&project=eq.$(python3 -c 'import os,urllib.parse; print(urllib.parse.quote(os.environ["REPO"],safe=""))')" -H "apikey: $SUPABASE_KEY" -H "Authorization: Bearer $SUPABASE_KEY")"
           app_id="$(jq -r '.[0].id // empty' <<<"$app")"
           if [ -z "$app_id" ]; then
-            created="$(curl -fsS -X POST "$SUPABASE_URL/rest/v1/applications" -H "apikey: $SUPABASE_KEY" -H "Authorization: Bearer $SUPABASE_KEY" -H "Content-Type: application/json" -H "Prefer: return=representation" --data "$(jq -nc --arg p "$REPO" --arg n "$${REPO##*/}" --arg pkg "$package" --arg url "https://github.com/$REPO" '{provider:"github",project:$p,name:$n,package_identity:$pkg,source_url:$url,platforms:["android"],category:"Other"}')")"
+            created="$(curl -fsS -X POST "$SUPABASE_URL/rest/v1/applications" -H "apikey: $SUPABASE_KEY" -H "Authorization: Bearer $SUPABASE_KEY" -H "Content-Type: application/json" -H "Prefer: return=representation" --data "$(jq -nc --arg p "$REPO" --arg n "${REPO##*/}" --arg pkg "$package" --arg url "https://github.com/$REPO" '{provider:"github",project:$p,name:$n,package_identity:$pkg,source_url:$url,platforms:["android"],category:"Other"}')")"
             app_id="$(jq -r '.[0].id' <<<"$created")"
           fi
           release_json="$(curl -fsS -X POST "$SUPABASE_URL/rest/v1/releases" -H "apikey: $SUPABASE_KEY" -H "Authorization: Bearer $SUPABASE_KEY" -H "Content-Type: application/json" -H "Prefer: return=representation" --data "$(jq -nc --argjson aid "$app_id" --arg sid "aem-build-$REQUEST_ID" --arg vn "$version_name" --argjson vc "$version_code" --arg ch "$CHANNEL" --arg ref "$REF" '{application_id:$aid,source_release_id:$sid,version_name:$vn,version_code:$vc,channel:$ch,status:"published",title:("AEM build · "+$ref),published_at:(now|todate)}')")"
