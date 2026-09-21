@@ -14,3 +14,7 @@ GitHub is the first source provider. Public repositories can be discovered witho
 AEM can queue an Android build from a GitHub repository. The automatic builder runs on GitHub Actions, checks out the requested ref, detects the requested Gradle variant/module, builds an APK, extracts package/version metadata, uploads the APK to the AEM Supabase artifact bucket, and creates the corresponding application, release, and artifact records. The Store reads published artifacts and uses the stored APK URL for installation. GitHub Actions supports scheduled workflows at intervals as short as five minutes, and its workflow artifacts/API can persist and retrieve build outputs. citeturn1search0turn0search0
 
 For arbitrary public repositories, AEM attempts the build automatically. A repository still has to be a buildable Android project and may require project-specific dependencies, secrets, signing configuration, or a different Java/Gradle setup. Private repositories require appropriate GitHub credentials/permissions; AEM does not bypass GitHub access controls.
+
+
+### Source-driven catalog
+The Store catalog is provider-backed. GitHub is the current provider, with private/public repository discovery, APK-family artifact publication, durable AEM Storage copies, and server-side source credentials.
