@@ -157,7 +157,7 @@ jobs:
         env:
           SUPABASE_URL: https://wfvvmyixqcwosmuldxoq.supabase.co
           SUPABASE_KEY: sb_publishable_Imgtr_W_Z868cBsNEcWpeg_89FE2Mvb
-          REQUEST_ID: \${{ steps.claim.outputs.id }}
+          REQUEST_ID: ${{ steps.claim.outputs.id }}
         run: |
           curl -fsS -X PATCH "$SUPABASE_URL/rest/v1/build_requests?id=eq.$REQUEST_ID" \
             -H "apikey: $SUPABASE_KEY" \
