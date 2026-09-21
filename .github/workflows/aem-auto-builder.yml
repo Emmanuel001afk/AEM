@@ -1,5 +1,6 @@
 name: AEM Automatic GitHub Builder
 on:
+  push:
   workflow_dispatch:
   schedule:
     - cron: "*/5 * * * *"
