@@ -38,4 +38,15 @@ if "InstallResultReceiver" not in s:
         1,
     )
 
+if 'android:icon="@mipmap/ic_launcher"' not in s:
+    s = re.sub(r'<application\\b([^>]*?)>', r'<application\\1 android:icon="@mipmap/ic_launcher" android:roundIcon="@mipmap/ic_launcher_round">', s, count=1)
+
+if "aem_file_paths" not in s:
+    authority = "${applicationId}.fileprovider"
+    s = s.replace(
+        "</application>",
+        '    <provider android:name="androidx.core.content.FileProvider" android:authorities="' + authority + '" android:exported="false" android:grantUriPermissions="true">\n        <meta-data android:name="android.support.FILE_PROVIDER_PATHS" android:resource="@xml/aem_file_paths" />\n    </provider>\n</application>',
+        1,
+    )
+
 p.write_text(s)
