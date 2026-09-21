@@ -16,7 +16,7 @@ jobs:
       - name: Discover accessible repositories
         shell: bash
         env:
-          GH_TOKEN: ${{ secrets.AEM_GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.APK_STORE_TOKEN }}
           SUPABASE_URL: https://wfvvmyixqcwosmuldxoq.supabase.co
           SUPABASE_KEY: sb_publishable_Imgtr_W_Z868cBsNEcWpeg_89FE2Mvb
         run: |
