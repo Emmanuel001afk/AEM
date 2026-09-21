@@ -16,4 +16,5 @@ jobs:
       - uses: actions/setup-java@v4
         with: { distribution: temurin, java-version: '17' }
       - uses: gradle/actions/setup-gradle@v4
-      - run: ./gradlew :app:assembleDebug
+        with: { gradle-version: '8.10.2' }
+      - run: gradle :app:assembleDebug
