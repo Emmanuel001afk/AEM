@@ -1,4 +1,5 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
+import JSZip from "npm:jszip@3.10.1";
 
 const cors = {
   "Access-Control-Allow-Origin": "*",
@@ -61,6 +62,94 @@ async function ghJson(url: string, headers: Record<string, string>) {
 async function sha256(bytes: Uint8Array) {
   const digest = await crypto.subtle.digest("SHA-256", bytes);
   return Array.from(new Uint8Array(digest)).map((x) => x.toString(16).padStart(2, "0")).join("");
+}
+
+async function syncWorkflowArtifacts(full: string, gh: Record<string, string>, app: any, sb: any) {
+  let discovered = 0;
+  const runsResponse = await fetch(
+    `${GH}/repos/${full}/actions/runs?status=success&per_page=10`,
+    { headers: gh }
+  );
+  if (!runsResponse.ok) return 0;
+  const runsBody = await runsResponse.json();
+  for (const run of (runsBody.workflow_runs || []).slice(0, 10)) {
+    const existingRun = await sb.from("releases").select("id").eq("application_id", app.id).eq("source_release_id", `github-actions-${run.id}`).maybeSingle();
+    if (existingRun.data) continue;
+
+    const artifactsResponse = await fetch(
+      `${GH}/repos/${full}/actions/runs/${run.id}/artifacts?per_page=50&direction=desc`,
+      { headers: gh }
+    );
+    if (!artifactsResponse.ok) continue;
+    const artifactsBody = await artifactsResponse.json();
+
+    for (const workflowArtifact of (artifactsBody.artifacts || [])) {
+      if (workflowArtifact.expired) continue;
+      const artifactName = String(workflowArtifact.name || "");
+      if (!/(apk|android|build|release)/i.test(artifactName)) continue;
+
+      const sourceReleaseId = `github-actions-artifact-${workflowArtifact.id}`;
+      const existing = await sb.from("releases").select("id").eq("application_id", app.id).eq("source_release_id", sourceReleaseId).maybeSingle();
+      if (existing.data) continue;
+
+      try {
+        const archive = await fetch(workflowArtifact.archive_download_url, { headers: gh });
+        if (!archive.ok) continue;
+        const zip = await JSZip.loadAsync(await archive.arrayBuffer());
+        const files = Object.values(zip.files).filter((entry: any) => {
+          if (entry.dir) return false;
+          const n = String(entry.name).toLowerCase();
+          return kinds.some((k) => n.endsWith(k));
+        }).slice(0, 20);
+        if (!files.length) continue;
+
+        const created = await sb.from("releases").insert({
+          application_id: app.id,
+          source_release_id: sourceReleaseId,
+          version_name: `workflow-${run.run_number || run.id}`,
+          version_code: null,
+          channel: "development",
+          status: "published",
+          title: artifactName,
+          notes: `APK package discovered from GitHub Actions workflow run ${run.id}.`,
+          published_at: run.updated_at || run.created_at
+        }).select("id").single();
+        if (created.error) throw created.error;
+
+        for (const entry of files as any[]) {
+          const bytes = await entry.async("uint8array");
+          const filename = String(entry.name).split("/").pop() || "application.apk";
+          const kind = artifactKind(filename);
+          if (!kind || !bytes.length) continue;
+          const digest = await sha256(bytes);
+          const storagePath = `${full}/actions/${workflowArtifact.id}/${safeName(filename)}`;
+          const upload = await sb.storage.from("aem-artifacts").upload(storagePath, bytes, {
+            contentType: kind === "apk" ? "application/vnd.android.package-archive" : "application/octet-stream",
+            upsert: true
+          });
+          if (upload.error) throw upload.error;
+
+          const url = `${Deno.env.get("SUPABASE_URL")}/storage/v1/object/public/aem-artifacts/${storagePath}`;
+          const inserted = await sb.from("artifacts").insert({
+            release_id: created.data.id,
+            platform: "android",
+            kind,
+            filename,
+            download_url: url,
+            size_bytes: bytes.byteLength,
+            sha256: digest,
+            package_identity: null,
+            version_code: null
+          });
+          if (inserted.error) throw inserted.error;
+          discovered++;
+        }
+      } catch (_) {
+        // One malformed/expired workflow artifact must not block discovery of the remaining repositories.
+      }
+    }
+  }
+  return discovered;
 }
 
 Deno.serve(async (req) => {
@@ -292,6 +381,8 @@ Deno.serve(async (req) => {
           artifactsDiscovered++;
         }
       }
+
+      await syncWorkflowArtifacts(full, gh, app, sb).then((n) => { artifactsDiscovered += n; }).catch(() => {});
 
       const androidArtifactCount = await sb
         .from("artifacts")
