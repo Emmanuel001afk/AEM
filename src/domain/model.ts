@@ -1,5 +1,5 @@
 export type Platform="android"|"windows"|"linux"|"macos"|"web";
-export type ArtifactKind="apk"|"apks"|"aab"|"exe"|"msix"|"appimage"|"deb"|"rpm"|"dmg"|"pkg"|"url"|"other";
+export type ArtifactKind="apk"|"apks"|"xapk"|"apkm"|"aab"|"exe"|"msix"|"appimage"|"deb"|"rpm"|"dmg"|"pkg"|"url"|"other";
 export type ReleaseChannel="stable"|"beta"|"development"; export type ReleaseStatus="draft"|"published"|"withdrawn";
 export interface ApplicationId{provider:string;project:string}
 export interface Application{id:ApplicationId;packageIdentity?:string;name:string;description?:string;sourceUrl?:string;iconUrl?:string;platforms:Platform[]}
