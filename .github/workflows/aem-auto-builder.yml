@@ -131,7 +131,24 @@ jobs:
           version_name="$(sed -n "s/.*versionName='\\([^']*\\)'.*/\\1/p" <<<"$badging")"
           test -n "$package"
           test -n "$version_name"
-          curl -fsS -X POST "$SUPABASE_URL/functions/v1/aem-publish-github-artifact"             -H "apikey: $SUPABASE_KEY"             -H "Authorization: Bearer $SUPABASE_KEY"             -H "x-github-token: $GH_TOKEN"             -H "Content-Type: application/json"             --data "$(jq -nc               --arg repo "$REPO"               --argjson run_id "$RUN_ID"               --arg artifact_name "aem-built-apk"               --arg app_project "$REPO"               --arg version_name "$version_name"               --arg version_code "$version_code"               --arg channel "$CHANNEL"               --arg package_identity "$package"               --arg title "AEM build"               '{repo:$repo,run_id:$run_id,artifact_name:$artifact_name,app_project:$app_project,version_name:$version_name,version_code:$version_code,channel:$channel,package_identity:$package_identity,title:$title}')"
+          curl -fsS -X POST "$SUPABASE_URL/functions/v1/aem-publish-github-artifact" \
+            -H "apikey: $SUPABASE_KEY" \
+            -H "Authorization: Bearer $SUPABASE_KEY" \
+            -H "x-github-token: $GH_TOKEN" \
+            -H "Content-Type: application/json" \
+            --data "$(jq -nc \
+              --arg repo "$REPO" \
+              --arg request_id "$REQUEST_ID" \
+              --argjson run_id "$RUN_ID" \
+              --arg artifact_name "aem-built-apk" \
+              --arg app_project "$REPO" \
+              --arg version_name "$version_name" \
+              --arg version_code "$version_code" \
+              --arg channel "$CHANNEL" \
+              --arg package_identity "$package" \
+              --arg title "AEM build" \
+              --arg source_release_id "github-actions-$RUN_ID" \
+              '{repo:$repo,request_id:$request_id,run_id:$run_id,artifact_name:$artifact_name,app_project:$app_project,version_name:$version_name,version_code:$version_code,channel:$channel,package_identity:$package_identity,title:$title,source_release_id:$source_release_id}')"
           echo
           echo "APK published through the AEM Supabase publisher."
       - name: Mark failed
