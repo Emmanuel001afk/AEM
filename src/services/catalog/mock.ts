@@ -11,6 +11,7 @@ export const demoCatalog:StoreApp[]=[
     category:"Browsers",
     functionality:["Web browsing","Downloads","AI/API integration"],
     screenshots:[],
+    latest:{stable:undefined,beta:undefined,development:undefined},
     permissions:["Internet"]
   },
   {
@@ -22,6 +23,7 @@ export const demoCatalog:StoreApp[]=[
     category:"Productivity",
     functionality:["PDF reading","Document handling"],
     screenshots:[],
-    permissions:[]
+    permissions:[],
+    latest:{stable:undefined,beta:undefined,development:undefined}
   }
 ];
