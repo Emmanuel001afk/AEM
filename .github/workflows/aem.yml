@@ -8,7 +8,7 @@ jobs:
       - uses: actions/setup-node@v4
         with: { node-version: 22 }
       - run: npm install
-      - run: npm run typecheck
+      - run: npm run build
   android:
     runs-on: ubuntu-latest
     steps:
@@ -18,3 +18,8 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with: { gradle-version: '8.10.2' }
       - run: gradle :app:assembleDebug
+      - uses: actions/upload-artifact@v4
+        with:
+          name: aem-debug-apk
+          path: app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
