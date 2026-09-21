@@ -1,0 +1,9 @@
+{
+  "appId": "com.aem.store",
+  "appName": "AEM Store",
+  "webDir": "mobile-dist",
+  "bundledWebRuntime": false,
+  "server": {
+    "androidScheme": "https"
+  }
+}
