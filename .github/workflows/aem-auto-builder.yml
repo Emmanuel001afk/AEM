@@ -144,7 +144,6 @@ jobs:
               --argjson run_id "$RUN_ID" \
               --arg artifact_name "aem-built-apk" \
               --arg app_project "$REPO" \
-              --arg artifact_name "aem-built-apk" \
               --arg version_name "$version_name" \
               --arg app_name "$app_name" \
               --arg version_code "$version_code" \
