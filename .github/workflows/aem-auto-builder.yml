@@ -75,6 +75,7 @@ jobs:
             else
               npm run build
             fi
+            npm install --no-save @capacitor/cli@7 @capacitor/core@7 @capacitor/android@7
             npx --yes @capacitor/cli@7 add android
             if [ -f "native/MainActivity.java" ] && [ -f "native/AemInstallerPlugin.java" ]; then
               mkdir -p android/app/src/main/java/com/aem/store
