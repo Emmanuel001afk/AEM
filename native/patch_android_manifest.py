@@ -39,7 +39,7 @@ if "InstallResultReceiver" not in s:
     )
 
 if 'android:icon="@mipmap/ic_launcher"' not in s:
-    s = re.sub(r'<application\\b([^>]*?)>', r'<application\\1 android:icon="@mipmap/ic_launcher" android:roundIcon="@mipmap/ic_launcher_round">', s, count=1)
+    s = re.sub(r'<application\\b([^>]*?)>', r'<application\\1 android:icon="@drawable/aem_launcher">', s, count=1)
 
 if "aem_file_paths" not in s:
     authority = "${applicationId}.fileprovider"
@@ -50,3 +50,12 @@ if "aem_file_paths" not in s:
     )
 
 p.write_text(s)
+
+
+res = p.parent / "res"
+(res / "drawable").mkdir(parents=True, exist_ok=True)
+(res / "xml").mkdir(parents=True, exist_ok=True)
+source_dir = Path(__file__).resolve().parent
+for name in ("aem_launcher.xml", "aem_file_paths.xml"):
+    target_dir = res / ("drawable" if name == "aem_launcher.xml" else "xml")
+    (target_dir / name).write_text((source_dir / name).read_text())
