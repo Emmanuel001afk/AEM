@@ -28,6 +28,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -165,6 +166,7 @@ class MainActivity: ComponentActivity() {
 }
 
 @Composable
+@OptIn(ExperimentalMaterial3Api::class)
 private fun AemApp(onDownload:(StoreApp)->Unit,onOpen:(StoreApp)->Unit) {
     var selected by remember { mutableIntStateOf(0) }
     var dark by remember { mutableStateOf(true) }
@@ -177,7 +179,7 @@ private fun AemApp(onDownload:(StoreApp)->Unit,onOpen:(StoreApp)->Unit) {
             listOf("PDF reading","Document handling"),emptyList(),"Android + Web",null,null)
     ))}
     LaunchedEffect(Unit) { try { val remote=loadRemoteApps(); if(remote.isNotEmpty()) apps=remote } catch(_:Exception) {} }
-    val visible=apps.filter { query.isBlank() || listOf(it.name,it.description,it.category,it.source,*it.functionality).joinToString(" ").contains(query,true) }
+    val visible=apps.filter { query.isBlank() || (listOf(it.name,it.description,it.category,it.source)+it.functionality).joinToString(" ").contains(query,true) }
     val scheme=if(dark) darkColorScheme(primary=Color(0xFFF04444),background=Color(0xFF09090C),surface=Color(0xFF15151B),surfaceVariant=Color(0xFF202027)) else lightColorScheme(primary=Color(0xFFC92F35))
     MaterialTheme(colorScheme=scheme) {
         Scaffold(
