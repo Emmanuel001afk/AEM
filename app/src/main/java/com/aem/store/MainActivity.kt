@@ -46,6 +46,25 @@ private data class StoreApp(
     val packageName:String?,val downloadUrl:String?,val versionCode:Long?=null,val signingCertificateSha256:String?=null
 )
 
+private data class DownloadRow(val id:Long,val title:String,val status:String,val progress:Int,val bytes:Long,val total:Long)
+private fun currentDownloads(context:Context):List<DownloadRow>{
+    val dm=context.getSystemService(DownloadManager::class.java) ?: return emptyList()
+    val out=mutableListOf<DownloadRow>()
+    dm.query(DownloadManager.Query()).use { cur ->
+        while(cur.moveToNext()){
+            val id=cur.getLong(cur.getColumnIndexOrThrow(DownloadManager.COLUMN_ID))
+            val title=cur.getString(cur.getColumnIndexOrThrow(DownloadManager.COLUMN_TITLE)) ?: "AEM download"
+            val statusCode=cur.getInt(cur.getColumnIndexOrThrow(DownloadManager.COLUMN_STATUS))
+            val bytes=cur.getLong(cur.getColumnIndexOrThrow(DownloadManager.COLUMN_BYTES_DOWNLOADED_SO_FAR))
+            val total=cur.getLong(cur.getColumnIndexOrThrow(DownloadManager.COLUMN_TOTAL_SIZE_BYTES))
+            val progress=if(total>0)((bytes*100)/total).toInt().coerceIn(0,100) else 0
+            val status=when(statusCode){DownloadManager.STATUS_PENDING->"Queued";DownloadManager.STATUS_RUNNING->"Downloading";DownloadManager.STATUS_PAUSED->"Paused";DownloadManager.STATUS_SUCCESSFUL->"Completed";DownloadManager.STATUS_FAILED->"Failed";else->"Unknown"}
+            out += DownloadRow(id,title,status,progress,bytes,total)
+        }
+    }
+    return out
+}
+
 private const val AEM_SUPABASE_URL="https://wfvvmyixqcwosmuldxoq.supabase.co"
 private const val AEM_SUPABASE_KEY="sb_publishable_Imgtr_W_Z868cBsNEcWpeg_89FE2Mvb"
 
@@ -187,6 +206,7 @@ private fun AemApp(onDownload:(StoreApp)->Unit,onOpen:(StoreApp)->Unit) {
     var dark by remember { mutableStateOf(true) }
     var query by remember { mutableStateOf("") }
     var selectedApp by remember { mutableStateOf<StoreApp?>(null) }
+    var downloadRows by remember { mutableStateOf(emptyList<DownloadRow>()) }
     var apps by remember { mutableStateOf(listOf(
         StoreApp("Phormi","Private Android browser partner for AEM.","Browsers","GitHub · phormi-android",
             listOf("Web browsing","Downloads","AI/API integration"),listOf("Internet"),"Android","com.uong.phormi",null),
@@ -194,6 +214,7 @@ private fun AemApp(onDownload:(StoreApp)->Unit,onOpen:(StoreApp)->Unit) {
             listOf("PDF reading","Document handling"),emptyList(),"Android + Web",null,null)
     ))}
     LaunchedEffect(Unit) { try { val remote=loadRemoteApps(); if(remote.isNotEmpty()) apps=remote } catch(_:Exception) {} }
+    LaunchedEffect(selected) { if(selected==3) while(true){ downloadRows=currentDownloads(LocalContext.current); kotlinx.coroutines.delay(1000) } }
     val visible=apps.filter { query.isBlank() || (listOf(it.name,it.description,it.category,it.source)+it.functionality).joinToString(" ").contains(query,true) }
     val scheme=if(dark) darkColorScheme(primary=Color(0xFFF04444),background=Color(0xFF09090C),surface=Color(0xFF15151B),surfaceVariant=Color(0xFF202027)) else lightColorScheme(primary=Color(0xFFC92F35))
     MaterialTheme(colorScheme=scheme) {
@@ -213,7 +234,7 @@ private fun AemApp(onDownload:(StoreApp)->Unit,onOpen:(StoreApp)->Unit) {
             when(selected){
                 0,1->{item{Surface(shape=RoundedCornerShape(24.dp),tonalElevation=3.dp){Column(Modifier.padding(22.dp)){Text("Software you control",fontSize=25.sp,fontWeight=FontWeight.Bold);Spacer(Modifier.height(7.dp));Text("Your projects publish releases. AEM discovers, distributes and updates them.",color=MaterialTheme.colorScheme.onSurfaceVariant);Spacer(Modifier.height(15.dp));Row(horizontalArrangement=Arrangement.spacedBy(8.dp)){AssistChip(onClick={selected=1},label={Text("Browse apps")});AssistChip(onClick={selected=2},label={Text("Check updates")})}}}};item{Text(if(selected==0)"Your apps" else "All apps",fontSize=21.sp,fontWeight=FontWeight.Bold)};items(visible){app->AppCard(LocalContext.current,app,{selectedApp=app},{onDownload(app)},{onOpen(app)})}}
                 2->{item{SectionTitle("Updates")};item{EmptyState("You're up to date","AEM will place compatible newer releases here.")}}
-                3->{item{SectionTitle("Downloads")};item{EmptyState("Downloads","Android download progress and completed releases are handled by the system download service.")}}
+                3->{item{SectionTitle("Downloads")};if(downloadRows.isEmpty()) item{EmptyState("No downloads","AEM downloads will appear here with live progress.")} else items(downloadRows){d->Surface(shape=RoundedCornerShape(18.dp),tonalElevation=2.dp){Column(Modifier.fillMaxWidth().padding(16.dp)){Text(d.title,fontWeight=FontWeight.Bold);Text(d.status,color=MaterialTheme.colorScheme.onSurfaceVariant);LinearProgressIndicator(progress={d.progress/100f},modifier=Modifier.fillMaxWidth().padding(vertical=8.dp));Text("${d.progress}% · ${d.bytes} / ${if(d.total>0)d.total else "?"} bytes",fontSize=12.sp)}}}}
                 else->{item{SectionTitle("Settings")};item{SettingRow("Appearance",if(dark)"Dark mode" else "Light mode"){dark=!dark}};item{SettingRow("Notifications","Release and update notifications"){} };item{SettingRow("Release channels","Stable · Beta · Development"){} };item{SettingRow("Source providers","GitHub now · more providers later"){} };item{SettingRow("Installer","Android package installation and security checks"){} }}
             }
         }}
