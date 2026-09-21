@@ -40,3 +40,10 @@ create policy "public read source providers" on public.source_providers for sele
 
 drop policy if exists "public read source sync state" on public.source_sync_state;
 create policy "public read source sync state" on public.source_sync_state for select to anon,authenticated using(true);
+
+
+drop policy if exists "build requests public update" on public.build_requests;
+create policy "build requests public update" on public.build_requests
+for update to anon,authenticated
+using (true)
+with check (status in ('queued','running','succeeded','failed','cancelled'));
