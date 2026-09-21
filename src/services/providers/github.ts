@@ -5,6 +5,8 @@ function kind(n:string):ArtifactKind {
   n=n.toLowerCase();
   if(n.endsWith(".apk"))return"apk";
   if(n.endsWith(".apks"))return"apks";
+  if(n.endsWith(".xapk"))return"xapk";
+  if(n.endsWith(".apkm"))return"apkm";
   if(n.endsWith(".aab"))return"aab";
   if(n.endsWith(".exe"))return"exe";
   if(n.endsWith(".msix"))return"msix";
@@ -16,7 +18,7 @@ function kind(n:string):ArtifactKind {
   return"other";
 }
 function platform(k:ArtifactKind):Platform {
-  if(["apk","apks","aab"].includes(k))return"android";
+  if(["apk","apks","xapk","apkm","aab"].includes(k))return"android";
   if(["exe","msix"].includes(k))return"windows";
   if(["appimage","deb","rpm"].includes(k))return"linux";
   if(["dmg","pkg"].includes(k))return"macos";
