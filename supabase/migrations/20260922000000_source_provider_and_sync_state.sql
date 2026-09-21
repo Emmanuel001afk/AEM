@@ -47,3 +47,6 @@ create policy "build requests public update" on public.build_requests
 for update to anon,authenticated
 using (true)
 with check (status in ('queued','running','succeeded','failed','cancelled'));
+
+
+drop policy if exists "public read artifacts" on public.artifacts;
