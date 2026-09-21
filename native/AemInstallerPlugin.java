@@ -6,6 +6,8 @@ import android.content.pm.PackageInstaller;
 import android.net.Uri;
 import android.os.Build;
 import android.provider.Settings;
+import android.content.ActivityNotFoundException;
+import androidx.core.content.FileProvider;
 import com.getcapacitor.JSObject;
 import com.getcapacitor.JSArray;
 import com.getcapacitor.Plugin;
@@ -27,12 +29,20 @@ public class AemInstallerPlugin extends Plugin {
     @PluginMethod
     public void getInstalledVersions(PluginCall call) {
         JSArray apps = new JSArray();
-        for (android.content.pm.PackageInfo p : getContext().getPackageManager().getInstalledPackages(0)) {
-            JSObject item = new JSObject();
-            item.put("packageName", p.packageName);
-            item.put("versionName", p.versionName == null ? "" : p.versionName);
-            item.put("versionCode", Build.VERSION.SDK_INT >= 28 ? p.getLongVersionCode() : p.versionCode);
-            apps.put(item);
+        JSArray requested = call.getArray("packages");
+        if (requested != null) {
+            for (int i = 0; i < requested.length(); i++) {
+                try {
+                    String packageName = requested.getString(i);
+                    android.content.pm.PackageInfo p = getContext().getPackageManager().getPackageInfo(packageName, 0);
+                    JSObject item = new JSObject();
+                    item.put("packageName", p.packageName);
+                    item.put("versionName", p.versionName == null ? "" : p.versionName);
+                    item.put("versionCode", Build.VERSION.SDK_INT >= 28 ? p.getLongVersionCode() : p.versionCode);
+                    apps.put(item);
+                } catch (Exception ignored) {
+                }
+            }
         }
         JSObject out = new JSObject();
         out.put("apps", apps);
@@ -55,6 +65,23 @@ public class AemInstallerPlugin extends Plugin {
             getContext().startActivity(i);
         }
         call.resolve();
+    }
+
+    @PluginMethod
+    public void openInstalled(PluginCall call) {
+        String packageName = call.getString("packageName", "");
+        if (packageName.isEmpty()) { call.reject("Package name is required"); return; }
+        try {
+            Intent launch = getContext().getPackageManager().getLaunchIntentForPackage(packageName);
+            if (launch == null) { call.reject("Installed application has no launch activity"); return; }
+            launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            getContext().startActivity(launch);
+            JSObject out = new JSObject();
+            out.put("started", true);
+            call.resolve(out);
+        } catch (Exception e) {
+            call.reject(e.getMessage() == null ? "Unable to open application" : e.getMessage(), e);
+        }
     }
 
     @PluginMethod
@@ -166,6 +193,20 @@ public class AemInstallerPlugin extends Plugin {
             if (apks.isEmpty()) throw new IOException("No APK parts found in archive");
         } else {
             throw new IOException("Unsupported installer file: " + file.getName());
+        }
+
+        if ("system".equalsIgnoreCase(mode)) {
+            if (!lower.endsWith(".apk")) throw new IOException("Android system installer mode supports .apk only; use AEM Split Installer for split-package archives.");
+            Uri uri = FileProvider.getUriForFile(getContext(), getContext().getPackageName() + ".fileprovider", file);
+            Intent intent = new Intent(Intent.ACTION_VIEW);
+            intent.setDataAndType(uri, "application/vnd.android.package-archive");
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            try {
+                getContext().startActivity(intent);
+            } catch (ActivityNotFoundException e) {
+                throw new IOException("No Android package installer is available on this device.", e);
+            }
+            return;
         }
 
         PackageInstaller installer = getContext().getPackageManager().getPackageInstaller();
