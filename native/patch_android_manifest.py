@@ -22,12 +22,16 @@ if "InstallResultReceiver" not in s:
     )
 
 if 'android:icon="@drawable/aem_launcher"' not in s:
-    s = re.sub(
-        r'<application\b([^>]*?)>',
-        r'<application\1 android:icon="@drawable/aem_launcher">',
-        s,
-        count=1,
-    )
+    if re.search(r'android:icon="[^"]+"', s):
+        s = re.sub(r'android:icon="[^"]+"', 'android:icon="@drawable/aem_launcher"', s, count=1)
+    else:
+        s = re.sub(
+            r'<application\b([^>]*?)>',
+            r'<application\1 android:icon="@drawable/aem_launcher">',
+            s,
+            count=1,
+        )
+s = re.sub(r'\s+android:roundIcon="[^"]+"', '', s, count=1)
 
 if "aem_file_paths" not in s:
     authority = "$"+"{applicationId}.fileprovider"
