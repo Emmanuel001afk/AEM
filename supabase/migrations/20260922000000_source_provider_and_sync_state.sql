@@ -7,7 +7,7 @@ create table if not exists public.source_providers (
 );
 
 insert into public.source_providers(id,label,active,config)
-values ('github','GitHub',true,jsonb_build_object('owner','Emmanuel001afk'))
+values ('github','GitHub',true,'{}'::jsonb)
 on conflict(id) do update set label=excluded.label,active=excluded.active,config=excluded.config,updated_at=now();
 
 alter table public.applications add column if not exists source_external_id text;
