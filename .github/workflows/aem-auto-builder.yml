@@ -71,6 +71,13 @@ jobs:
               npm run build
             fi
             npx --yes cap@7 add android
+            if [ -f "native/MainActivity.java" ] && [ -f "native/AemInstallerPlugin.java" ]; then
+              mkdir -p android/app/src/main/java/com/aem/store
+              cp native/MainActivity.java android/app/src/main/java/com/aem/store/MainActivity.java
+              cp native/AemInstallerPlugin.java android/app/src/main/java/com/aem/store/AemInstallerPlugin.java
+              cp native/InstallResultReceiver.java android/app/src/main/java/com/aem/store/InstallResultReceiver.java
+              python3 native/patch_android_manifest.py android/app/src/main/AndroidManifest.xml
+            fi
             npx --yes cap@7 copy android
             (cd android && ./gradlew assembleDebug)
             apk="$(find android -type f -path "*/build/outputs/apk/*.apk" | head -n 1)"
