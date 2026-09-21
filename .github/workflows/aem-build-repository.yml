@@ -1,0 +1,40 @@
+name: AEM Android Release
+on:
+  workflow_dispatch:
+    inputs:
+      repository:
+        description: "GitHub repository to build (owner/name)"
+        required: true
+        type: string
+      ref:
+        description: "Branch, tag, or commit"
+        required: false
+        default: main
+        type: string
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.repository }}
+          ref: ${{ inputs.ref }}
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.10.2"
+      - name: Build Android APK
+        run: gradle assembleDebug
+      - name: Collect APK
+        run: |
+          mkdir -p aem-artifacts
+          find . -type f -path "*/build/outputs/apk/*.apk" -exec cp {} aem-artifacts/ \;
+          test -n "$(find aem-artifacts -name '*.apk' -print -quit)"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: aem-apks
+          path: aem-artifacts/*.apk
+          if-no-files-found: error
