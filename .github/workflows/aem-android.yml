@@ -20,12 +20,12 @@ jobs:
           java-version: "21"
       - run: npm install
       - run: npx vite build --config vite.mobile.config.ts
-      - run: npx cap@7 add android
+      - run: npx --yes @capacitor/cli@7 add android
       - run: mkdir -p android/app/src/main/java/com/aem/store
       - run: cp native/AemInstallerPlugin.java android/app/src/main/java/com/aem/store/AemInstallerPlugin.java
       - run: cp native/MainActivity.java android/app/src/main/java/com/aem/store/MainActivity.java
       - run: python3 native/patch_android_manifest.py android/app/src/main/AndroidManifest.xml
-      - run: npx cap@7 copy android
+      - run: npx --yes @capacitor/cli@7 copy android
       - working-directory: android
         run: ./gradlew assembleDebug
       - uses: actions/upload-artifact@v4
