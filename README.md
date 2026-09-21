@@ -18,3 +18,6 @@ For arbitrary public repositories, AEM attempts the build automatically. A repos
 
 ### Source-driven catalog
 The Store catalog is provider-backed. GitHub is the current provider, with private/public repository discovery, APK-family artifact publication, durable AEM Storage copies, and server-side source credentials.
+
+### Android client hardening
+The Android wrapper uses the AEM launcher mark, Android package visibility limited to catalog package checks, a secure FileProvider for system installer handoff, and an AEM PackageInstaller session for APK-family packages.
