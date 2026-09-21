@@ -29,12 +29,26 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.platform.LocalContext
 
 private data class StoreApp(
     val name:String,val description:String,val category:String,val source:String,
     val functionality:List<String>,val permissions:List<String>,val platform:String,
-    val packageName:String?,val downloadUrl:String?
+    val packageName:String?,val downloadUrl:String?,val versionCode:Long?=null
 )
+
+private fun installedState(context:Context, app:StoreApp):String {
+    val pkg=app.packageName ?: return "INSTALL"
+    return try {
+        val info=context.packageManager.getPackageInfo(pkg,0)
+        val installed=if(Build.VERSION.SDK_INT>=28) info.longVersionCode else info.versionCode.toLong()
+        when {
+            app.versionCode!=null && installed<app.versionCode -> "UPDATE"
+            app.versionCode!=null && installed>app.versionCode -> "CURRENT"
+            else -> "OPEN"
+        }
+    } catch(_:Exception) { "INSTALL" }
+}
 
 class MainActivity: ComponentActivity() {
     private var pendingDownload:Long = -1L
@@ -60,12 +74,14 @@ class MainActivity: ComponentActivity() {
         super.onCreate(savedInstanceState)
         downloadManager=getSystemService(DownloadManager::class.java)
         if(Build.VERSION.SDK_INT >= 33) registerReceiver(downloadReceiver,IntentFilter(DownloadManager.ACTION_DOWNLOAD_COMPLETE),Context.RECEIVER_NOT_EXPORTED) else registerReceiver(downloadReceiver,IntentFilter(DownloadManager.ACTION_DOWNLOAD_COMPLETE))
-        setContent { AemApp(::downloadApk) }
+        setContent { AemApp(::downloadApk,::openInstalledApp) }
     }
 
     override fun onDestroy() { unregisterReceiver(downloadReceiver); super.onDestroy() }
 
     override fun onResume() { super.onResume() }
+
+    private fun openInstalledApp(app:StoreApp) { app.packageName?.let { try { startActivity(packageManager.getLaunchIntentForPackage(it)) } catch(_:Exception) {} } }
 
     private fun downloadApk(app:StoreApp) {
         val url=app.downloadUrl ?: return
@@ -99,7 +115,7 @@ class MainActivity: ComponentActivity() {
 }
 
 @Composable
-private fun AemApp(onDownload:(StoreApp)->Unit) {
+private fun AemApp(onDownload:(StoreApp)->Unit,onOpen:(StoreApp)->Unit) {
     var selected by remember { mutableIntStateOf(0) }
     var dark by remember { mutableStateOf(true) }
     var query by remember { mutableStateOf("") }
@@ -129,7 +145,7 @@ private fun AemApp(onDownload:(StoreApp)->Unit) {
         ){pad->LazyColumn(Modifier.fillMaxSize().padding(pad).padding(horizontal=16.dp),verticalArrangement=Arrangement.spacedBy(14.dp),contentPadding=PaddingValues(vertical=18.dp)){
             item{OutlinedTextField(value=query,onValueChange={query=it},modifier=Modifier.fillMaxWidth(),singleLine=true,shape=RoundedCornerShape(18.dp),placeholder={Text("Search apps, features, categories")},leadingIcon={Icon(Icons.Default.Search,null)})}
             when(selected){
-                0,1->{item{Surface(shape=RoundedCornerShape(24.dp),tonalElevation=3.dp){Column(Modifier.padding(22.dp)){Text("Software you control",fontSize=25.sp,fontWeight=FontWeight.Bold);Spacer(Modifier.height(7.dp));Text("Your projects publish releases. AEM discovers, distributes and updates them.",color=MaterialTheme.colorScheme.onSurfaceVariant);Spacer(Modifier.height(15.dp));Row(horizontalArrangement=Arrangement.spacedBy(8.dp)){AssistChip(onClick={selected=1},label={Text("Browse apps")});AssistChip(onClick={selected=2},label={Text("Check updates")})}}}};item{Text(if(selected==0)"Your apps" else "All apps",fontSize=21.sp,fontWeight=FontWeight.Bold)};items(visible){app->AppCard(app,{selectedApp=app},{onDownload(app)})}}
+                0,1->{item{Surface(shape=RoundedCornerShape(24.dp),tonalElevation=3.dp){Column(Modifier.padding(22.dp)){Text("Software you control",fontSize=25.sp,fontWeight=FontWeight.Bold);Spacer(Modifier.height(7.dp));Text("Your projects publish releases. AEM discovers, distributes and updates them.",color=MaterialTheme.colorScheme.onSurfaceVariant);Spacer(Modifier.height(15.dp));Row(horizontalArrangement=Arrangement.spacedBy(8.dp)){AssistChip(onClick={selected=1},label={Text("Browse apps")});AssistChip(onClick={selected=2},label={Text("Check updates")})}}}};item{Text(if(selected==0)"Your apps" else "All apps",fontSize=21.sp,fontWeight=FontWeight.Bold)};items(visible){app->AppCard(LocalContext.current,app,{selectedApp=app},{onDownload(app)},{onOpen(app)})}}
                 2->{item{SectionTitle("Updates")};item{EmptyState("You're up to date","AEM will place compatible newer releases here.")}}
                 3->{item{SectionTitle("Downloads")};item{EmptyState("Downloads","Android download progress and completed releases are handled by the system download service.")}}
                 else->{item{SectionTitle("Settings")};item{SettingRow("Appearance",if(dark)"Dark mode" else "Light mode"){dark=!dark}};item{SettingRow("Notifications","Release and update notifications"){} };item{SettingRow("Release channels","Stable · Beta · Development"){} };item{SettingRow("Source providers","GitHub now · more providers later"){} };item{SettingRow("Installer","Android package installation and security checks"){} }}
@@ -139,9 +155,10 @@ private fun AemApp(onDownload:(StoreApp)->Unit) {
     }
 }
 
-@Composable private fun AppCard(app:StoreApp,onDetails:()->Unit,onInstall:()->Unit){
+@Composable private fun AppCard(context:Context,app:StoreApp,onDetails:()->Unit,onInstall:()->Unit,onOpen:()->Unit){
     Surface(shape=RoundedCornerShape(22.dp),tonalElevation=2.dp){Column(Modifier.fillMaxWidth().padding(17.dp)){
-        Row(verticalAlignment=Alignment.CenterVertically){Box(Modifier.size(58.dp).background(MaterialTheme.colorScheme.primary,RoundedCornerShape(17.dp)),contentAlignment=Alignment.Center){Text(app.name.take(1),color=Color.White,fontWeight=FontWeight.Black,fontSize=22.sp)};Spacer(Modifier.width(14.dp));Column(Modifier.weight(1f)){Text(app.name,fontSize=18.sp,fontWeight=FontWeight.Bold);Text(app.category,color=MaterialTheme.colorScheme.onSurfaceVariant)};FilledTonalButton(onClick=onInstall,enabled=app.downloadUrl!=null){Text("INSTALL")}}
+        Row(verticalAlignment=Alignment.CenterVertically){Box(Modifier.size(58.dp).background(MaterialTheme.colorScheme.primary,RoundedCornerShape(17.dp)),contentAlignment=Alignment.Center){Text(app.name.take(1),color=Color.White,fontWeight=FontWeight.Black,fontSize=22.sp)};Spacer(Modifier.width(14.dp));Column(Modifier.weight(1f)){Text(app.name,fontSize=18.sp,fontWeight=FontWeight.Bold);Text(app.category,color=MaterialTheme.colorScheme.onSurfaceVariant)};val state=remember(app.name){installedState(context,app)}
+        FilledTonalButton(onClick={if(state=="OPEN"||state=="CURRENT") onOpen() else onInstall()},enabled=app.downloadUrl!=null||state=="OPEN"||state=="CURRENT"){Text(state)}}
         Spacer(Modifier.height(12.dp));Text(app.description,color=MaterialTheme.colorScheme.onSurfaceVariant);Spacer(Modifier.height(9.dp));Row(horizontalArrangement=Arrangement.spacedBy(7.dp)){AssistChip(onClick=onDetails,label={Text(app.platform)});AssistChip(onClick=onDetails,label={Text(app.functionality.firstOrNull()?:"Software")})};TextButton(onClick=onDetails){Text("Details")}
     }}
 }
