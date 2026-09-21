@@ -29,7 +29,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import java.io.File
 
 private data class StoreApp(
     val name:String,val description:String,val category:String,val source:String,
@@ -39,6 +38,7 @@ private data class StoreApp(
 
 class MainActivity: ComponentActivity() {
     private var pendingDownload:Long = -1L
+    private var lastDownloadedName:String = "AEM.apk"
     private var downloadManager:DownloadManager? = null
 
     private val downloadReceiver = object: BroadcastReceiver() {
@@ -65,6 +65,8 @@ class MainActivity: ComponentActivity() {
 
     override fun onDestroy() { unregisterReceiver(downloadReceiver); super.onDestroy() }
 
+    override fun onResume() { super.onResume() }
+
     private fun downloadApk(app:StoreApp) {
         val url=app.downloadUrl ?: return
         val request=DownloadManager.Request(Uri.parse(url))
@@ -73,6 +75,7 @@ class MainActivity: ComponentActivity() {
             .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
             .setMimeType("application/vnd.android.package-archive")
             .setDestinationInExternalFilesDir(this,Environment.DIRECTORY_DOWNLOADS,"${app.name}.apk")
+            .addRequestHeader("Accept","application/vnd.android.package-archive")
             .setAllowedOverMetered(true)
             .setAllowedOverRoaming(false)
         pendingDownload=downloadManager?.enqueue(request) ?: -1L
@@ -80,6 +83,10 @@ class MainActivity: ComponentActivity() {
 
     private fun installDownloadedApk(id:Long) {
         val uri=downloadManager?.getUriForDownloadedFile(id) ?: return
+        if(Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && !packageManager.canRequestPackageInstalls()) {
+            startActivity(Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,Uri.parse("package:$packageName")))
+            return
+        }
         val install=Intent(Intent.ACTION_VIEW,uri).apply {
             setDataAndType(uri,"application/vnd.android.package-archive")
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
