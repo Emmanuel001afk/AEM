@@ -117,7 +117,6 @@ jobs:
         env:
           SUPABASE_URL: https://wfvvmyixqcwosmuldxoq.supabase.co
           SUPABASE_KEY: sb_publishable_Imgtr_W_Z868cBsNEcWpeg_89FE2Mvb
-          GH_TOKEN: ${{ secrets.APK_STORE_TOKEN }}
           REQUEST_ID: ${{ steps.claim.outputs.id }}
           REPO: ${{ steps.claim.outputs.repo }}
           CHANNEL: ${{ steps.claim.outputs.channel }}
@@ -128,31 +127,27 @@ jobs:
           test -n "$AAPT"
           APK="source/${{ steps.build.outputs.apk }}"
           badging="$("$AAPT" dump badging "$APK" | head -n 1)"
-          package="$(sed -n "s/.*package: name='\\([^']*\\)'.*/\\1/p" <<<"$badging")"
-          version_code="$(sed -n "s/.*versionCode='\\([^']*\\)'.*/\\1/p" <<<"$badging")"
-          version_name="$(sed -n "s/.*versionName='\\([^']*\\)'.*/\\1/p" <<<"$badging")"
+          package="$(sed -n "s/.*package: name=\x27\\([^\x27]*\\).*/\\1/p" <<<"$badging")"
+          version_code="$(sed -n "s/.*versionCode=\x27\\([^\x27]*\\).*/\\1/p" <<<"$badging")"
+          version_name="$(sed -n "s/.*versionName=\x27\\([^\x27]*\\).*/\\1/p" <<<"$badging")"
           app_name="$(sed -n "s/.*application-label=\x27\\([^\x27]*\\).*/\\1/p" <<<"$badging")"
           test -n "$package"
           test -n "$version_name"
-          curl -fsS -X POST "$SUPABASE_URL/functions/v1/aem-publish-github-artifact" \
+          curl -fsS --data-binary "@$APK" "$SUPABASE_URL/functions/v1/aem-publish-github-artifact" \
             -H "apikey: $SUPABASE_KEY" \
             -H "Authorization: Bearer $SUPABASE_KEY" \
-            -H "x-github-token: $GH_TOKEN" \
-            -H "Content-Type: application/json" \
-            --data "$(jq -nc \
-              --arg repo "$REPO" \
-              --arg request_id "$REQUEST_ID" \
-              --argjson run_id "$RUN_ID" \
-              --arg artifact_name "aem-built-apk" \
-              --arg app_project "$REPO" \
-              --arg version_name "$version_name" \
-              --arg app_name "$app_name" \
-              --arg version_code "$version_code" \
-              --arg channel "$CHANNEL" \
-              --arg package_identity "$package" \
-              --arg title "AEM build" \
-              --arg source_release_id "github-actions-$RUN_ID" \
-              '{repo:$repo,request_id:$request_id,run_id:$run_id,artifact_name:$artifact_name,app_project:$app_project,application_name:$app_name,version_name:$version_name,version_code:$version_code,channel:$channel,package_identity:$package_identity,title:$title,source_release_id:$source_release_id}')"
+            -H "Content-Type: application/vnd.android.package-archive" \
+            -H "x-aem-repo: $REPO" \
+            -H "x-aem-request-id: $REQUEST_ID" \
+            -H "x-aem-run-id: $RUN_ID" \
+            -H "x-aem-filename: $(basename "$APK")" \
+            -H "x-aem-app-name: $app_name" \
+            -H "x-aem-version-name: $version_name" \
+            -H "x-aem-version-code: $version_code" \
+            -H "x-aem-channel: $CHANNEL" \
+            -H "x-aem-package: $package" \
+            -H "x-aem-title: AEM build" \
+            -H "x-aem-source-release-id: github-actions-$RUN_ID"
           echo
           echo "APK published through the AEM Supabase publisher."
       - name: Requeue if workflow is cancelled
