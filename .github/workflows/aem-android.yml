@@ -20,6 +20,7 @@ jobs:
           java-version: "21"
       - run: npm install
       - run: npx vite build --config vite.mobile.config.ts
+      - run: npm install --no-save @capacitor/cli@7 @capacitor/core@7 @capacitor/android@7
       - run: npx --yes @capacitor/cli@7 add android
       - run: mkdir -p android/app/src/main/java/com/aem/store
       - run: cp native/AemInstallerPlugin.java android/app/src/main/java/com/aem/store/AemInstallerPlugin.java
