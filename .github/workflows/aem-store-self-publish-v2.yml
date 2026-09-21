@@ -1,0 +1,38 @@
+name: AEM Store Self Publish V2
+
+on:
+  workflow_run:
+    workflows: ["AEM Store Android APK Final"]
+    types: [completed]
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  publish:
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: aem-store-debug-apk-final
+          path: release
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: ${{ github.event.workflow_run.id }}
+      - name: Publish through AEM Supabase gateway
+        env:
+          APK: release/app-debug.apk
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          SUPABASE_KEY="$(sed -n 's/.*DEFAULT_PUBLISHABLE_KEY="\([^"]*\)".*/\1/p' src/services/supabase/client.ts)"
+          AAPT="$(find "${ANDROID_HOME:-/opt/android-sdk}" -type f -name aapt | sort -V | tail -n 1)"
+          badging="$("$AAPT" dump badging "$APK" | head -n 1)"
+          package="$(sed -n "s/.*package: name='\([^']*\)'.*/\1/p" <<<"$badging")"
+          version_code="$(sed -n "s/.*versionCode='\([^']*\)'.*/\1/p" <<<"$badging")"
+          version_name="$(sed -n "s/.*versionName='\([^']*\)'.*/\1/p" <<<"$badging")"
+          curl -fsS -X POST "https://wfvvmyixqcwosmuldxoq.supabase.co/functions/v1/aem-publish-github-artifact"             -H "apikey: $SUPABASE_KEY" -H "Content-Type: application/json" -H "x-github-token: $GH_TOKEN"             --data "$(jq -nc --arg repo "Emmanuel001afk/AEM" --argjson run_id "${{ github.event.workflow_run.id }}" --arg artifact_name "aem-store-debug-apk-final" --arg project "Emmanuel001afk/AEM" --arg vn "$version_name" --argjson vc "$version_code" --arg pkg "$package" '{repo:$repo,run_id:$run_id,artifact_name:$artifact_name,app_project:$project,version_name:$vn,version_code:$vc,package_identity:$pkg,channel:"development",title:"AEM Store APK"}')"
