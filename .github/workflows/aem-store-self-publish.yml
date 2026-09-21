@@ -1,0 +1,50 @@
+name: AEM Store Self Publish
+
+on:
+  workflow_run:
+    workflows: ["AEM Store Android APK Final"]
+    types: [completed]
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  publish:
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: aem-store-debug-apk-final
+          path: release
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: ${{ github.event.workflow_run.id }}
+      - name: Publish APK
+        env:
+          SUPABASE_URL: https://wfvvmyixqcwosmuldxoq.supabase.co
+          APK: release/app-debug.apk
+        run: |
+          set -euo pipefail
+          SUPABASE_KEY="$(sed -n 's/.*DEFAULT_PUBLISHABLE_KEY="\([^"]*\)".*/\1/p' src/services/supabase/client.ts)"
+          test -n "$SUPABASE_KEY"
+          AAPT="$(find "${ANDROID_HOME:-/opt/android-sdk}" -type f -name aapt | sort -V | tail -n 1)"
+          badging="$("$AAPT" dump badging "$APK" | head -n 1)"
+          package="$(sed -n "s/.*package: name='\([^']*\)'.*/\1/p" <<<"$badging")"
+          version_code="$(sed -n "s/.*versionCode='\([^']*\)'.*/\1/p" <<<"$badging")"
+          version_name="$(sed -n "s/.*versionName='\([^']*\)'.*/\1/p" <<<"$badging")"
+          filename="$(basename "$APK")"
+          size="$(stat -c%s "$APK")"
+          sha="$(sha256sum "$APK" | cut -d' ' -f1)"
+          app="$(curl -fsS "$SUPABASE_URL/rest/v1/applications?select=id&provider=eq.github&project=eq.Emmanuel001afk%2FAEM" -H "apikey: $SUPABASE_KEY" -H "Authorization: Bearer $SUPABASE_KEY")"
+          app_id="$(jq -r '.[0].id' <<<"$app")"
+          curl -fsS -X PATCH "$SUPABASE_URL/rest/v1/applications?id=eq.$app_id" -H "apikey: $SUPABASE_KEY" -H "Authorization: Bearer $SUPABASE_KEY" -H "Content-Type: application/json" --data "$(jq -nc --arg pkg "$package" '{package_identity:$pkg,platforms:["android","web"]}')"
+          release_json="$(curl -fsS -X POST "$SUPABASE_URL/rest/v1/releases" -H "apikey: $SUPABASE_KEY" -H "Authorization: Bearer $SUPABASE_KEY" -H "Content-Type: application/json" -H "Prefer: return=representation" --data "$(jq -nc --argjson aid "$app_id" --arg sid "aem-store-run-${{ github.event.workflow_run.id }}" --arg vn "$version_name" --argjson vc "$version_code" '{application_id:$aid,source_release_id:$sid,version_name:$vn,version_code:$vc,channel:"development",status:"published",title:"AEM Store APK",published_at:(now|todate)}')")"
+          release_id="$(jq -r '.[0].id' <<<"$release_json")"
+          path="Emmanuel001afk/AEM/$version_name/$filename"
+          curl -fsS -X POST "$SUPABASE_URL/storage/v1/object/aem-artifacts/$path" -H "apikey: $SUPABASE_KEY" -H "Authorization: Bearer $SUPABASE_KEY" -H "Content-Type: application/vnd.android.package-archive" -H "x-upsert: true" --data-binary @"$APK" >/dev/null
+          public_url="$SUPABASE_URL/storage/v1/object/public/aem-artifacts/$path"
+          curl -fsS -X POST "$SUPABASE_URL/rest/v1/artifacts" -H "apikey: $SUPABASE_KEY" -H "Authorization: Bearer $SUPABASE_KEY" -H "Content-Type: application/json" --data "$(jq -nc --argjson rid "$release_id" --arg url "$public_url" --arg fn "$filename" --arg sha "$sha" --arg pkg "$package" --argjson size "$size" --argjson vc "$version_code" '{release_id:$rid,platform:"android",kind:"apk",filename:$fn,download_url:$url,size_bytes:$size,sha256:$sha,package_identity:$pkg,version_code:$vc}')"
