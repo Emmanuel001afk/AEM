@@ -71,6 +71,15 @@ jobs:
                   -H "apikey: $SUPABASE_KEY" -H "Authorization: Bearer $SUPABASE_KEY" \
                   -H "Content-Type: application/json" --data "$payload" >/dev/null
               fi
+
+              release_count="$(curl -fsS "$SUPABASE_URL/rest/v1/releases?select=id&application_id=eq.$app_id&limit=1" -H "apikey: $SUPABASE_KEY" -H "Authorization: Bearer $SUPABASE_KEY" | jq length)"
+              queued_count="$(curl -fsS "$SUPABASE_URL/rest/v1/build_requests?select=id&repository=eq.$full_name&status=in.(queued,running)&limit=1" -H "apikey: $SUPABASE_KEY" -H "Authorization: Bearer $SUPABASE_KEY" | jq length)"
+              if [ "$release_count" = "0" ] && [ "$queued_count" = "0" ]; then
+                curl -fsS -X POST "$SUPABASE_URL/rest/v1/build_requests" \
+                  -H "apikey: $SUPABASE_KEY" -H "Authorization: Bearer $SUPABASE_KEY" \
+                  -H "Content-Type: application/json" \
+                  --data "$(jq -nc --arg repo "$full_name" '{repository:$repo,ref:"main",variant:"debug",channel:"development",status:"queued"}')" >/dev/null
+              fi
             done < <(jq -c '.[]' <<<"$repos")
 
             [ "$count" -lt 100 ] && break
