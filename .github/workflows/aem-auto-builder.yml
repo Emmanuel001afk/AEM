@@ -151,7 +151,7 @@ jobs:
               --arg package_identity "$package" \
               --arg title "AEM build" \
               --arg source_release_id "github-actions-$RUN_ID" \
-              '{repo:$repo,request_id:$request_id,run_id:$run_id,artifact_name:$artifact_name,app_project:$app_project,version_name:$version_name,version_code:$version_code,channel:$channel,package_identity:$package_identity,title:$title,source_release_id:$source_release_id}')"
+              '{repo:$repo,request_id:$request_id,run_id:$run_id,artifact_name:$artifact_name,app_project:$app_project,application_name:$app_name,version_name:$version_name,version_code:$version_code,channel:$channel,package_identity:$package_identity,title:$title,source_release_id:$source_release_id}')"
           echo
           echo "APK published through the AEM Supabase publisher."
       - name: Requeue if workflow is cancelled
