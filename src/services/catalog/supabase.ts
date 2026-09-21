@@ -1,5 +1,5 @@
 import type {StoreApp} from "../../domain/catalog";
-import {supabaseRequest} from "./client";
+import {supabaseRequest} from "../supabase/client";
 
 export async function loadSupabaseCatalog():Promise<StoreApp[]>{
  const r=await supabaseRequest("/rest/v1/applications?select=*,releases(*,artifacts(*))&order=name.asc");
