@@ -13,7 +13,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
-      - name: Sync APK release assets into AEM catalog
+      - name: Sync GitHub releases and APK assets
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.APK_STORE_TOKEN }}
@@ -21,39 +21,6 @@ jobs:
           SUPABASE_KEY: sb_publishable_Imgtr_W_Z868cBsNEcWpeg_89FE2Mvb
         run: |
           set -euo pipefail
-          apps="$(curl -fsS "$SUPABASE_URL/rest/v1/applications?select=id,project,provider&provider=eq.github" -H "apikey: $SUPABASE_KEY" -H "Authorization: Bearer $SUPABASE_KEY")"
-          while IFS= read -r app; do
-            app_id="$(jq -r '.id' <<<"$app")"
-            repo="$(jq -r '.project' <<<"$app")"
-            [ -n "$repo" ] || continue
-            releases="$(curl -fsS "https://api.github.com/repos/$repo/releases?per_page=20" -H "Accept: application/vnd.github+json" -H "Authorization: Bearer $GH_TOKEN" -H "X-GitHub-Api-Version: 2022-11-28" || echo '[]')"
-            while IFS= read -r rel; do
-              rid="$(jq -r '.id' <<<"$rel")"
-              tag="$(jq -r '.tag_name // .name // "release"' <<<"$rel")"
-              title="$(jq -r '.name // .tag_name // "GitHub release"' <<<"$rel")"
-              published="$(jq -r '.published_at // .created_at // now' <<<"$rel")"
-              [ "$rid" != "null" ] || continue
-              existing="$(curl -fsS "$SUPABASE_URL/rest/v1/releases?select=id&application_id=eq.$app_id&source_release_id=eq.github-$rid" -H "apikey: $SUPABASE_KEY" -H "Authorization: Bearer $SUPABASE_KEY")"
-              [ "$(jq length <<<"$existing")" -gt 0 ] && continue
-              assets="$(jq -c '.assets[]? | select(.name | test("\.(apk|apks|xapk|apkm)$";"i"))' <<<"$rel")"
-              [ -n "$assets" ] || continue
-              release_json="$(curl -fsS -X POST "$SUPABASE_URL/rest/v1/releases" -H "apikey: $SUPABASE_KEY" -H "Authorization: Bearer $SUPABASE_KEY" -H "Content-Type: application/json" -H "Prefer: return=representation" --data "$(jq -nc --argjson aid "$app_id" --arg sid "github-$rid" --arg vn "$tag" --arg title "$title" --arg pub "$published" '{application_id:$aid,source_release_id:$sid,version_name:$vn,channel:"stable",status:"published",title:$title,published_at:$pub}')")"
-              release_id="$(jq -r '.[0].id' <<<"$release_json")"
-              while IFS= read -r asset; do
-                asset_id="$(jq -r '.id' <<<"$asset")"
-                filename="$(jq -r '.name' <<<"$asset")"
-                download_url="$(jq -r '.browser_download_url' <<<"$asset")"
-                kind="$(case "$filename" in *.apks) echo apks;; *.xapk) echo other;; *.apkm) echo other;; *) echo apk;; esac)"
-                tmp="$(mktemp --suffix=.apk)"
-                curl -fsSL -L "$download_url" -H "Accept: application/octet-stream" -H "Authorization: Bearer $GH_TOKEN" -o "$tmp"
-                size="$(stat -c%s "$tmp")"; sha="$(sha256sum "$tmp" | cut -d' ' -f1)"
-                path="$repo/$tag/$filename"
-                curl -fsS -X POST "$SUPABASE_URL/storage/v1/object/aem-artifacts/$path" -H "apikey: $SUPABASE_KEY" -H "Authorization: Bearer $SUPABASE_KEY" -H "Content-Type: application/octet-stream" -H "x-upsert: true" --data-binary @"$tmp" >/dev/null
-                public_url="$SUPABASE_URL/storage/v1/object/public/aem-artifacts/$path"
-                curl -fsS -X POST "$SUPABASE_URL/rest/v1/artifacts" -H "apikey: $SUPABASE_KEY" -H "Authorization: Bearer $SUPABASE_KEY" -H "Content-Type: application/json" --data "$(jq -nc --argjson rid "$release_id" --arg kind "$kind" --arg fn "$filename" --arg url "$public_url" --arg sha "$sha" --argjson size "$size" '{release_id:$rid,platform:"android",kind:$kind,filename:$fn,download_url:$url,size_bytes:$size,sha256:$sha}')"
-                rm -f "$tmp"
-                echo "Synced $repo $tag $filename"
-              done <<<"$assets"
-            done < <(jq -c '.[]' <<<"$releases")
-          done < <(jq -c '.[]' <<<"$apps")
-          echo "Release sync completed."
+          curl -fsS -X POST "$SUPABASE_URL/functions/v1/aem-sync-github"             -H "apikey: $SUPABASE_KEY"             -H "Authorization: Bearer $SUPABASE_KEY"             -H "x-github-token: $GH_TOKEN"             -H "Content-Type: application/json"             --data '{"owner":"Emmanuel001afk"}'
+          echo
+          echo "AEM release sync completed."
