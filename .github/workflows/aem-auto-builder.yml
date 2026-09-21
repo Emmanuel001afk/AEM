@@ -1,4 +1,9 @@
 name: AEM Automatic GitHub Builder
+
+concurrency:
+  group: aem-build-queue
+  cancel-in-progress: false
+
 on:
   push:
   workflow_dispatch:
@@ -95,7 +100,8 @@ jobs:
           fi
           test -n "$apk"
           echo "apk=$apk" >> "$GITHUB_OUTPUT"
-            - name: Upload built APK as workflow artifact
+
+      - name: Upload built APK as workflow artifact
         if: steps.claim.outputs.found == 'true'
         uses: actions/upload-artifact@v4
         with:
