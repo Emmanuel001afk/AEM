@@ -113,8 +113,8 @@ private suspend fun loadRemoteApps():List<StoreApp> = withContext(Dispatchers.IO
 private fun installedSigningSha256(context:Context,pkg:String):String? {
     return try {
         val info=context.packageManager.getPackageInfo(pkg,PackageManager.GET_SIGNING_CERTIFICATES)
-        val signatures=if(Build.VERSION.SDK_INT>=28) info.signingInfo.apkContentsSigners else info.signatures
-        signatures.firstOrNull()?.let { MessageDigest.getInstance("SHA-256").digest(it.toByteArray()).joinToString("") { b->"%02x".format(b) } }
+        val signatures=if(Build.VERSION.SDK_INT>=28) info.signingInfo?.apkContentsSigners else info.signatures
+        signatures?.firstOrNull()?.let { MessageDigest.getInstance("SHA-256").digest(it.toByteArray()).joinToString("") { b->"%02x".format(b) } }
     } catch(_:Exception) { null }
 }
 
@@ -207,6 +207,7 @@ private fun AemApp(onDownload:(StoreApp)->Unit,onOpen:(StoreApp)->Unit) {
     var query by remember { mutableStateOf("") }
     var selectedApp by remember { mutableStateOf<StoreApp?>(null) }
     var downloadRows by remember { mutableStateOf(emptyList<DownloadRow>()) }
+    val context=LocalContext.current
     var apps by remember { mutableStateOf(listOf(
         StoreApp("Phormi","Private Android browser partner for AEM.","Browsers","GitHub · phormi-android",
             listOf("Web browsing","Downloads","AI/API integration"),listOf("Internet"),"Android","com.uong.phormi",null),
@@ -214,7 +215,7 @@ private fun AemApp(onDownload:(StoreApp)->Unit,onOpen:(StoreApp)->Unit) {
             listOf("PDF reading","Document handling"),emptyList(),"Android + Web",null,null)
     ))}
     LaunchedEffect(Unit) { try { val remote=loadRemoteApps(); if(remote.isNotEmpty()) apps=remote } catch(_:Exception) {} }
-    LaunchedEffect(selected) { if(selected==3) while(true){ downloadRows=currentDownloads(LocalContext.current); kotlinx.coroutines.delay(1000) } }
+    LaunchedEffect(selected) { if(selected==3) while(true){ downloadRows=currentDownloads(context); kotlinx.coroutines.delay(1000) } }
     val visible=apps.filter { query.isBlank() || (listOf(it.name,it.description,it.category,it.source)+it.functionality).joinToString(" ").contains(query,true) }
     val scheme=if(dark) darkColorScheme(primary=Color(0xFFF04444),background=Color(0xFF09090C),surface=Color(0xFF15151B),surfaceVariant=Color(0xFF202027)) else lightColorScheme(primary=Color(0xFFC92F35))
     MaterialTheme(colorScheme=scheme) {
