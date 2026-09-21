@@ -38,12 +38,17 @@ jobs:
           ref: ${{ steps.claim.outputs.ref }}
           path: source
           token: ${{ secrets.APK_STORE_TOKEN }}
+      - name: Set up Node
+        if: steps.claim.outputs.found == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
       - name: Set up Java
         if: steps.claim.outputs.found == 'true'
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: "17"
+          java-version: "21"
       - name: Set up Gradle
         if: steps.claim.outputs.found == 'true'
         uses: gradle/actions/setup-gradle@v4
@@ -58,10 +63,23 @@ jobs:
           VARIANT: ${{ steps.claim.outputs.variant }}
         run: |
           set -euo pipefail
-          v="$(tr '[:lower:]' '[:upper:]' <<<"${VARIANT:0:1}")${VARIANT:1}"
-          if [ -n "$MODULE" ]; then task=":$MODULE:assemble$v"; else task="assemble$v"; fi
-          if [ -x "./gradlew" ]; then ./gradlew "$task"; else gradle "$task"; fi
-          apk="$(find . -type f -path "*/build/outputs/apk/*.apk" | head -n 1)"
+          if [ -f "capacitor.config.json" ] || [ -f "capacitor.config.ts" ]; then
+            npm install
+            if [ -f "vite.mobile.config.ts" ]; then
+              npx vite build --config vite.mobile.config.ts
+            else
+              npm run build
+            fi
+            npx --yes cap@7 add android
+            npx --yes cap@7 copy android
+            (cd android && ./gradlew assembleDebug)
+            apk="$(find android -type f -path "*/build/outputs/apk/*.apk" | head -n 1)"
+          else
+            v="$(tr '[:lower:]' '[:upper:]' <<<"${VARIANT:0:1}")${VARIANT:1}"
+            if [ -n "$MODULE" ]; then task=":$MODULE:assemble$v"; else task="assemble$v"; fi
+            if [ -x "./gradlew" ]; then ./gradlew "$task"; else gradle "$task"; fi
+            apk="$(find . -type f -path "*/build/outputs/apk/*.apk" | head -n 1)"
+          fi
           test -n "$apk"
           echo "apk=$apk" >> "$GITHUB_OUTPUT"
       - name: Publish APK to AEM
