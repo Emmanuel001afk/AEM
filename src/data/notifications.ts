@@ -1,0 +1,2 @@
+import type {AemNotification} from "../services/notifications/contract";
+export const demoNotifications:AemNotification[]=[{id:"welcome",kind:"system",title:"AEM is ready",body:"Your software store foundation is online.",createdAt:new Date().toISOString(),read:false},{id:"release-pipeline",kind:"release",title:"Release pipeline connected",body:"AEM can receive release events from supported providers.",createdAt:new Date().toISOString(),read:false}];
