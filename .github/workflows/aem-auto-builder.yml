@@ -104,7 +104,7 @@ PY
               python3 native/patch_android_manifest.py android/app/src/main/AndroidManifest.xml
             fi
             npx --yes @capacitor/cli@7 copy android
-            (cd android && ./gradlew assembleDebug)
+            (cd android && if [ "$VARIANT" = "release" ]; then ./gradlew assembleRelease; else ./gradlew assembleDebug; fi)
             apk="$(find android -type f -path "*/build/outputs/apk/*.apk" | head -n 1 | sed "s#^\./##")"
           else
             v="$(tr '[:lower:]' '[:upper:]' <<<"${VARIANT:0:1}")${VARIANT:1}"
