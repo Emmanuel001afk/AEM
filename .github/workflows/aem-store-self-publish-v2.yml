@@ -59,7 +59,11 @@ jobs:
             -H "Content-Type: application/json" -H "x-github-token: $GH_TOKEN" --data "$META")"
           upload_url="$(jq -r '.upload_url' <<<"$PREPARE")"
           test -n "$upload_url" -a "$upload_url" != "null"
-          curl -fsS -X PUT "$upload_url" -H "Content-Type: application/vnd.android.package-archive" --data-binary "@$APK"
+          curl -fsS -X PUT "$upload_url" \
+            -H "Content-Type: application/vnd.android.package-archive" \
+            -H "Cache-Control: max-age=3600" \
+            -H "x-upsert: true" \
+            --data-binary "@$APK"
           FINALIZE="$(jq -n \
             --arg action "finalize" \
             --arg repo "Emmanuel001afk/AEM" \
