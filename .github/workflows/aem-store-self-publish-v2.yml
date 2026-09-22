@@ -41,6 +41,7 @@ jobs:
             -H "Authorization: Bearer $SUPABASE_KEY" \
             -H "Content-Type: application/vnd.android.package-archive" \
             -H "x-aem-repo: Emmanuel001afk/AEM" \
+            -H "x-github-token: $GH_TOKEN" \
             -H "x-aem-run-id: ${{ github.event.workflow_run.id }}" \
             -H "x-aem-filename: $(basename "$APK")" \
             -H "x-aem-app-name: $app_name" \
