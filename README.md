@@ -9,11 +9,11 @@ The foundation is domain-first, provider-neutral, event-driven, storage-neutral,
 GitHub is the first source provider. Public repositories can be discovered without private credentials. Private repositories are accessed by the server-side `AEM_GITHUB_TOKEN` GitHub Actions secret; the token is never shipped to the Store client.
 
 
-## Automatic GitHub Android builds
+## GitHub source and release pipeline
 
-AEM can queue an Android build from a GitHub repository. The automatic builder runs on GitHub Actions, checks out the requested ref, detects the requested Gradle variant/module, builds an APK, extracts package/version metadata, uploads the APK to the AEM Supabase artifact bucket, and creates the corresponding application, release, and artifact records. The Store reads published artifacts and uses the stored APK URL for installation. GitHub Actions supports scheduled workflows at intervals as short as five minutes, and its workflow artifacts/API can persist and retrieve build outputs. citeturn1search0turn0search0
+AEM uses GitHub as the source-of-record provider for applications. The Store does not expose a manual source-build control: it consumes published release metadata and APK artifacts, validates package identity, signing identity, and version code, and then installs or updates from the single latest eligible release for the selected channel.
 
-For arbitrary public repositories, AEM attempts the build automatically. A repository still has to be a buildable Android project and may require project-specific dependencies, secrets, signing configuration, or a different Java/Gradle setup. Private repositories require appropriate GitHub credentials/permissions; AEM does not bypass GitHub access controls.
+The Android Store APK itself is built by the repository's GitHub Actions release workflow. Its signed APK is published into AEM's Supabase artifact storage, where the catalog stores the durable release and artifact metadata used by the web and Android clients.
 
 
 ### Source-driven catalog
