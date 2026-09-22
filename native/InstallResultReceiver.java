@@ -26,6 +26,12 @@ public class InstallResultReceiver extends android.content.BroadcastReceiver {
         }
 
         android.util.Log.i("AEM_INSTALL", "status=" + status + " " + message);
+        android.content.Intent event = new android.content.Intent("com.aem.store.INSTALL_RESULT");
+        event.setPackage(context.getPackageName());
+        event.putExtra(android.content.pm.PackageInstaller.EXTRA_STATUS, status);
+        event.putExtra(android.content.pm.PackageInstaller.EXTRA_STATUS_MESSAGE, message);
+        event.putExtra("aem_download_id", intent.getStringExtra("aem_download_id"));
+        context.sendBroadcast(event);
 
         String path = intent.getStringExtra("aem_download_path");
         if (path != null && (status == android.content.pm.PackageInstaller.STATUS_SUCCESS
