@@ -58,6 +58,21 @@ public class AemInstallerPlugin extends Plugin {
 
     private final java.util.concurrent.ConcurrentHashMap<String, HttpURLConnection> activeDownloads = new java.util.concurrent.ConcurrentHashMap<>();
     private final java.util.Set<String> cancelledDownloads = java.util.concurrent.ConcurrentHashMap.newKeySet();
+    private final java.util.Set<String> pausedDownloads = java.util.concurrent.ConcurrentHashMap.newKeySet();
+    private final java.util.concurrent.ConcurrentHashMap<String, DownloadSpec> downloadSpecs = new java.util.concurrent.ConcurrentHashMap<>();
+
+    private static final class DownloadSpec {
+        final String url, filename, mode, sha256, packageIdentity, signingCert, downloadId;
+        final long versionCode;
+        final boolean wifiOnly;
+        DownloadSpec(String url, String filename, String mode, String sha256, String packageIdentity, String signingCert, long versionCode, String downloadId, boolean wifiOnly) {
+            this.url=url; this.filename=filename; this.mode=mode; this.sha256=sha256; this.packageIdentity=packageIdentity; this.signingCert=signingCert;
+            this.versionCode=versionCode; this.downloadId=downloadId; this.wifiOnly=wifiOnly;
+        }
+    }
+    private static final class DownloadPausedException extends IOException {
+        DownloadPausedException() { super("Download paused"); }
+    }
 
     @PluginMethod
     public void getInstalledVersions(PluginCall call) {
@@ -151,26 +166,29 @@ public class AemInstallerPlugin extends Plugin {
         final String downloadId = call.getString("downloadId", "");
         final boolean wifiOnly = call.getBoolean("wifiOnly", false);
 
-        if (url == null || url.isEmpty()) {
-            call.reject("Download URL is required");
-            return;
-        }
+        if (url == null || url.isEmpty()) { call.reject("Download URL is required"); return; }
         if (Build.VERSION.SDK_INT >= 26 && !getContext().getPackageManager().canRequestPackageInstalls()) {
-            JSObject out = new JSObject();
-            out.put("permissionRequired", true);
-            call.resolve(out);
-            return;
+            JSObject out = new JSObject(); out.put("permissionRequired", true); call.resolve(out); return;
         }
 
+        DownloadSpec spec = new DownloadSpec(url, filename, mode, expectedSha256, expectedPackage, expectedSigningCert, expectedVersionCode, downloadId, wifiOnly);
+        if (!downloadId.isEmpty()) downloadSpecs.put(downloadId, spec);
+        startDownloadAndInstall(spec, call);
+    }
+
+    private void startDownloadAndInstall(final DownloadSpec spec, final PluginCall call) {
         new Thread(() -> {
             try {
-                ensureInstalledCompatibility(expectedPackage, expectedSigningCert, expectedVersionCode);
-                File downloaded = download(url, filename, expectedSha256, downloadId, wifiOnly);
-                install(downloaded, mode, expectedPackage, expectedSigningCert, expectedVersionCode, downloadId);
+                pausedDownloads.remove(spec.downloadId);
+                ensureInstalledCompatibility(spec.packageIdentity, spec.signingCert, spec.versionCode);
+                File downloaded = download(spec.url, spec.filename, spec.sha256, spec.downloadId, spec.wifiOnly);
+                install(downloaded, spec.mode, spec.packageIdentity, spec.signingCert, spec.versionCode, spec.downloadId);
                 JSObject out = new JSObject();
                 out.put("started", true);
                 out.put("file", downloaded.getAbsolutePath());
                 call.resolve(out);
+            } catch (DownloadPausedException e) {
+                JSObject out = new JSObject(); out.put("paused", true); out.put("downloadId", spec.downloadId); call.resolve(out);
             } catch (Exception e) {
                 call.reject(e.getMessage() == null ? "Installation failed" : e.getMessage(), e);
             }
@@ -178,46 +196,75 @@ public class AemInstallerPlugin extends Plugin {
     }
 
     @PluginMethod
+    public void pauseDownload(PluginCall call) {
+        String id = call.getString("downloadId", "");
+        if (id.isEmpty()) { call.reject("Download ID is required"); return; }
+        pausedDownloads.add(id);
+        HttpURLConnection connection = activeDownloads.remove(id);
+        if (connection != null) connection.disconnect();
+        JSObject out = new JSObject(); out.put("paused", true); call.resolve(out);
+    }
+
+    @PluginMethod
+    public void resumeDownload(PluginCall call) {
+        String id = call.getString("downloadId", "");
+        DownloadSpec spec = downloadSpecs.get(id);
+        if (spec == null) { call.reject("No resumable download session found"); return; }
+        pausedDownloads.remove(id);
+        startDownloadAndInstall(spec, call);
+    }
+
+    @PluginMethod
     public void cancelDownload(PluginCall call) {
         String id = call.getString("downloadId", "");
         cancelledDownloads.add(id);
+        pausedDownloads.remove(id);
         HttpURLConnection connection = activeDownloads.remove(id);
-        if (connection != null) {
-            connection.disconnect();
-            JSObject out = new JSObject();
-            out.put("cancelled", true);
-            call.resolve(out);
-        } else {
-            call.resolve(new JSObject());
+        if (connection != null) connection.disconnect();
+        DownloadSpec spec = downloadSpecs.remove(id);
+        if (spec != null) {
+            File dir = new File(getContext().getCacheDir(), "aem-downloads");
+            File partial = new File(dir, spec.filename.replaceAll("[^A-Za-z0-9._-]", "_") + ".part");
+            if (partial.exists()) partial.delete();
         }
+        JSObject out = new JSObject(); out.put("cancelled", true); call.resolve(out);
     }
 
     private File download(String source, String filename, String expectedSha256, String downloadId, boolean wifiOnly) throws Exception {
         if (wifiOnly && !isWifiConnected()) throw new IOException("Network unavailable: Wi-Fi-only downloads are enabled.");
+        File dir = new File(getContext().getCacheDir(), "aem-downloads");
+        if (!dir.exists() && !dir.mkdirs()) throw new IOException("Cannot create download directory");
+        File partial = new File(dir, filename.replaceAll("[^A-Za-z0-9._-]", "_") + ".part");
+        long existing = partial.exists() ? partial.length() : 0L;
+
         HttpURLConnection c = (HttpURLConnection) new URL(source).openConnection();
         if (downloadId != null && !downloadId.isEmpty()) activeDownloads.put(downloadId, c);
         c.setInstanceFollowRedirects(true);
         c.setConnectTimeout(30000);
         c.setReadTimeout(120000);
         c.setRequestProperty("User-Agent", "AEM Store");
+        if (existing > 0) c.setRequestProperty("Range", "bytes=" + existing + "-");
         c.connect();
         int status = c.getResponseCode();
         if (status < 200 || status >= 300) {
             activeDownloads.remove(downloadId);
+            c.disconnect();
             throw new IOException("Network error: HTTP " + status);
         }
 
-        File dir = new File(getContext().getCacheDir(), "aem-downloads");
-        if (!dir.exists() && !dir.mkdirs()) throw new IOException("Cannot create download directory");
-        File out = new File(dir, filename.replaceAll("[^A-Za-z0-9._-]", "_"));
-        long total = c.getContentLengthLong(), done = 0, lastEmit = 0;
+        boolean append = existing > 0 && status == HttpURLConnection.HTTP_PARTIAL;
+        if (!append) existing = 0L;
+        long total = c.getContentLengthLong();
+        if (total > 0 && append) total += existing;
+        long done = existing, lastEmit = 0;
         try (InputStream in = new BufferedInputStream(c.getInputStream());
-             OutputStream os = new BufferedOutputStream(new FileOutputStream(out))) {
+             OutputStream os = new BufferedOutputStream(new FileOutputStream(partial, append))) {
             byte[] buf = new byte[1024 * 64];
             int n;
             while ((n = in.read(buf)) >= 0) {
                 if (n == 0) continue;
                 if (cancelledDownloads.contains(downloadId)) throw new IOException("Download cancelled");
+                if (pausedDownloads.contains(downloadId)) throw new DownloadPausedException();
                 os.write(buf, 0, n);
                 done += n;
                 long now = System.currentTimeMillis();
@@ -232,9 +279,14 @@ public class AemInstallerPlugin extends Plugin {
             }
         } finally {
             activeDownloads.remove(downloadId);
-            cancelledDownloads.remove(downloadId);
             c.disconnect();
         }
+        if (cancelledDownloads.contains(downloadId)) throw new IOException("Download cancelled");
+        if (pausedDownloads.contains(downloadId)) throw new DownloadPausedException();
+
+        File out = new File(dir, filename.replaceAll("[^A-Za-z0-9._-]", "_"));
+        if (out.exists()) out.delete();
+        if (!partial.renameTo(out)) throw new IOException("Unable to finalize downloaded package");
         if (expectedSha256 != null && !expectedSha256.isEmpty()) {
             String actual = sha256(out);
             if (!actual.equalsIgnoreCase(expectedSha256)) {
