@@ -246,7 +246,7 @@ Deno.serve(async (req) => {
         app = byProject.data || null;
       }
 
-      // Prefer an application icon from the repository over the GitHub account avatar.\n      const iconCandidate = (tree.tree || []).find((x: any) => x.type === "blob" && /(^|\\/)(icon|logo|ic_launcher)([-_a-z0-9]*)\\.(png|webp|jpg|jpeg)$/i.test(String(x.path)));\n      if (iconCandidate) {\n        appPatch.icon_url = `https://raw.githubusercontent.com/${full}/${repo.default_branch || "main"}/${String(iconCandidate.path).split("/").map(encodeURIComponent).join("/")}`;\n      }\n\n      const appPatch = {
+\n      const appPatch = {
         provider: "github",
         project: full,
         source_external_id: externalId,
@@ -258,6 +258,12 @@ Deno.serve(async (req) => {
         platforms: android ? (web ? ["android", "web"] : ["android"]) : ["web"],
         updated_at: new Date().toISOString()
       };
+
+      // Prefer an application icon from the repository over the GitHub account avatar.
+      const iconCandidate = (tree.tree || []).find((x: any) => x.type === "blob" && /(^|\/)(icon|logo|ic_launcher)([-_a-z0-9]*)\.(png|webp|jpg|jpeg)$/i.test(String(x.path)));
+      if (iconCandidate) {
+        appPatch.icon_url = `https://raw.githubusercontent.com/${full}/${repo.default_branch || "main"}/${String(iconCandidate.path).split("/").map(encodeURIComponent).join("/")}`;
+      }
 
       if (!app) {
         const created = await sb.from("applications").insert(appPatch).select("id").single();
