@@ -1,0 +1,2 @@
+-- Historical migration 20260921133643_aem_catalog_uniqueness is included in the squashed baseline for reproducibility.
+-- No additional SQL is required here on a fresh database.
