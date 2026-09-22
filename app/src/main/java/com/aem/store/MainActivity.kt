@@ -104,7 +104,7 @@ private suspend fun loadRemoteApps():List<StoreApp> = withContext(Dispatchers.IO
                 for(k in 0 until arts.length()) if(arts.getJSONObject(k).optString("kind")=="apk"){apk=arts.getJSONObject(k);break}
                 val z=apk ?: continue
                 add(StoreApp(a.optString("name"),a.optString("description"),a.optString("category","Other"),
-                    "GitHub · "+a.optString("project"),listOf("Android APK","Automatic GitHub build"),
+                    "Published APK · "+a.optString("project"),listOf("Android APK","Published release"),
                     emptyList(),"Android",a.optString("package_identity").takeIf{it.isNotBlank()},
                     z.optString("download_url").takeIf{it.isNotBlank()},
                     z.optLong("version_code").takeIf{z.has("version_code") && !z.isNull("version_code")},
