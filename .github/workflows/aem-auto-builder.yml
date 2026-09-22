@@ -187,12 +187,20 @@ PY
             else
               (cd android && ./gradlew --max-workers=2 assembleDebug)
             fi
-            apk="$(find android -type f -path "*/build/outputs/apk/*.apk" | head -n 1 | sed "s#^\./##")"
+            if [ "$VARIANT" = "release" ]; then
+              apk="$(find android -type f -path "*/build/outputs/apk/release/*.apk" | head -n 1 | sed "s#^\./##")"
+            else
+              apk="$(find android -type f -path "*/build/outputs/apk/debug/*.apk" | head -n 1 | sed "s#^\./##")"
+            fi
           else
             v="$(tr '[:lower:]' '[:upper:]' <<<"${VARIANT:0:1}")${VARIANT:1}"
             if [ -n "$MODULE" ]; then task=":$MODULE:assemble$v"; else task="assemble$v"; fi
             if [ -x "./gradlew" ]; then ./gradlew "$task"; else gradle "$task"; fi
-            apk="$(find . -type f -path "*/build/outputs/apk/*.apk" | head -n 1 | sed "s#^\./##")"
+            if [ "$VARIANT" = "release" ]; then
+              apk="$(find . -type f -path "*/build/outputs/apk/release/*.apk" | head -n 1 | sed "s#^\./##")"
+            else
+              apk="$(find . -type f -path "*/build/outputs/apk/debug/*.apk" | head -n 1 | sed "s#^\./##")"
+            fi
           fi
           test -n "$apk"
           echo "apk=$apk" >> "$GITHUB_OUTPUT"
