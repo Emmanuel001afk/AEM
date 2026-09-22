@@ -29,6 +29,7 @@ import java.util.zip.ZipInputStream;
 public class AemInstallerPlugin extends Plugin {
     private static final int INSTALL_RESULT = 7412;
     private android.content.BroadcastReceiver installReceiver;
+
     @Override public void load() {
         super.load();
         installReceiver = new android.content.BroadcastReceiver() {
@@ -46,6 +47,7 @@ public class AemInstallerPlugin extends Plugin {
         if (Build.VERSION.SDK_INT >= 33) getContext().registerReceiver(installReceiver, filter, android.content.Context.RECEIVER_NOT_EXPORTED);
         else getContext().registerReceiver(installReceiver, filter);
     }
+
     @Override protected void handleOnDestroy() {
         if (installReceiver != null) {
             try { getContext().unregisterReceiver(installReceiver); } catch (Exception ignored) {}
@@ -53,30 +55,51 @@ public class AemInstallerPlugin extends Plugin {
         }
         super.handleOnDestroy();
     }
+
     private final java.util.concurrent.ConcurrentHashMap<String, HttpURLConnection> activeDownloads = new java.util.concurrent.ConcurrentHashMap<>();
     private final java.util.Set<String> cancelledDownloads = java.util.concurrent.ConcurrentHashMap.newKeySet();
 
     @PluginMethod
     public void getInstalledVersions(PluginCall call) {
         JSArray apps = new JSArray();
-        JSArray requested = call.getArray("packages");
-        if (requested != null) {
-            for (int i = 0; i < requested.length(); i++) {
-                try {
+        try {
+            JSArray requested = call.getArray("packages");
+            if (requested != null && requested.length() > 0) {
+                for (int i = 0; i < requested.length(); i++) {
                     String packageName = requested.getString(i);
-                    android.content.pm.PackageInfo p = getContext().getPackageManager().getPackageInfo(packageName, 0);
+                    addInstalled(apps, packageName);
+                }
+            } else {
+                android.content.pm.PackageManager pm = getContext().getPackageManager();
+                List<android.content.pm.PackageInfo> installedPackages;
+                if (Build.VERSION.SDK_INT >= 33) {
+                    installedPackages = pm.getInstalledPackages(android.content.pm.PackageManager.PackageInfoFlags.of(0));
+                } else {
+                    installedPackages = pm.getInstalledPackages(0);
+                }
+                for (android.content.pm.PackageInfo p : installedPackages) {
                     JSObject item = new JSObject();
                     item.put("packageName", p.packageName);
                     item.put("versionName", p.versionName == null ? "" : p.versionName);
                     item.put("versionCode", Build.VERSION.SDK_INT >= 28 ? p.getLongVersionCode() : p.versionCode);
                     apps.put(item);
-                } catch (Exception ignored) {
                 }
             }
-        }
+        } catch (Exception ignored) {}
         JSObject out = new JSObject();
         out.put("apps", apps);
         call.resolve(out);
+    }
+
+    private void addInstalled(JSArray apps, String packageName) {
+        try {
+            android.content.pm.PackageInfo p = getContext().getPackageManager().getPackageInfo(packageName, 0);
+            JSObject item = new JSObject();
+            item.put("packageName", p.packageName);
+            item.put("versionName", p.versionName == null ? "" : p.versionName);
+            item.put("versionCode", Build.VERSION.SDK_INT >= 28 ? p.getLongVersionCode() : p.versionCode);
+            apps.put(item);
+        } catch (Exception ignored) {}
     }
 
     @PluginMethod
@@ -128,7 +151,6 @@ public class AemInstallerPlugin extends Plugin {
             call.reject("Download URL is required");
             return;
         }
-
         if (Build.VERSION.SDK_INT >= 26 && !getContext().getPackageManager().canRequestPackageInstalls()) {
             JSObject out = new JSObject();
             out.put("permissionRequired", true);
@@ -174,7 +196,6 @@ public class AemInstallerPlugin extends Plugin {
         c.setReadTimeout(120000);
         c.setRequestProperty("User-Agent", "AEM Store");
         c.connect();
-
         int status = c.getResponseCode();
         if (status < 200 || status >= 300) {
             activeDownloads.remove(downloadId);
@@ -183,11 +204,8 @@ public class AemInstallerPlugin extends Plugin {
 
         File dir = new File(getContext().getCacheDir(), "aem-downloads");
         if (!dir.exists() && !dir.mkdirs()) throw new IOException("Cannot create download directory");
-
         File out = new File(dir, filename.replaceAll("[^A-Za-z0-9._-]", "_"));
-        long total = c.getContentLengthLong();
-        long done = 0;
-        long lastEmit = 0;
+        long total = c.getContentLengthLong(), done = 0, lastEmit = 0;
         try (InputStream in = new BufferedInputStream(c.getInputStream());
              OutputStream os = new BufferedOutputStream(new FileOutputStream(out))) {
             byte[] buf = new byte[1024 * 64];
@@ -212,7 +230,6 @@ public class AemInstallerPlugin extends Plugin {
             cancelledDownloads.remove(downloadId);
             c.disconnect();
         }
-
         if (expectedSha256 != null && !expectedSha256.isEmpty()) {
             String actual = sha256(out);
             if (!actual.equalsIgnoreCase(expectedSha256)) {
@@ -254,7 +271,6 @@ public class AemInstallerPlugin extends Plugin {
         } else if (lower.endsWith(".apks") || lower.endsWith(".xapk") || lower.endsWith(".apkm") || lower.endsWith(".zip")) {
             File dir = new File(file.getParentFile(), "parts-" + System.nanoTime());
             if (!dir.mkdirs()) throw new IOException("Cannot create split staging directory");
-
             try (ZipInputStream zin = new ZipInputStream(new BufferedInputStream(new FileInputStream(file)))) {
                 ZipEntry e;
                 byte[] buf = new byte[1024 * 64];
@@ -263,16 +279,13 @@ public class AemInstallerPlugin extends Plugin {
                     String safe = new File(e.getName()).getName();
                     File target = new File(dir, safe);
                     try (OutputStream os = new BufferedOutputStream(new FileOutputStream(target))) {
-                        int n;
-                        while ((n = zin.read(buf)) >= 0) os.write(buf, 0, n);
+                        int n; while ((n = zin.read(buf)) >= 0) os.write(buf, 0, n);
                     }
                     apks.add(target);
                 }
             }
             if (apks.isEmpty()) throw new IOException("No APK parts found in archive");
-        } else {
-            throw new IOException("Unsupported installer file: " + file.getName());
-        }
+        } else throw new IOException("Unsupported installer file: " + file.getName());
 
         if ("system".equalsIgnoreCase(mode)) {
             if (!lower.endsWith(".apk")) throw new IOException("Android system installer mode supports .apk only; use AEM Split Installer for split-package archives.");
@@ -280,31 +293,19 @@ public class AemInstallerPlugin extends Plugin {
             Intent intent = new Intent(Intent.ACTION_VIEW);
             intent.setDataAndType(uri, "application/vnd.android.package-archive");
             intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_GRANT_READ_URI_PERMISSION);
-            try {
-                getContext().startActivity(intent);
-            } catch (ActivityNotFoundException e) {
-                throw new IOException("No Android package installer is available on this device.", e);
-            }
+            try { getContext().startActivity(intent); }
+            catch (ActivityNotFoundException e) { throw new IOException("No Android package installer is available on this device.", e); }
             return;
         }
 
         PackageInstaller installer = getContext().getPackageManager().getPackageInstaller();
-        PackageInstaller.SessionParams params =
-                new PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL);
-
+        PackageInstaller.SessionParams params = new PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL);
         long total = 0;
         for (File apk : apks) total += apk.length();
         params.setSize(total);
-
-        if (Build.VERSION.SDK_INT >= 21 && expectedPackage != null && !expectedPackage.isEmpty()) {
-            params.setAppPackageName(expectedPackage);
-        }
-        if (Build.VERSION.SDK_INT >= 31) {
-            params.setInstallScenario(android.content.pm.PackageManager.INSTALL_SCENARIO_FAST);
-        }
-        if (Build.VERSION.SDK_INT >= 33) {
-            params.setPackageSource(PackageInstaller.PACKAGE_SOURCE_STORE);
-        }
+        if (Build.VERSION.SDK_INT >= 21 && expectedPackage != null && !expectedPackage.isEmpty()) params.setAppPackageName(expectedPackage);
+        if (Build.VERSION.SDK_INT >= 31) params.setInstallScenario(android.content.pm.PackageManager.INSTALL_SCENARIO_FAST);
+        if (Build.VERSION.SDK_INT >= 33) params.setPackageSource(PackageInstaller.PACKAGE_SOURCE_STORE);
 
         int id = installer.createSession(params);
         PackageInstaller.Session session = installer.openSession(id);
@@ -315,28 +316,21 @@ public class AemInstallerPlugin extends Plugin {
                 try (InputStream in = new BufferedInputStream(new FileInputStream(apk));
                      OutputStream out = session.openWrite(name, 0, apk.length())) {
                     byte[] buf = new byte[1024 * 64];
-                    int n;
-                    while ((n = in.read(buf)) >= 0) out.write(buf, 0, n);
+                    int n; while ((n = in.read(buf)) >= 0) out.write(buf, 0, n);
                     session.fsync(out);
                 }
             }
-
             Intent status = new Intent(getContext(), InstallResultReceiver.class);
             status.setPackage(getContext().getPackageName());
             status.putExtra("aem_download_path", file.getAbsolutePath());
             status.putExtra("aem_download_id", expectedDownloadId);
-
-            PendingIntent pi = PendingIntent.getBroadcast(
-                    getContext(),
-                    INSTALL_RESULT,
-                    status,
-                    PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_MUTABLE
-            );
+            PendingIntent pi = PendingIntent.getBroadcast(getContext(), INSTALL_RESULT, status, PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_MUTABLE);
             session.commit(pi.getIntentSender());
         } finally {
             session.close();
         }
     }
+
     private void validatePackage(File file, String expectedPackage) throws Exception {
         if (expectedPackage == null || expectedPackage.isEmpty()) return;
         String lower = file.getName().toLowerCase(Locale.US);
@@ -358,14 +352,8 @@ public class AemInstallerPlugin extends Plugin {
                 }
             }
         }
-        android.content.pm.PackageInfo info = getContext().getPackageManager().getPackageArchiveInfo(
-                inspect.getAbsolutePath(),
-                android.content.pm.PackageManager.GET_SIGNING_CERTIFICATES
-        );
+        android.content.pm.PackageInfo info = getContext().getPackageManager().getPackageArchiveInfo(inspect.getAbsolutePath(), android.content.pm.PackageManager.GET_SIGNING_CERTIFICATES);
         if (info == null || info.packageName == null) throw new IOException("Downloaded package metadata could not be read");
-        if (!expectedPackage.equals(info.packageName)) {
-            throw new IOException("Package identity mismatch: expected " + expectedPackage + " but downloaded " + info.packageName);
-        }
+        if (!expectedPackage.equals(info.packageName)) throw new IOException("Package identity mismatch: expected " + expectedPackage + " but downloaded " + info.packageName);
     }
-
 }
