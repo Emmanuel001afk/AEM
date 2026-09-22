@@ -21,13 +21,20 @@ Deno.serve(async(req)=>{
   const action=String(body.action||"");
   const sb=admin();
 
+  if(action==="heartbeat"){
+    const now=new Date().toISOString();
+    await sb.from("manager_state").upsert({id:"default",last_run_at:now,status:"running",updated_at:now},{onConflict:"id"});
+    return json({ok:true,status:"running",last_run_at:now});
+  }
+
   if(action==="claim"){
     const row=(await sb.from("build_requests").select("*").eq("status","queued").order("created_at",{ascending:true}).limit(1).maybeSingle()).data;
-    if(!row)return json({found:false});
+    if(!row){const now=new Date().toISOString();await sb.from("manager_state").upsert({id:"default",last_run_at:now,last_success_at:now,status:"idle",active_operations:0,updated_at:now},{onConflict:"id"});return json({found:false});}
     const access=await fetch(`https://api.github.com/repos/${row.repository}`,{headers:{"Accept":"application/vnd.github+json","Authorization":`Bearer ${token}`,"X-GitHub-Api-Version":"2022-11-28"}});
     if(!access.ok)return json({found:false});
     const updated=await sb.from("build_requests").update({status:"running",workflow_run_id:Number(body.run_id||0)||null,updated_at:new Date().toISOString()}).eq("id",row.id).eq("status","queued").select("*").single();
     if(updated.error)throw updated.error;
+    await sb.from("manager_state").upsert({id:"default",last_run_at:new Date().toISOString(),status:"running",active_operations:1,updated_at:new Date().toISOString()},{onConflict:"id"});
     return json({found:true,request:updated.data});
   }
 
@@ -45,6 +52,7 @@ Deno.serve(async(req)=>{
     if(action==="cancel")patch.workflow_run_id=null;
     const updated=await sb.from("build_requests").update(patch).eq("id",id).eq("status","running").select("id,status,error").maybeSingle();
     if(updated.error)throw updated.error;
+    await sb.from("manager_state").upsert({id:"default",last_run_at:new Date().toISOString(),last_success_at:new Date().toISOString(),status:action==="cancel"?"idle":"failed",active_operations:0,updated_at:new Date().toISOString()},{onConflict:"id"});
     return json({ok:true,request:updated.data});
   }
 
