@@ -26,6 +26,7 @@ jobs:
       - name: Publish through AEM Supabase gateway
         env:
           APK: release/app-release.apk
+          GH_TOKEN: ${{ secrets.APK_STORE_TOKEN }}
         run: |
           set -euo pipefail
           signing_cert="$(keytool -printcert -jarfile "$APK" | sed -n '/SHA256:/{s/^[[:space:]]*SHA256:[[:space:]]*//;p;q}')"\n          test -n "$signing_cert"\n          SUPABASE_KEY="$(sed -n 's/.*DEFAULT_PUBLISHABLE_KEY="\([^"]*\)".*/\1/p' src/services/supabase/client.ts)"
