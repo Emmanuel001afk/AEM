@@ -11,6 +11,8 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
@@ -68,7 +70,6 @@ jobs:
           import re
           p = Path("android/app/build.gradle")
           s = p.read_text()
-
           signing_block = '''signingConfigs {
               aemRelease {
                   storeFile file("../aem-release.keystore")
@@ -77,39 +78,30 @@ jobs:
                   keyPassword System.getenv("AEM_KEY_PASSWORD")
               }
           }'''
-
           android_match = re.search(r'(?m)^android\s*\{', s)
-          if not android_match:
-              raise SystemExit("Android build.gradle has no android block")
+          if not android_match: raise SystemExit("Android build.gradle has no android block")
           insert_at = android_match.end()
           if "aemRelease" not in s:
               s = s[:insert_at] + "\n    " + signing_block.replace("\n", "\n    ") + "\n" + s[insert_at:]
-
           build_types_match = re.search(r'(?m)^\s*buildTypes\s*\{', s)
-          if not build_types_match:
-              raise SystemExit("Android build.gradle has no buildTypes block")
-
+          if not build_types_match: raise SystemExit("Android build.gradle has no buildTypes block")
           release_match = re.search(r'(?m)^\s*release\s*\{', s[build_types_match.start():])
-          if not release_match:
-              raise SystemExit("Android build.gradle has no release build type")
+          if not release_match: raise SystemExit("Android build.gradle has no release build type")
           release_start = build_types_match.start() + release_match.start()
           release_open = s.find("{", release_start)
           depth = 0
           release_end = None
           for i in range(release_open, len(s)):
-              if s[i] == "{":
-                  depth += 1
+              if s[i] == "{": depth += 1
               elif s[i] == "}":
                   depth -= 1
                   if depth == 0:
                       release_end = i
                       break
-          if release_end is None:
-              raise SystemExit("Could not parse release build type")
+          if release_end is None: raise SystemExit("Could not parse release build type")
           release_block = s[release_start:release_end]
           if "signingConfig signingConfigs.aemRelease" not in release_block:
               s = s[:release_open+1] + "\n        signingConfig signingConfigs.aemRelease" + s[release_open+1:]
-
           p.write_text(s)
           PY
 
@@ -120,8 +112,7 @@ jobs:
           python3 - <<'PY'
           from pathlib import Path
           p = Path("settings.gradle")
-          if not p.exists():
-              raise SystemExit("Capacitor Android settings.gradle not found")
+          if not p.exists(): raise SystemExit("Capacitor Android settings.gradle not found")
           s = p.read_text()
           mirror = 'maven { url "https://maven-central.storage-download.googleapis.com/maven2/" }'
           if mirror not in s:
@@ -134,7 +125,6 @@ jobs:
         run: |
           set -euo pipefail
           test -f app/build.gradle
-          grep -q "id 'com.android.application'" app/build.gradle || grep -q 'id("com.android.application")' app/build.gradle || true
           grep -q "aemRelease" app/build.gradle
           grep -q "signingConfig signingConfigs.aemRelease" app/build.gradle
           test -f aem-release.keystore
@@ -149,12 +139,8 @@ jobs:
           set -euo pipefail
           for attempt in 1 2 3 4 5; do
             echo "Release build attempt $attempt/5"
-            if ./gradlew --max-workers=2 assembleRelease; then
-              exit 0
-            fi
-            if [ "$attempt" -lt 5 ]; then
-              sleep $((attempt * 20))
-            fi
+            if ./gradlew --max-workers=2 assembleRelease; then exit 0; fi
+            if [ "$attempt" -lt 5 ]; then sleep $((attempt * 20)); fi
           done
           exit 1
 
@@ -164,13 +150,4 @@ jobs:
           path: android/app/build/outputs/apk/release/app-release.apk
           if-no-files-found: error
 
-# CI trigger refresh: build the current stable-signed release pipeline.
-# Signing injection order corrected: signingConfigs now live inside the generated android block.
-
-# AEM publish pipeline uses direct signed storage upload.
-
-# Rebuild after signed upload header fix.
-
-# Rebuild after signed upload retry fix.
-
-# Rebuild after Supabase signed-upload header compatibility fix.
+# Trigger publish verification after the signed-storage gateway retry fix.
