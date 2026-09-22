@@ -17,13 +17,28 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
+      - name: Manager heartbeat
+        shell: bash
+        env:
+          SUPABASE_URL: https://wfvvmyixqcwosmuldxoq.supabase.co
+          SUPABASE_KEY: sb_publishable_Imgtr_W_Z868cBsNEcWpeg_89FE2Mvb
+          GH_TOKEN: ${{ secrets.AEM_GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          test -n "$GH_TOKEN"
+          curl -fsS -X POST "$SUPABASE_URL/functions/v1/aem-build-queue" \
+            -H "apikey: $SUPABASE_KEY" \
+            -H "Authorization: Bearer $SUPABASE_KEY" \
+            -H "x-github-token: $GH_TOKEN" \
+            -H "Content-Type: application/json" \
+            --data '{"action":"heartbeat"}'
       - name: Claim queued build
         id: claim
         shell: bash
         env:
           SUPABASE_URL: https://wfvvmyixqcwosmuldxoq.supabase.co
           SUPABASE_KEY: sb_publishable_Imgtr_W_Z868cBsNEcWpeg_89FE2Mvb
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.AEM_GITHUB_TOKEN }}
           RUN_ID: ${{ github.run_id }}
         run: |
           set -euo pipefail
@@ -49,7 +64,7 @@ jobs:
           repository: ${{ steps.claim.outputs.repo }}
           ref: ${{ steps.claim.outputs.ref }}
           path: source
-          token: ${{ github.token }}
+          token: ${{ secrets.AEM_GITHUB_TOKEN }}
       - name: Set up Node
         if: steps.claim.outputs.found == 'true'
         uses: actions/setup-node@v4
