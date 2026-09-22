@@ -66,6 +66,23 @@ jobs:
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: "8.11.1"
+      - name: Configure AEM Maven Central mirror
+        if: steps.claim.outputs.found == 'true' && steps.claim.outputs.repo == 'Emmanuel001afk/AEM'
+        working-directory: source
+        run: |
+          set -euo pipefail
+          if [ -f "android/settings.gradle" ]; then
+            python3 - <<'PY'
+            from pathlib import Path
+            p = Path("android/settings.gradle")
+            s = p.read_text()
+            mirror = 'maven { url "https://maven-central.storage-download.googleapis.com/maven2/" }'
+            if mirror not in s:
+                s = s.replace("mavenCentral()", mirror + "\n            mavenCentral()")
+                p.write_text(s)
+            PY
+          fi
+
       - name: Build APK
         if: steps.claim.outputs.found == 'true'
         id: build
@@ -133,7 +150,18 @@ android {
 }
 EOF
             fi
-            (cd android && if [ "$VARIANT" = "release" ]; then ./gradlew assembleRelease; else ./gradlew assembleDebug; fi)
+            if [ "$VARIANT" = "release" ]; then
+              for attempt in 1 2 3 4 5; do
+                echo "Release build attempt $attempt/5"
+                if (cd android && ./gradlew --max-workers=2 assembleRelease); then
+                  break
+                fi
+                if [ "$attempt" -eq 5 ]; then exit 1; fi
+                sleep $((attempt * 20))
+              done
+            else
+              (cd android && ./gradlew --max-workers=2 assembleDebug)
+            fi
             apk="$(find android -type f -path "*/build/outputs/apk/*.apk" | head -n 1 | sed "s#^\./##")"
           else
             v="$(tr '[:lower:]' '[:upper:]' <<<"${VARIANT:0:1}")${VARIANT:1}"
