@@ -9,6 +9,10 @@ permissions:
   actions: read
   contents: read
 
+concurrency:
+  group: aem-store-stable-publish
+  cancel-in-progress: false
+
 jobs:
   publish:
     if: ${{ github.event.workflow_run.conclusion == 'success' }}
@@ -73,6 +77,11 @@ jobs:
               fi
               echo "Prepare attempt $prepare_attempt failed with HTTP $status" >&2
               cat "$response_file" >&2
+              if [[ "$status" == "409" ]]; then
+                echo "Publish rejected: APK versionCode is not newer than the latest stable release." >&2
+                rm -f "$response_file"
+                return 1
+              fi
               rm -f "$response_file"
               if [[ "$prepare_attempt" -lt 3 ]]; then
                 sleep $((prepare_attempt * 15))
