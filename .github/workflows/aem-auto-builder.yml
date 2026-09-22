@@ -235,7 +235,7 @@ PY
         env:
           SUPABASE_URL: https://wfvvmyixqcwosmuldxoq.supabase.co
           SUPABASE_KEY: sb_publishable_Imgtr_W_Z868cBsNEcWpeg_89FE2Mvb
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.AEM_GITHUB_TOKEN }}
           REQUEST_ID: ${{ steps.claim.outputs.id }}
           REPO: ${{ steps.claim.outputs.repo }}
           CHANNEL: ${{ steps.claim.outputs.channel }}
