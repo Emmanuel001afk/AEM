@@ -123,16 +123,16 @@ jobs:
             npx --yes @capacitor/cli@7 add android
             if [ -f "android/app/build.gradle" ]; then
               python3 - <<'PY'
-from pathlib import Path
-import os,re
-p=Path("android/app/build.gradle")
-s=p.read_text()
-run_number=os.environ.get("GITHUB_RUN_NUMBER","1")
-version_code=str(int(__import__("time").time()))
-s=re.sub(r"versionCode\s*(?:=\s*|\s+)\d+", f"versionCode {version_code}", s)
-s=re.sub(r'versionName\s*(?:=\s*)?"[^"]+"', f'versionName "0.1.{run_number}"', s)
-p.write_text(s)
-PY
+              from pathlib import Path
+              import os,re
+              p=Path("android/app/build.gradle")
+              s=p.read_text()
+              run_number=os.environ.get("GITHUB_RUN_NUMBER","1")
+              version_code=str(int(__import__("time").time()))
+              s=re.sub(r"versionCode\s*(?:=\s*|\s+)\d+", f"versionCode {version_code}", s)
+              s=re.sub(r'versionName\s*(?:=\s*)?"[^"]+"', f'versionName "0.1.{run_number}"', s)
+              p.write_text(s)
+              PY
             fi
             if [ -f "native/MainActivity.java" ] && [ -f "native/AemInstallerPlugin.java" ]; then
               mkdir -p android/app/src/main/java/com/aem/store
@@ -149,47 +149,47 @@ PY
               test -n "$AEM_KEY_PASSWORD"
               printf "%s" "$AEM_KEYSTORE_BASE64" | base64 --decode > android/aem-release.keystore
               python3 - <<'PY'
-from pathlib import Path
-import re
-p = Path("android/app/build.gradle")
-s = p.read_text()
-signing_block = '''signingConfigs {
-    aemRelease {
-        storeFile file("../aem-release.keystore")
-        storePassword System.getenv("AEM_KEYSTORE_PASSWORD")
-        keyAlias System.getenv("AEM_KEY_ALIAS")
-        keyPassword System.getenv("AEM_KEY_PASSWORD")
-    }
-}'''
-m = re.search(r'(?m)^android\s*\{', s)
-if not m:
-    raise SystemExit("Android build.gradle has no android block")
-if "aemRelease" not in s:
-    s = s[:m.end()] + "\n    " + signing_block.replace("\n", "\n    ") + "\n" + s[m.end():]
-bt = re.search(r'(?m)^\s*buildTypes\s*\{', s)
-if not bt:
-    raise SystemExit("Android build.gradle has no buildTypes block")
-rel = re.search(r'(?m)^\s*release\s*\{', s[bt.start():])
-if not rel:
-    raise SystemExit("Android build.gradle has no release build type")
-start = bt.start() + rel.start()
-op = s.find("{", start)
-depth = 0
-end = None
-for i in range(op, len(s)):
-    if s[i] == "{": depth += 1
-    elif s[i] == "}":
-        depth -= 1
-        if depth == 0:
-            end = i
-            break
-if end is None:
-    raise SystemExit("Could not parse release block")
-block = s[start:end]
-if "signingConfig signingConfigs.aemRelease" not in block:
-    s = s[:op+1] + "\n        signingConfig signingConfigs.aemRelease" + s[op+1:]
-p.write_text(s)
-PY
+              from pathlib import Path
+              import re
+              p = Path("android/app/build.gradle")
+              s = p.read_text()
+              signing_block = '''signingConfigs {
+                  aemRelease {
+                      storeFile file("../aem-release.keystore")
+                      storePassword System.getenv("AEM_KEYSTORE_PASSWORD")
+                      keyAlias System.getenv("AEM_KEY_ALIAS")
+                      keyPassword System.getenv("AEM_KEY_PASSWORD")
+                  }
+              }'''
+              m = re.search(r'(?m)^android\s*\{', s)
+              if not m:
+                  raise SystemExit("Android build.gradle has no android block")
+              if "aemRelease" not in s:
+                  s = s[:m.end()] + "\n    " + signing_block.replace("\n", "\n    ") + "\n" + s[m.end():]
+              bt = re.search(r'(?m)^\s*buildTypes\s*\{', s)
+              if not bt:
+                  raise SystemExit("Android build.gradle has no buildTypes block")
+              rel = re.search(r'(?m)^\s*release\s*\{', s[bt.start():])
+              if not rel:
+                  raise SystemExit("Android build.gradle has no release build type")
+              start = bt.start() + rel.start()
+              op = s.find("{", start)
+              depth = 0
+              end = None
+              for i in range(op, len(s)):
+                  if s[i] == "{": depth += 1
+                  elif s[i] == "}":
+                      depth -= 1
+                      if depth == 0:
+                          end = i
+                          break
+              if end is None:
+                  raise SystemExit("Could not parse release block")
+              block = s[start:end]
+              if "signingConfig signingConfigs.aemRelease" not in block:
+                  s = s[:op+1] + "\n        signingConfig signingConfigs.aemRelease" + s[op+1:]
+              p.write_text(s)
+              PY
             fi
             if [ "$VARIANT" = "release" ]; then
               for attempt in 1 2 3 4 5; do
