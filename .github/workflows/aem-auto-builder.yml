@@ -171,6 +171,8 @@ PY
           SUPABASE_URL: https://wfvvmyixqcwosmuldxoq.supabase.co
           SUPABASE_KEY: sb_publishable_Imgtr_W_Z868cBsNEcWpeg_89FE2Mvb
           REQUEST_ID: ${{ steps.claim.outputs.id }}
+          REPO: ${{ steps.claim.outputs.repo }}
+          RUN_ID: ${{ github.run_id }}
         run: |
           curl -fsS -X POST "$SUPABASE_URL/functions/v1/aem-build-queue" \
             -H "apikey: $SUPABASE_KEY" -H "Authorization: Bearer $SUPABASE_KEY" -H "x-github-token: $GH_TOKEN" \
@@ -183,6 +185,8 @@ PY
           SUPABASE_KEY: sb_publishable_Imgtr_W_Z868cBsNEcWpeg_89FE2Mvb
           GH_TOKEN: ${{ secrets.APK_STORE_TOKEN }}
           REQUEST_ID: ${{ steps.claim.outputs.id }}
+          REPO: ${{ steps.claim.outputs.repo }}
+          RUN_ID: ${{ github.run_id }}
         run: |
           curl -fsS -X POST "$SUPABASE_URL/functions/v1/aem-build-queue" \
             -H "apikey: $SUPABASE_KEY" -H "Authorization: Bearer $SUPABASE_KEY" -H "x-github-token: $GH_TOKEN" \
