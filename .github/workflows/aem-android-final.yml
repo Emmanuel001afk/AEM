@@ -164,3 +164,4 @@ jobs:
           if-no-files-found: error
 
 # CI trigger refresh: build the current stable-signed release pipeline.
+# Signing injection order corrected: signingConfigs now live inside the generated android block.
