@@ -30,6 +30,11 @@ Deno.serve(async(req)=>{
    const b=await req.json();repo=String(b.repo||"");requestId=String(b.request_id||"");runId=Number(b.run_id||0);filename=String(b.filename||"app.apk");appName=String(b.application_name||"Application");versionName=String(b.version_name||"unknown");const vc=Number(b.version_code);versionCode=Number.isFinite(vc)?vc:null;channel=["stable","beta","development"].includes(String(b.channel))?String(b.channel):"development";packageIdentity=String(b.package_identity||"");title=String(b.title||"AEM APK");sourceReleaseId=String(b.source_release_id||`github-actions-${runId}`);signingCertificateSha256=String(b.signing_certificate_sha256||"").trim();if(!repo||!runId)return json({error:"Missing publish metadata"},400);const token=req.headers.get("x-github-token");if(!token)return json({error:"Missing GitHub credential"},401);return json({error:"JSON artifact publishing is disabled; send the APK bytes directly."},415);
   }
   if(!repo||!bytes?.length)return json({error:"Missing APK payload"},400);
+  const githubToken=(req.headers.get("x-github-token")||"").trim();
+  if(!githubToken)return json({error:"GitHub credential is required for artifact publishing."},401);
+  const ghHeaders={"Accept":"application/vnd.github+json","Authorization":`Bearer ${githubToken}`,"X-GitHub-Api-Version":"2022-11-28"};
+  const repoCheck=await fetch(`https://api.github.com/repos/${repo}`,{headers:ghHeaders});
+  if(!repoCheck.ok)return json({error:"GitHub credential cannot access the requested repository."},403);
   if(!packageIdentity)return json({error:"APK package identity is required; refusing to publish unvalidated Android artifact."},400);
   if(versionCode===null||versionCode<0)return json({error:"APK version code is required; refusing to publish unvalidated Android artifact."},400);
   const sb=admin();
