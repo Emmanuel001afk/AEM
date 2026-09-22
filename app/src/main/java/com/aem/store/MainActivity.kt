@@ -209,14 +209,6 @@ private fun AemApp(onDownload:(StoreApp)->Unit,onOpen:(StoreApp)->Unit) {
     var downloadRows by remember { mutableStateOf(emptyList<DownloadRow>()) }
     val context=LocalContext.current
     var apps by remember { mutableStateOf(emptyList<StoreApp>()) }
-    /* source-driven catalog */
-    var legacyAppsDisabled by remember { mutableStateOf(false) }
-    if (false) listOf(
-        StoreApp("Phormi","Private Android browser partner for AEM.","Browsers","GitHub · phormi-android",
-            listOf("Web browsing","Downloads","AI/API integration"),listOf("Internet"),"Android","com.uong.phormi",null),
-        StoreApp("Lite Read","PDF and document platform.","Productivity","GitHub · lite-read",
-            listOf("PDF reading","Document handling"),emptyList(),"Android + Web",null,null)
-    ))}
     LaunchedEffect(Unit) { try { val remote=loadRemoteApps(); if(remote.isNotEmpty()) apps=remote } catch(_:Exception) {} }
     LaunchedEffect(selected) { if(selected==3) while(true){ downloadRows=currentDownloads(context); kotlinx.coroutines.delay(1000) } }
     val visible=apps.filter { query.isBlank() || (listOf(it.name,it.description,it.category,it.source)+it.functionality).joinToString(" ").contains(query,true) }
