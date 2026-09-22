@@ -44,7 +44,8 @@ jobs:
           p = Path("android/app/build.gradle")
           s = p.read_text()
           n = os.environ["RUN_NUMBER"]
-          s = re.sub(r"versionCode\s*(?:=\s*|\s+)\d+", f"versionCode {n}", s)
+          version_code = str(int(__import__("time").time()))
+          s = re.sub(r"versionCode\s*(?:=\s*|\s+)\d+", f"versionCode {version_code}", s)
           s = re.sub(r'versionName\s*(?:=\s*)?"[^"]+"', f'versionName "0.1.{n}"', s)
           p.write_text(s)
           PY
