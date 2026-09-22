@@ -112,9 +112,10 @@ from pathlib import Path
 import os,re
 p=Path("android/app/build.gradle")
 s=p.read_text()
-n=os.environ.get("GITHUB_RUN_NUMBER","1")
-s=re.sub(r"versionCode\s*(?:=\s*|\s+)\d+", f"versionCode {n}", s)
-s=re.sub(r'versionName\s*(?:=\s*)?"[^"]+"', f'versionName "0.1.{n}"', s)
+run_number=os.environ.get("GITHUB_RUN_NUMBER","1")
+version_code=str(int(__import__("time").time()))
+s=re.sub(r"versionCode\s*(?:=\s*|\s+)\d+", f"versionCode {version_code}", s)
+s=re.sub(r'versionName\s*(?:=\s*)?"[^"]+"', f'versionName "0.1.{run_number}"', s)
 p.write_text(s)
 PY
             fi
