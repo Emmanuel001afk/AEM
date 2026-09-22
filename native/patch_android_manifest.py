@@ -6,6 +6,14 @@ p = Path(sys.argv[1])
 s = p.read_text()
 manifest_open = r"(<manifest\b[^>]*>)"
 
+if "QUERY_ALL_PACKAGES" not in s:
+    s = re.sub(
+        manifest_open,
+        r'\1\n    <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />',
+        s,
+        count=1,
+    )
+
 if "REQUEST_INSTALL_PACKAGES" not in s:
     s = re.sub(
         manifest_open,
