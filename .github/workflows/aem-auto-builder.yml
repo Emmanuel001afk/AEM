@@ -144,8 +144,10 @@ PY
           version_code="$(sed -n "s/.*versionCode=\x27\\([^\x27]*\\).*/\\1/p" <<<"$badging")"
           version_name="$(sed -n "s/.*versionName=\x27\\([^\x27]*\\).*/\\1/p" <<<"$badging")"
           app_name="$(sed -n "s/.*application-label=\x27\\([^\x27]*\\).*/\\1/p" <<<"$badging")"
+          signing_cert="$(keytool -printcert -jarfile "$APK" | sed -n "/SHA256:/{s/^[[:space:]]*SHA256:[[:space:]]*//;p;q}")"
           test -n "$package"
           test -n "$version_name"
+          test -n "$signing_cert"
           curl -fsS --data-binary "@$APK" "$SUPABASE_URL/functions/v1/aem-publish-github-artifact" \
             -H "apikey: $SUPABASE_KEY" \
             -H "Authorization: Bearer $SUPABASE_KEY" \
@@ -159,6 +161,7 @@ PY
             -H "x-aem-version-code: $version_code" \
             -H "x-aem-channel: $CHANNEL" \
             -H "x-aem-package: $package" \
+            -H "x-aem-signing-cert: $signing_cert" \
             -H "x-aem-title: AEM build" \
             -H "x-aem-source-release-id: github-actions-$RUN_ID"
           echo
