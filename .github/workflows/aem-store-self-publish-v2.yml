@@ -57,22 +57,21 @@ jobs:
           PREPARE="$(curl -fsS -X POST "https://wfvvmyixqcwosmuldxoq.supabase.co/functions/v1/aem-publish-github-artifact" \
             -H "apikey: $SUPABASE_KEY" -H "Authorization: Bearer $SUPABASE_KEY" \
             -H "Content-Type: application/json" -H "x-github-token: $GH_TOKEN" --data "$META")"
-          upload_url="$(jq -r '.upload_url' <<<"$PREPARE")"
-          test -n "$upload_url" -a "$upload_url" != "null"
+          upload_url="$(jq -er '.upload_url' <<<"$PREPARE")"
           upload_response="$(mktemp)"
           apk_size="$size_bytes"
           for attempt in 1 2 3; do
             status="$(
               curl -sS -o "$upload_response" -w '%{http_code}' \
-                --retry 2 --retry-all-errors --connect-timeout 30 --max-time 600 \
+                --connect-timeout 30 --max-time 600 \
                 -X PUT "$upload_url" \
                 -H "Content-Type: application/vnd.android.package-archive" \
                 -H "Content-Length: $apk_size" \
-                -H "x-upsert: false" \
+                -H "x-upsert: true" \
                 -H "Cache-Control: max-age=3600" \
                 --upload-file "$APK"
             )" || status="000"
-            if [ "$status" -ge 200 ] && [ "$status" -lt 300 ]; then
+            if [[ "$status" =~ ^2[0-9][0-9]$ ]]; then
               cat "$upload_response"
               break
             fi
@@ -81,6 +80,11 @@ jobs:
             if [ "$attempt" -eq 3 ]; then
               exit 1
             fi
+            PREPARE="$(curl -fsS -X POST "https://wfvvmyixqcwosmuldxoq.supabase.co/functions/v1/aem-publish-github-artifact" \
+              -H "apikey: $SUPABASE_KEY" -H "Authorization: Bearer $SUPABASE_KEY" \
+              -H "Content-Type: application/json" -H "x-github-token: $GH_TOKEN" \
+              --data "$META")"
+            upload_url="$(jq -er '.upload_url' <<<"$PREPARE")"
             sleep $((attempt * 10))
           done
           FINALIZE="$(jq -n \
