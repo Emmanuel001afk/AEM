@@ -29,6 +29,7 @@ import java.util.zip.ZipInputStream;
 public class AemInstallerPlugin extends Plugin {
     private static final int INSTALL_RESULT = 7412;
     private final java.util.concurrent.ConcurrentHashMap<String, HttpURLConnection> activeDownloads = new java.util.concurrent.ConcurrentHashMap<>();
+    private final java.util.Set<String> cancelledDownloads = java.util.concurrent.ConcurrentHashMap.newKeySet();
 
     @PluginMethod
     public void getInstalledVersions(PluginCall call) {
@@ -127,6 +128,7 @@ public class AemInstallerPlugin extends Plugin {
     @PluginMethod
     public void cancelDownload(PluginCall call) {
         String id = call.getString("downloadId", "");
+        cancelledDownloads.add(id);
         HttpURLConnection connection = activeDownloads.remove(id);
         if (connection != null) {
             connection.disconnect();
@@ -167,6 +169,7 @@ public class AemInstallerPlugin extends Plugin {
             int n;
             while ((n = in.read(buf)) >= 0) {
                 if (n == 0) continue;
+                if (cancelledDownloads.contains(downloadId)) throw new IOException("Download cancelled");
                 os.write(buf, 0, n);
                 done += n;
                 long now = System.currentTimeMillis();
@@ -181,6 +184,7 @@ public class AemInstallerPlugin extends Plugin {
             }
         } finally {
             activeDownloads.remove(downloadId);
+            cancelledDownloads.remove(downloadId);
             c.disconnect();
         }
 
