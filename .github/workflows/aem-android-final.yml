@@ -166,3 +166,5 @@ jobs:
 
 # CI trigger refresh: build the current stable-signed release pipeline.
 # Signing injection order corrected: signingConfigs now live inside the generated android block.
+
+# AEM publish pipeline uses direct signed storage upload.
