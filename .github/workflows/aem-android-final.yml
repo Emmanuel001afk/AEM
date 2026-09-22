@@ -5,6 +5,10 @@ on:
     branches: [main]
   workflow_dispatch:
 
+concurrency:
+  group: aem-store-android-build
+  cancel-in-progress: false
+
 jobs:
   android:
     runs-on: ubuntu-latest
