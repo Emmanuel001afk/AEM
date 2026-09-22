@@ -23,6 +23,6 @@ jobs:
           SUPABASE_KEY: sb_publishable_Imgtr_W_Z868cBsNEcWpeg_89FE2Mvb
         run: |
           set -euo pipefail
-          curl -fsS -X POST "$SUPABASE_URL/functions/v1/aem-sync-github"             -H "apikey: $SUPABASE_KEY"             -H "Authorization: Bearer $SUPABASE_KEY"             -H "x-github-token: $GH_TOKEN"             -H "Content-Type: application/json"             --data '{"owner":"Emmanuel001afk"}'
+          curl -fsS -X POST "$SUPABASE_URL/functions/v1/aem-sync-github"             -H "apikey: $SUPABASE_KEY"             -H "Authorization: Bearer $SUPABASE_KEY"             -H "x-github-token: $GH_TOKEN"             -H "Content-Type: application/json"             --data-raw "{\"owner\":\"Emmanuel001afk\",\"github_token\":\"$GH_TOKEN\"}"
           echo
           echo "AEM release sync completed."
