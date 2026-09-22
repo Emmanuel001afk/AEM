@@ -1,0 +1,2 @@
+-- Historical migration 20260921135613_aem_fk_indexes is included in the squashed baseline for reproducibility.
+-- No additional SQL is required here on a fresh database.
