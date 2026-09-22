@@ -19,8 +19,7 @@ function releaseTime(release:any):number {
 /**
  * Deterministic AEM Manager.
  *
- * The Manager is an orchestration layer only: the existing catalog, release,
- * build, download and installer services remain the source of their own data.
+ * The Manager coordinates catalog, release, download and installer state.
  * It prevents overlapping refreshes and applies one consistent "latest eligible
  * release" rule everywhere the UI asks for a channel release.
  */
@@ -47,9 +46,8 @@ export function createManager(options:ManagerOptions){
     selectLatest,
 
     /**
-     * Useful for callers that already have release rows (history/admin views).
-     * Published Android releases only; intermediate successful builds remain
-     * historical and do not become sequential user updates.
+     * Useful for callers that already have release rows, such as version history.
+     * Only published Android releases with installable packages are eligible.
      */
     selectLatestRelease(releases:any[],channel:ReleaseChannel){
       return (Array.isArray(releases)?releases:[])
