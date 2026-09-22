@@ -224,7 +224,7 @@ public class AemInstallerPlugin extends Plugin {
         DownloadSpec spec = downloadSpecs.remove(id);
         if (spec != null) {
             File dir = new File(getContext().getCacheDir(), "aem-downloads");
-            File partial = new File(dir, spec.filename.replaceAll("[^A-Za-z0-9._-]", "_") + ".part");
+            File partial = new File(dir, spec.filename.replaceAll("[^A-Za-z0-9._-]", "_") + "." + spec.downloadId.replaceAll("[^A-Za-z0-9._-]", "_") + ".part");
             if (partial.exists()) partial.delete();
         }
         JSObject out = new JSObject(); out.put("cancelled", true); call.resolve(out);
@@ -234,7 +234,7 @@ public class AemInstallerPlugin extends Plugin {
         if (wifiOnly && !isWifiConnected()) throw new IOException("Network unavailable: Wi-Fi-only downloads are enabled.");
         File dir = new File(getContext().getCacheDir(), "aem-downloads");
         if (!dir.exists() && !dir.mkdirs()) throw new IOException("Cannot create download directory");
-        File partial = new File(dir, filename.replaceAll("[^A-Za-z0-9._-]", "_") + ".part");
+        File partial = new File(dir, filename.replaceAll("[^A-Za-z0-9._-]", "_") + "." + downloadId.replaceAll("[^A-Za-z0-9._-]", "_") + ".part");
         long existing = partial.exists() ? partial.length() : 0L;
 
         HttpURLConnection c = (HttpURLConnection) new URL(source).openConnection();
