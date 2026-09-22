@@ -84,6 +84,7 @@ private suspend fun loadRemoteApps():List<StoreApp> = withContext(Dispatchers.IO
                 val a=rows.getJSONObject(i)
                 val releases=a.optJSONArray("releases") ?: JSONArray()
                 var best:JSONObject?=null
+                var bestVersion=Long.MIN_VALUE
                 var bestTime=Long.MIN_VALUE
                 for(j in 0 until releases.length()){
                     val r=releases.getJSONObject(j)
@@ -92,7 +93,10 @@ private suspend fun loadRemoteApps():List<StoreApp> = withContext(Dispatchers.IO
                     var hasApk=false
                     for(k in 0 until arts.length()) if(arts.getJSONObject(k).optString("kind")=="apk") hasApk=true
                     val t=try{java.time.Instant.parse(r.optString("published_at")).toEpochMilli()}catch(_:Exception){0L}
-                    if(hasApk && t>=bestTime){best=r;bestTime=t}
+                    var releaseVersion=Long.MIN_VALUE
+                    for(k in 0 until arts.length()) releaseVersion=maxOf(releaseVersion,arts.getJSONObject(k).optLong("version_code",Long.MIN_VALUE))
+                    releaseVersion=maxOf(releaseVersion,r.optLong("version_code",Long.MIN_VALUE))
+                    if(hasApk && (releaseVersion>bestVersion || (releaseVersion==bestVersion && t>=bestTime))){best=r;bestVersion=releaseVersion;bestTime=t}
                 }
                 val r=best ?: continue
                 val arts=r.optJSONArray("artifacts") ?: JSONArray()
@@ -240,7 +244,7 @@ private fun AemApp(onDownload:(StoreApp)->Unit,onOpen:(StoreApp)->Unit) {
 
 @Composable private fun AppCard(context:Context,app:StoreApp,onDetails:()->Unit,onInstall:()->Unit,onOpen:()->Unit){
     Surface(shape=RoundedCornerShape(22.dp),tonalElevation=2.dp){Column(Modifier.fillMaxWidth().padding(17.dp)){
-        Row(verticalAlignment=Alignment.CenterVertically){Box(Modifier.size(58.dp).background(MaterialTheme.colorScheme.primary,RoundedCornerShape(17.dp)),contentAlignment=Alignment.Center){Text(app.name.take(1),color=Color.White,fontWeight=FontWeight.Black,fontSize=22.sp)};Spacer(Modifier.width(14.dp));Column(Modifier.weight(1f)){Text(app.name,fontSize=18.sp,fontWeight=FontWeight.Bold);Text(app.category,color=MaterialTheme.colorScheme.onSurfaceVariant)};val state=remember(app.name){installedState(context,app)}
+        Row(verticalAlignment=Alignment.CenterVertically){Box(Modifier.size(58.dp).background(MaterialTheme.colorScheme.primary,RoundedCornerShape(17.dp)),contentAlignment=Alignment.Center){Text(app.name.take(1),color=Color.White,fontWeight=FontWeight.Black,fontSize=22.sp)};Spacer(Modifier.width(14.dp));Column(Modifier.weight(1f)){Text(app.name,fontSize=18.sp,fontWeight=FontWeight.Bold);Text(app.category,color=MaterialTheme.colorScheme.onSurfaceVariant)};val state=remember(app.name,app.versionCode,app.downloadUrl){installedState(context,app)}
         FilledTonalButton(onClick={if(state=="OPEN"||state=="CURRENT") onOpen() else onInstall()},enabled=app.downloadUrl!=null||state=="OPEN"||state=="CURRENT"){Text(state)}}
         Spacer(Modifier.height(12.dp));Text(app.description,color=MaterialTheme.colorScheme.onSurfaceVariant);Spacer(Modifier.height(9.dp));Row(horizontalArrangement=Arrangement.spacedBy(7.dp)){AssistChip(onClick=onDetails,label={Text(app.platform)});AssistChip(onClick=onDetails,label={Text(app.functionality.firstOrNull()?:"Software")})};TextButton(onClick=onDetails){Text("Details")}
     }}
