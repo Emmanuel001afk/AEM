@@ -28,6 +28,31 @@ import java.util.zip.ZipInputStream;
 @CapacitorPlugin(name="AemInstaller")
 public class AemInstallerPlugin extends Plugin {
     private static final int INSTALL_RESULT = 7412;
+    private android.content.BroadcastReceiver installReceiver;
+    @Override public void load() {
+        super.load();
+        installReceiver = new android.content.BroadcastReceiver() {
+            @Override public void onReceive(android.content.Context context, android.content.Intent intent) {
+                JSObject out = new JSObject();
+                out.put("downloadId", intent.getStringExtra("aem_download_id"));
+                int status = intent.getIntExtra(android.content.pm.PackageInstaller.EXTRA_STATUS, android.content.pm.PackageInstaller.STATUS_FAILURE);
+                out.put("success", status == android.content.pm.PackageInstaller.STATUS_SUCCESS);
+                out.put("status", status);
+                out.put("message", intent.getStringExtra(android.content.pm.PackageInstaller.EXTRA_STATUS_MESSAGE));
+                notifyListeners("installResult", out);
+            }
+        };
+        android.content.IntentFilter filter = new android.content.IntentFilter("com.aem.store.INSTALL_RESULT");
+        if (Build.VERSION.SDK_INT >= 33) getContext().registerReceiver(installReceiver, filter, android.content.Context.RECEIVER_NOT_EXPORTED);
+        else getContext().registerReceiver(installReceiver, filter);
+    }
+    @Override protected void handleOnDestroy() {
+        if (installReceiver != null) {
+            try { getContext().unregisterReceiver(installReceiver); } catch (Exception ignored) {}
+            installReceiver = null;
+        }
+        super.handleOnDestroy();
+    }
     private final java.util.concurrent.ConcurrentHashMap<String, HttpURLConnection> activeDownloads = new java.util.concurrent.ConcurrentHashMap<>();
     private final java.util.Set<String> cancelledDownloads = java.util.concurrent.ConcurrentHashMap.newKeySet();
 
@@ -114,7 +139,7 @@ public class AemInstallerPlugin extends Plugin {
         new Thread(() -> {
             try {
                 File downloaded = download(url, filename, expectedSha256, downloadId, wifiOnly);
-                install(downloaded, mode, expectedPackage);
+                install(downloaded, mode, expectedPackage, downloadId);
                 JSObject out = new JSObject();
                 out.put("started", true);
                 out.put("file", downloaded.getAbsolutePath());
@@ -219,7 +244,8 @@ public class AemInstallerPlugin extends Plugin {
         return out.toString();
     }
 
-    private void install(File file, String mode, String expectedPackage) throws Exception {
+    private void install(File file, String mode, String expectedPackage, String expectedDownloadId) throws Exception {
+        validatePackage(file, expectedPackage);
         List<File> apks = new ArrayList<>();
         String lower = file.getName().toLowerCase(Locale.US);
 
@@ -298,6 +324,7 @@ public class AemInstallerPlugin extends Plugin {
             Intent status = new Intent(getContext(), InstallResultReceiver.class);
             status.setPackage(getContext().getPackageName());
             status.putExtra("aem_download_path", file.getAbsolutePath());
+            status.putExtra("aem_download_id", expectedDownloadId);
 
             PendingIntent pi = PendingIntent.getBroadcast(
                     getContext(),
@@ -311,3 +338,34 @@ public class AemInstallerPlugin extends Plugin {
         }
     }
 }
+
+    private void validatePackage(File file, String expectedPackage) throws Exception {
+        if (expectedPackage == null || expectedPackage.isEmpty()) return;
+        String lower = file.getName().toLowerCase(Locale.US);
+        File inspect = file;
+        if (lower.endsWith(".apks") || lower.endsWith(".xapk") || lower.endsWith(".apkm") || lower.endsWith(".zip")) {
+            File dir = new File(file.getParentFile(), "validate-" + System.nanoTime());
+            if (!dir.mkdirs()) throw new IOException("Cannot create validation directory");
+            try (ZipInputStream zin = new ZipInputStream(new BufferedInputStream(new FileInputStream(file)))) {
+                ZipEntry e;
+                byte[] buf = new byte[65536];
+                while ((e = zin.getNextEntry()) != null) {
+                    if (e.isDirectory() || !e.getName().toLowerCase(Locale.US).endsWith(".apk")) continue;
+                    File candidate = new File(dir, new File(e.getName()).getName());
+                    try (OutputStream os = new BufferedOutputStream(new FileOutputStream(candidate))) {
+                        int n; while ((n = zin.read(buf)) >= 0) os.write(buf,0,n);
+                    }
+                    inspect = candidate;
+                    break;
+                }
+            }
+        }
+        android.content.pm.PackageInfo info = getContext().getPackageManager().getPackageArchiveInfo(
+                inspect.getAbsolutePath(),
+                android.content.pm.PackageManager.GET_SIGNING_CERTIFICATES
+        );
+        if (info == null || info.packageName == null) throw new IOException("Downloaded package metadata could not be read");
+        if (!expectedPackage.equals(info.packageName)) {
+            throw new IOException("Package identity mismatch: expected " + expectedPackage + " but downloaded " + info.packageName);
+        }
+    }
