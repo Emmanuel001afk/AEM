@@ -28,9 +28,7 @@ export function createManager(options:ManagerOptions){
   let refreshing:Promise<StoreApp[]>|null=null;
 
   const selectLatest=(app:StoreApp,channel:ReleaseChannel)=>{
-    const preferred=app.latest?.[channel];
-    if(preferred) return preferred;
-    return app.latest?.stable||app.latest?.beta||app.latest?.development;
+    return app.latest?.[channel];
   };
 
   const compareReleases=(a:any,b:any)=>{
