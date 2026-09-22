@@ -15,6 +15,7 @@ const nav=["Home","Apps","Updates","Settings"];
 export default function App(){
  const[tab,setTab]=useState("Home"),[dark,setDark]=useState(true),[q,setQ]=useState(""),[showNotifications,setShowNotifications]=useState(false);
  const[apps,setApps]=useState<any[]>([]),[connected,setConnected]=useState(false),[notifications,setNotifications]=useState<any[]>([]),[downloads,setDownloads]=useState<any[]>([]);
+ const[selected,setSelected]=useState<any|null>(null),[releaseHistory,setReleaseHistory]=useState<any[]>([]);
  const[statusMessage,setStatusMessage]=useState("");
  const[installed,setInstalled]=useState<Record<string,{versionName:string;versionCode:number;signingCertificateSha256?:string}>>({}),[downloadProgress,setDownloadProgress]=useState<Record<string,{bytes:number;total:number}>>({}),[downloadStats,setDownloadStats]=useState<Record<string,{speed:number;updatedAt:number;lastBytes:number}>>({}),[appearance,setAppearance]=useState<"light"|"dark"|"system">("dark"),[installer,setInstaller]=useState<InstallerMode>("split"),[settingsOpen,setSettingsOpen]=useState<string|null>(null),[catalogChannel,setCatalogChannel]=useState<"stable"|"beta"|"development">("stable"),[notificationsEnabled,setNotificationsEnabled]=useState(true),[autoSync,setAutoSync]=useState(true),[wifiOnly,setWifiOnly]=useState(false),[downloadUnit,setDownloadUnit]=useState<"auto"|"B"|"KB"|"MB"|"GB">("auto"),[syncing,setSyncing]=useState(false);
  const manager=useMemo(()=>createManager({loadCatalog:loadSupabaseCatalog}),[]);
