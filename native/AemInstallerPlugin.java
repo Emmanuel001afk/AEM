@@ -337,8 +337,6 @@ public class AemInstallerPlugin extends Plugin {
             session.close();
         }
     }
-}
-
     private void validatePackage(File file, String expectedPackage) throws Exception {
         if (expectedPackage == null || expectedPackage.isEmpty()) return;
         String lower = file.getName().toLowerCase(Locale.US);
@@ -369,3 +367,5 @@ public class AemInstallerPlugin extends Plugin {
             throw new IOException("Package identity mismatch: expected " + expectedPackage + " but downloaded " + info.packageName);
         }
     }
+
+}
