@@ -92,8 +92,18 @@ Deno.serve(async(req)=>{
   const ins=await sb.from("artifacts").insert({release_id:release.id,platform:"android",kind:"apk",filename,download_url:objectUrl,size_bytes:sizeBytes,sha256,package_identity:packageIdentity,signing_certificate_sha256:signingCertificateSha256||null,version_code:versionCode}).select("id").single();
   if(ins.error)throw ins.error;
   await sb.from("applications").update({name:appName,package_identity:packageIdentity,updated_at:new Date().toISOString()}).eq("id",appId);
-  await sb.from("release_history").insert({application_id:appId,release_id:release.id,reason:"published"}).catch(()=>{});
-  await sb.from("notifications").insert({kind:"release",title:`New ${appName} release`,body:`${versionName} is now available in AEM Store.`,app_id:appId,release_id:release.id}).catch(()=>{});
+  try {
+    const historyResult=await sb.from("release_history").insert({application_id:appId,release_id:release.id,reason:"published"});
+    if(historyResult.error) console.error("Release history insert failed:",historyResult.error);
+  } catch(error) {
+    console.error("Unexpected release history insert error:",error);
+  }
+  try {
+    const notificationResult=await sb.from("notifications").insert({kind:"release",title:`New ${appName} release`,body:`${versionName} is now available in AEM Store.`,app_id:appId,release_id:release.id});
+    if(notificationResult.error) console.error("Notification insert failed:",notificationResult.error);
+  } catch(error) {
+    console.error("Unexpected notification insert error:",error);
+  }
   return json({ok:true,release_id:release.id,artifact_id:ins.data.id,download_url:objectUrl,sha256,size_bytes:sizeBytes});
  }catch(e){console.error("AEM publish error",e);return json({error:e instanceof Error?e.message:String(e)},500)}
 });
