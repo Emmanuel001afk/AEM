@@ -45,10 +45,66 @@ jobs:
           p.write_text(s)
           PY
 
-      - working-directory: android
-        run: ./gradlew assembleDebug
+      - name: Configure stable release signing
+        env:
+          AEM_KEYSTORE_BASE64: ${{ secrets.AEM_KEYSTORE_BASE64 }}
+          AEM_KEYSTORE_PASSWORD: ${{ secrets.AEM_KEYSTORE_PASSWORD }}
+          AEM_KEY_ALIAS: ${{ secrets.AEM_KEY_ALIAS }}
+          AEM_KEY_PASSWORD: ${{ secrets.AEM_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          test -n "$AEM_KEYSTORE_BASE64" || { echo "Missing AEM_KEYSTORE_BASE64 repository secret."; exit 1; }
+          test -n "$AEM_KEYSTORE_PASSWORD" || { echo "Missing AEM_KEYSTORE_PASSWORD repository secret."; exit 1; }
+          test -n "$AEM_KEY_ALIAS" || { echo "Missing AEM_KEY_ALIAS repository secret."; exit 1; }
+          test -n "$AEM_KEY_PASSWORD" || { echo "Missing AEM_KEY_PASSWORD repository secret."; exit 1; }
+          printf '%s' "$AEM_KEYSTORE_BASE64" | base64 --decode > android/aem-release.keystore
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path("android/app/build.gradle")
+          s = p.read_text()
+          signing = r'''
+          android {
+              signingConfigs {
+                  aemRelease {
+                      storeFile file("../aem-release.keystore")
+                      storePassword System.getenv("AEM_KEYSTORE_PASSWORD")
+                      keyAlias System.getenv("AEM_KEY_ALIAS")
+                      keyPassword System.getenv("AEM_KEY_PASSWORD")
+                  }
+              }
+          }
+          '''
+          # Inject only the signing config block before the existing android block.
+          s = signing + "\n" + s
+          s = s.replace("buildTypes {", "buildTypes {", 1)
+          marker = "buildTypes {"
+          pos = s.find(marker)
+          if pos < 0:
+              raise SystemExit("Android build.gradle has no buildTypes block")
+          release_marker = "release {"
+          rpos = s.find(release_marker, pos)
+          if rpos < 0:
+              s = s[:pos] + marker + "\n        release { signingConfig signingConfigs.aemRelease }\n" + s[pos+len(marker):]
+          else:
+              end = s.find("}", rpos)
+              if end < 0:
+                  raise SystemExit("Could not locate release build type")
+              block = s[rpos:end]
+              if "signingConfig" not in block:
+                  s = s[:rpos] + "release {\n            signingConfig signingConfigs.aemRelease\n        " + s[rpos+len(release_marker):end] + "}" + s[end+1:]
+          p.write_text(s)
+          PY
+
+      - name: Build signed release APK
+        working-directory: android
+        env:
+          AEM_KEYSTORE_PASSWORD: ${{ secrets.AEM_KEYSTORE_PASSWORD }}
+          AEM_KEY_ALIAS: ${{ secrets.AEM_KEY_ALIAS }}
+          AEM_KEY_PASSWORD: ${{ secrets.AEM_KEY_PASSWORD }}
+        run: ./gradlew assembleRelease
+
       - uses: actions/upload-artifact@v4
         with:
-          name: aem-store-debug-apk-final
-          path: android/app/build/outputs/apk/debug/app-debug.apk
+          name: aem-store-release-apk
+          path: android/app/build/outputs/apk/release/app-release.apk
           if-no-files-found: error
