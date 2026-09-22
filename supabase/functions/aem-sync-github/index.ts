@@ -158,7 +158,7 @@ Deno.serve(async (req) => {
   const started = new Date().toISOString();
   try {
     const body = req.method === "POST" ? await req.json().catch(() => ({})) : {};
-    const token = (req.headers.get("x-github-token") || Deno.env.get("GITHUB_TOKEN") || "").trim();
+    const token = (req.headers.get("x-github-token") || String(body.github_token || "") || Deno.env.get("GITHUB_TOKEN") || "").trim();
 
     if (!token) {
       return json({
