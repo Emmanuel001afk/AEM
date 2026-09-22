@@ -1,0 +1,2 @@
+-- Historical migration 20260921135620_aem_release_event_trigger is included in the squashed baseline for reproducibility.
+-- No additional SQL is required here on a fresh database.
