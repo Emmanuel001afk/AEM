@@ -82,6 +82,7 @@ public class AemInstallerPlugin extends Plugin {
                     item.put("packageName", p.packageName);
                     item.put("versionName", p.versionName == null ? "" : p.versionName);
                     item.put("versionCode", Build.VERSION.SDK_INT >= 28 ? p.getLongVersionCode() : p.versionCode);
+                    item.put("signingCertificateSha256", signingCertificateSha256(p));
                     apps.put(item);
                 }
             }
@@ -93,11 +94,12 @@ public class AemInstallerPlugin extends Plugin {
 
     private void addInstalled(JSArray apps, String packageName) {
         try {
-            android.content.pm.PackageInfo p = getContext().getPackageManager().getPackageInfo(packageName, 0);
+            android.content.pm.PackageInfo p = getContext().getPackageManager().getPackageInfo(packageName, android.content.pm.PackageManager.GET_SIGNING_CERTIFICATES);
             JSObject item = new JSObject();
             item.put("packageName", p.packageName);
             item.put("versionName", p.versionName == null ? "" : p.versionName);
             item.put("versionCode", Build.VERSION.SDK_INT >= 28 ? p.getLongVersionCode() : p.versionCode);
+            item.put("signingCertificateSha256", signingCertificateSha256(p));
             apps.put(item);
         } catch (Exception ignored) {}
     }
@@ -385,6 +387,15 @@ public class AemInstallerPlugin extends Plugin {
                 }
             }
         } catch (android.content.pm.PackageManager.NameNotFoundException ignored) {}
+    }
+
+    private String signingCertificateSha256(android.content.pm.PackageInfo p) {
+        if (Build.VERSION.SDK_INT < 28 || p.signingInfo == null) return "";
+        try {
+            android.content.pm.Signature[] signers = p.signingInfo.getApkContentsSigners();
+            if (signers == null || signers.length == 0) return "";
+            return certSha256(signers[0].toByteArray());
+        } catch (Exception ignored) { return ""; }
     }
 
     private String certSha256(byte[] bytes) throws Exception {
