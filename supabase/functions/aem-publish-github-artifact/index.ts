@@ -42,6 +42,11 @@ Deno.serve(async(req)=>{
   if(appRes.error)throw appRes.error;
   if(!appRes.data)return json({error:`AEM application is not registered for ${repo}`},404);
   const appId=appRes.data.id;
+  const latestForChannel=await sb.from("releases").select("id,version_code").eq("application_id",appId).eq("channel",channel).eq("status","published").order("version_code",{ascending:false}).limit(1).maybeSingle();
+  if(latestForChannel.error)throw latestForChannel.error;
+  if(latestForChannel.data && Number(versionCode) <= Number(latestForChannel.data.version_code ?? 0)){
+   return json({error:`Refusing to publish version code ${versionCode}: latest published ${channel} version code is ${latestForChannel.data.version_code}. Android updates must move forward in versionCode.`},409);
+  }
   const existingApp=await sb.from("applications").select("package_identity").eq("id",appId).single();
   if(existingApp.error)throw existingApp.error;
   if(existingApp.data.package_identity && existingApp.data.package_identity!==packageIdentity)return json({error:`APK package identity ${packageIdentity} does not match catalog package ${existingApp.data.package_identity}`},409);
