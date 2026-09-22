@@ -58,11 +58,13 @@ jobs:
             -H "apikey: $SUPABASE_KEY" -H "Authorization: Bearer $SUPABASE_KEY" \
             -H "Content-Type: application/json" -H "x-github-token: $GH_TOKEN" --data "$META")"
           upload_url="$(jq -er '.upload_url' <<<"$PREPARE")"
+          object_path="$(jq -er '.path' <<<"$PREPARE")"
           upload_response="$(mktemp)"
+          upload_headers="$(mktemp)"
           apk_size="$size_bytes"
           for attempt in 1 2 3; do
             status="$(
-              curl -sS -o "$upload_response" -w '%{http_code}' \
+              curl -sS -D "$upload_headers" -o "$upload_response" -w '%{http_code}' \
                 --connect-timeout 30 --max-time 600 \
                 -X PUT "$upload_url" \
                 -H "Content-Type: application/vnd.android.package-archive" \
@@ -76,16 +78,28 @@ jobs:
               break
             fi
             echo "APK upload attempt $attempt failed with HTTP $status" >&2
+            echo "Response headers:" >&2
+            cat "$upload_headers" >&2
+            echo "Response body:" >&2
             cat "$upload_response" >&2
+            public_url="https://wfvvmyixqcwosmuldxoq.supabase.co/storage/v1/object/public/aem-artifacts/$object_path"
+            verify_headers="$(mktemp)"
+            verify_status="$(curl -sS -D "$verify_headers" -o /dev/null -w '%{http_code}' --connect-timeout 30 --max-time 60 "$public_url")" || verify_status="000"
+            verify_size="$(awk 'BEGIN{IGNORECASE=1} /^content-length:/{gsub("\r","",$2); print $2; exit}' "$verify_headers")"
+            if [[ "$verify_status" =~ ^2[0-9][0-9]$ ]] && [[ -z "$verify_size" || "$verify_size" = "$apk_size" ]]; then
+              echo "Storage contains the complete APK despite upload response HTTP $status; continuing to finalize." >&2
+              break
+            fi
             if [ "$attempt" -eq 3 ]; then
               exit 1
             fi
+            sleep $((attempt * 15))
             PREPARE="$(curl -fsS -X POST "https://wfvvmyixqcwosmuldxoq.supabase.co/functions/v1/aem-publish-github-artifact" \
               -H "apikey: $SUPABASE_KEY" -H "Authorization: Bearer $SUPABASE_KEY" \
               -H "Content-Type: application/json" -H "x-github-token: $GH_TOKEN" \
               --data "$META")"
             upload_url="$(jq -er '.upload_url' <<<"$PREPARE")"
-            sleep $((attempt * 10))
+            object_path="$(jq -er '.path' <<<"$PREPARE")"
           done
           FINALIZE="$(jq -n \
             --arg action "finalize" \
