@@ -108,3 +108,5 @@ jobs:
           name: aem-store-release-apk
           path: android/app/build/outputs/apk/release/app-release.apk
           if-no-files-found: error
+
+# CI trigger refresh: build the current stable-signed release pipeline.
