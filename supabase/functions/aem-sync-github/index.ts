@@ -246,7 +246,8 @@ Deno.serve(async (req) => {
         app = byProject.data || null;
       }
 
-\n      const appPatch = {
+
+      const appPatch = {
         provider: "github",
         project: full,
         source_external_id: externalId,
