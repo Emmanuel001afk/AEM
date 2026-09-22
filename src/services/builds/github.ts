@@ -15,7 +15,7 @@ export async function requestGithubBuild(input:BuildRequestInput){
  if(!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repository)) throw new Error("Enter a GitHub repository as owner/name.");
  const r=await supabaseRequest("/rest/v1/build_requests",{
   method:"POST",
-  headers:{Prefer:"return=representation"},
+  headers:{Prefer:"return=representation","x-aem-client-id":clientId()},
   body:JSON.stringify({repository,ref:input.ref?.trim()||"main",module:input.module?.trim()||null,variant:input.variant?.trim()||"debug",channel:input.channel||"development",client_id:clientId()})
  });
  if(!r.ok) throw new Error(`Build request failed: ${r.status}`);
@@ -23,7 +23,7 @@ export async function requestGithubBuild(input:BuildRequestInput){
 }
 
 export async function listBuildRequests(){
- const r=await supabaseRequest("`/rest/v1/build_requests?select=*&client_id=eq.${clientId()}&order=created_at.desc&limit=20`");
+ const r=await supabaseRequest(`/rest/v1/build_requests?select=*&client_id=eq.${clientId()}&order=created_at.desc&limit=20`,{headers:{"x-aem-client-id":clientId()}});
  if(!r.ok) throw new Error(`Build queue failed: ${r.status}`);
  return r.json();
 }
