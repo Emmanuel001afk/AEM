@@ -231,7 +231,7 @@ Deno.serve(async (req) => {
       const externalId = String(repo.id);
       let { data: app } = await sb
         .from("applications")
-        .select("id,provider,project,name,package_identity")
+        .select("id,provider,project,name,package_identity,description_source,icon_source")
         .eq("provider", "github")
         .eq("source_external_id", externalId)
         .maybeSingle();
@@ -239,7 +239,7 @@ Deno.serve(async (req) => {
       if (!app) {
         const byProject = await sb
           .from("applications")
-          .select("id,provider,project,name,package_identity")
+          .select("id,provider,project,name,package_identity,description_source,icon_source")
           .eq("provider", "github")
           .eq("project", full)
           .maybeSingle();
@@ -254,8 +254,10 @@ Deno.serve(async (req) => {
         source_visibility: repo.private ? "private" : "public",
         name: String(repo.name),
         description: repo.description || null,
+        description_source: "github",
         source_url: repo.html_url,
         icon_url: repo.owner?.avatar_url || null,
+        icon_source: "github-avatar",
         platforms: android ? (web ? ["android", "web"] : ["android"]) : ["web"],
         updated_at: new Date().toISOString()
       };
@@ -264,6 +266,18 @@ Deno.serve(async (req) => {
       const iconCandidate = (tree.tree || []).find((x: any) => x.type === "blob" && /(^|\/)(icon|logo|ic_launcher)([-_a-z0-9]*)\.(png|webp|jpg|jpeg)$/i.test(String(x.path)));
       if (iconCandidate) {
         appPatch.icon_url = `https://raw.githubusercontent.com/${full}/${repo.default_branch || "main"}/${String(iconCandidate.path).split("/").map(encodeURIComponent).join("/")}`;
+        appPatch.icon_source = "repository";
+      }
+
+      // Provider sync refreshes provider-owned metadata only. Manual metadata
+      // remains authoritative so a sync cannot silently overwrite it.
+      if (app?.description_source === "manual") {
+        delete appPatch.description;
+        delete appPatch.description_source;
+      }
+      if (app?.icon_source === "manual") {
+        delete appPatch.icon_url;
+        delete appPatch.icon_source;
       }
 
       if (!app) {
