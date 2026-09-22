@@ -107,7 +107,7 @@ async function syncWorkflowArtifacts(full: string, gh: Record<string, string>, a
           application_id: app.id,
           source_release_id: sourceReleaseId,
           version_name: `workflow-${run.run_number || run.id}`,
-          version_code: null,
+          version_code: Number(run.run_number || 0) || null,
           channel: "development",
           status: "published",
           title: artifactName,
@@ -138,8 +138,8 @@ async function syncWorkflowArtifacts(full: string, gh: Record<string, string>, a
             download_url: url,
             size_bytes: bytes.byteLength,
             sha256: digest,
-            package_identity: null,
-            version_code: null
+            package_identity: app.package_identity || null,
+            version_code: Number(run.run_number || 0) || null
           });
           if (inserted.error) throw inserted.error;
           discovered++;
