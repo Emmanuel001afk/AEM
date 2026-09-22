@@ -54,11 +54,39 @@ jobs:
             --arg source_release_id "github-actions-${{ github.event.workflow_run.id }}" \
             --arg signing_certificate_sha256 "$signing_cert" \
             '{action:$action,repo:$repo,run_id:$run_id,filename:$filename,application_name:$application_name,version_name:$version_name,version_code:$version_code,channel:$channel,package_identity:$package_identity,title:$title,source_release_id:$source_release_id,signing_certificate_sha256:$signing_certificate_sha256}')"
-          PREPARE="$(curl -fsS -X POST "https://wfvvmyixqcwosmuldxoq.supabase.co/functions/v1/aem-publish-github-artifact" \
-            -H "apikey: $SUPABASE_KEY" -H "Authorization: Bearer $SUPABASE_KEY" \
-            -H "Content-Type: application/json" -H "x-github-token: $GH_TOKEN" --data "$META")"
+          prepare_upload() {
+            local response_file status prepare_attempt
+            for prepare_attempt in 1 2 3; do
+              response_file="$(mktemp)"
+              status="$(
+                curl -sS -o "$response_file" -w '%{http_code}' \
+                  --connect-timeout 30 --max-time 60 \
+                  -X POST "https://wfvvmyixqcwosmuldxoq.supabase.co/functions/v1/aem-publish-github-artifact" \
+                  -H "apikey: $SUPABASE_KEY" -H "Authorization: Bearer $SUPABASE_KEY" \
+                  -H "Content-Type: application/json" -H "x-github-token: $GH_TOKEN" \
+                  --data "$META"
+              )" || status="000"
+              if [[ "$status" =~ ^2[0-9][0-9]$ ]]; then
+                cat "$response_file"
+                rm -f "$response_file"
+                return 0
+              fi
+              echo "Prepare attempt $prepare_attempt failed with HTTP $status" >&2
+              cat "$response_file" >&2
+              rm -f "$response_file"
+              if [[ "$prepare_attempt" -lt 3 ]]; then
+                sleep $((prepare_attempt * 15))
+              fi
+            done
+            return 1
+          }
+
+          PREPARE="$(prepare_upload)" || {
+            echo "Unable to prepare Supabase upload after retries" >&2
+            exit 1
+          }
           upload_url="$(jq -er '.upload_url' <<<"$PREPARE")"
-          object_path="$(jq -er '.path' <<<"$PREPARE")"
+          object_path="$(jq -er '.path // .Key' <<<"$PREPARE")"
           upload_response="$(mktemp)"
           upload_headers="$(mktemp)"
           apk_size="$size_bytes"
@@ -94,12 +122,12 @@ jobs:
               exit 1
             fi
             sleep $((attempt * 15))
-            PREPARE="$(curl -fsS -X POST "https://wfvvmyixqcwosmuldxoq.supabase.co/functions/v1/aem-publish-github-artifact" \
-              -H "apikey: $SUPABASE_KEY" -H "Authorization: Bearer $SUPABASE_KEY" \
-              -H "Content-Type: application/json" -H "x-github-token: $GH_TOKEN" \
-              --data "$META")"
+            PREPARE="$(prepare_upload)" || {
+              echo "Unable to refresh Supabase upload URL after retries" >&2
+              exit 1
+            }
             upload_url="$(jq -er '.upload_url' <<<"$PREPARE")"
-            object_path="$(jq -er '.path' <<<"$PREPARE")"
+            object_path="$(jq -er '.path // .Key' <<<"$PREPARE")"
           done
           FINALIZE="$(jq -n \
             --arg action "finalize" \
