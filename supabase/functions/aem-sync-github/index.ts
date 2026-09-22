@@ -317,7 +317,8 @@ Deno.serve(async (req) => {
             filename: asset.name,
             download_url: url,
             size_bytes: bytes.byteLength,
-            sha256: digest
+            sha256: digest,
+            package_identity: app.package_identity || null
           });
           if (inserted.error) throw inserted.error;
           artifactsDiscovered++;
@@ -374,7 +375,8 @@ Deno.serve(async (req) => {
             filename,
             download_url: url,
             size_bytes: bytes.byteLength,
-            sha256: digest
+            sha256: digest,
+            package_identity: app.package_identity || null
           });
           if (inserted.error) throw inserted.error;
           releasesDiscovered++;
