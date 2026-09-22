@@ -24,6 +24,7 @@ jobs:
           SUPABASE_URL: https://wfvvmyixqcwosmuldxoq.supabase.co
           SUPABASE_KEY: sb_publishable_Imgtr_W_Z868cBsNEcWpeg_89FE2Mvb
           RUN_ID: ${{ github.run_id }}
+          GH_TOKEN: ${{ secrets.APK_STORE_TOKEN }}
         run: |
           set -euo pipefail
           rows="$(curl -fsS "$SUPABASE_URL/rest/v1/build_requests?select=*&status=eq.queued&order=created_at.asc&limit=1" -H "apikey: $SUPABASE_KEY" -H "Authorization: Bearer $SUPABASE_KEY")"
