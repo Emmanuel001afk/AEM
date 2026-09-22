@@ -39,6 +39,15 @@ Deno.serve(async(req)=>{
   if(appRes.error)throw appRes.error;
   if(!appRes.data)return json({error:`AEM application is not registered for ${repo}`},404);
   const appId=appRes.data.id;
+  const requestId=String(req.headers.get("x-aem-request-id")||"").trim();
+  const requestRunId=Number(req.headers.get("x-aem-run-id")||runId);
+  if(requestId){
+    const request=await sb.from("build_requests").select("id,repository,workflow_run_id,status").eq("id",requestId).maybeSingle();
+    if(request.error)throw request.error;
+    if(!request.data)return json({error:"Build request not found"},404);
+    if(request.data.repository!==repo)return json({error:"Build request repository mismatch"},403);
+    if(Number(request.data.workflow_run_id||0)!==requestRunId)return json({error:"Build request workflow mismatch"},403);
+  }
   if(appRes.data.package_identity&&appRes.data.package_identity!==packageIdentity)return json({error:`APK package identity ${packageIdentity} does not match catalog package ${appRes.data.package_identity}`},409);
 
   const path=`${repo}/${clean(versionName)}/${clean(sourceReleaseId)}/${clean(filename)}`;
@@ -103,6 +112,12 @@ Deno.serve(async(req)=>{
     if(notificationResult.error) console.error("Notification insert failed:",notificationResult.error);
   } catch(error) {
     console.error("Unexpected notification insert error:",error);
+  }
+  if(requestId){
+    const now=new Date().toISOString();
+    const updated=await sb.from("build_requests").update({status:"succeeded",release_id:release.id,artifact_id:ins.data.id,error:null,updated_at:now}).eq("id",requestId).eq("status","running").select("id").maybeSingle();
+    if(updated.error)throw updated.error;
+    await sb.from("manager_state").upsert({id:"default",last_run_at:now,last_success_at:now,status:"idle",active_operations:0,updated_at:now},{onConflict:"id"});
   }
   return json({ok:true,release_id:release.id,artifact_id:ins.data.id,download_url:objectUrl,sha256,size_bytes:sizeBytes});
  }catch(e){console.error("AEM publish error",e);return json({error:e instanceof Error?e.message:String(e)},500)}
