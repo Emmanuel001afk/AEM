@@ -73,6 +73,11 @@ jobs:
         env:
           MODULE: ${{ steps.claim.outputs.module }}
           VARIANT: ${{ steps.claim.outputs.variant }}
+          REPO: ${{ steps.claim.outputs.repo }}
+          AEM_KEYSTORE_BASE64: ${{ secrets.AEM_KEYSTORE_BASE64 }}
+          AEM_KEYSTORE_PASSWORD: ${{ secrets.AEM_KEYSTORE_PASSWORD }}
+          AEM_KEY_ALIAS: ${{ secrets.AEM_KEY_ALIAS }}
+          AEM_KEY_PASSWORD: ${{ secrets.AEM_KEY_PASSWORD }}
         run: |
           set -euo pipefail
           if [ -f "capacitor.config.json" ] || [ -f "capacitor.config.ts" ]; then
@@ -104,6 +109,30 @@ PY
               python3 native/patch_android_manifest.py android/app/src/main/AndroidManifest.xml
             fi
             npx --yes @capacitor/cli@7 copy android
+            if [ "$VARIANT" = "release" ] && [ "$REPO" = "Emmanuel001afk/AEM" ]; then
+              test -n "$AEM_KEYSTORE_BASE64"
+              test -n "$AEM_KEYSTORE_PASSWORD"
+              test -n "$AEM_KEY_ALIAS"
+              test -n "$AEM_KEY_PASSWORD"
+              printf "%s" "$AEM_KEYSTORE_BASE64" | base64 --decode > android/aem-release.keystore
+              cat >> android/app/build.gradle <<'EOF'
+android {
+    signingConfigs {
+        aemRelease {
+            storeFile file("../aem-release.keystore")
+            storePassword System.getenv("AEM_KEYSTORE_PASSWORD")
+            keyAlias System.getenv("AEM_KEY_ALIAS")
+            keyPassword System.getenv("AEM_KEY_PASSWORD")
+        }
+    }
+    buildTypes {
+        release {
+            signingConfig signingConfigs.aemRelease
+        }
+    }
+}
+EOF
+            fi
             (cd android && if [ "$VARIANT" = "release" ]; then ./gradlew assembleRelease; else ./gradlew assembleDebug; fi)
             apk="$(find android -type f -path "*/build/outputs/apk/*.apk" | head -n 1 | sed "s#^\./##")"
           else
