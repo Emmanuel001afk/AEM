@@ -23,26 +23,25 @@ jobs:
         env:
           SUPABASE_URL: https://wfvvmyixqcwosmuldxoq.supabase.co
           SUPABASE_KEY: sb_publishable_Imgtr_W_Z868cBsNEcWpeg_89FE2Mvb
-          RUN_ID: ${{ github.run_id }}
           GH_TOKEN: ${{ secrets.APK_STORE_TOKEN }}
+          RUN_ID: ${{ github.run_id }}
         run: |
           set -euo pipefail
-          rows="$(curl -fsS "$SUPABASE_URL/rest/v1/build_requests?select=*&status=eq.queued&order=created_at.asc&limit=1" -H "apikey: $SUPABASE_KEY" -H "Authorization: Bearer $SUPABASE_KEY")"
-          if [ "$(jq 'length' <<<"$rows")" = "0" ]; then echo "found=false" >> "$GITHUB_OUTPUT"; exit 0; fi
-          id="$(jq -r '.[0].id' <<<"$rows")"
-          repo="$(jq -r '.[0].repository' <<<"$rows")"
-          ref="$(jq -r '.[0].ref' <<<"$rows")"
-          module="$(jq -r '.[0].module // empty' <<<"$rows")"
-          variant="$(jq -r '.[0].variant // "debug"' <<<"$rows")"
-          channel="$(jq -r '.[0].channel // "development"' <<<"$rows")"
-          curl -fsS -X PATCH "$SUPABASE_URL/rest/v1/build_requests?id=eq.$id" -H "apikey: $SUPABASE_KEY" -H "Authorization: Bearer $SUPABASE_KEY" -H "Content-Type: application/json" --data "{\"status\":\"running\",\"workflow_run_id\":$RUN_ID,\"updated_at\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}"
-          echo "id=$id" >> "$GITHUB_OUTPUT"
-          echo "repo=$repo" >> "$GITHUB_OUTPUT"
-          echo "ref=$ref" >> "$GITHUB_OUTPUT"
-          echo "module=$module" >> "$GITHUB_OUTPUT"
-          echo "variant=$variant" >> "$GITHUB_OUTPUT"
-          echo "channel=$channel" >> "$GITHUB_OUTPUT"
-          echo "found=true" >> "$GITHUB_OUTPUT"
+          response="$(curl -fsS -X POST "$SUPABASE_URL/functions/v1/aem-build-queue" \
+            -H "apikey: $SUPABASE_KEY" \
+            -H "Authorization: Bearer $SUPABASE_KEY" \
+            -H "x-github-token: $GH_TOKEN" \
+            -H "Content-Type: application/json" \
+            --data "$(jq -nc --arg run "$RUN_ID" '{action:"claim",run_id:($run|tonumber)}')")"
+          found="$(jq -r '.found // false' <<<"$response")"
+          echo "found=$found" >> "$GITHUB_OUTPUT"
+          if [ "$found" != "true" ]; then exit 0; fi
+          jq -r '.request.id' <<<"$response" | xargs -I{} echo "id={}" >> "$GITHUB_OUTPUT"
+          jq -r '.request.repository' <<<"$response" | xargs -I{} echo "repo={}" >> "$GITHUB_OUTPUT"
+          jq -r '.request.ref' <<<"$response" | xargs -I{} echo "ref={}" >> "$GITHUB_OUTPUT"
+          jq -r '.request.module // empty' <<<"$response" | xargs -I{} echo "module={}" >> "$GITHUB_OUTPUT"
+          jq -r '.request.variant // "debug"' <<<"$response" | xargs -I{} echo "variant={}" >> "$GITHUB_OUTPUT"
+          jq -r '.request.channel // "development"' <<<"$response" | xargs -I{} echo "channel={}" >> "$GITHUB_OUTPUT"
       - name: Checkout requested repository
         if: steps.claim.outputs.found == 'true'
         uses: actions/checkout@v4
@@ -168,19 +167,21 @@ PY
         env:
           SUPABASE_URL: https://wfvvmyixqcwosmuldxoq.supabase.co
           SUPABASE_KEY: sb_publishable_Imgtr_W_Z868cBsNEcWpeg_89FE2Mvb
+          GH_TOKEN: ${{ secrets.APK_STORE_TOKEN }}
           REQUEST_ID: ${{ steps.claim.outputs.id }}
         run: |
-          curl -fsS -X PATCH "$SUPABASE_URL/rest/v1/build_requests?id=eq.$REQUEST_ID" \
-            -H "apikey: $SUPABASE_KEY" \
-            -H "Authorization: Bearer $SUPABASE_KEY" \
-            -H "Content-Type: application/json" \
-            --data '{"status":"queued","workflow_run_id":null,"error":null,"updated_at":"'"$(date -u +%Y-%m-%dT%H:%M:%SZ)"'"}'
+          curl -fsS -X POST "$SUPABASE_URL/functions/v1/aem-build-queue" \
+            -H "apikey: $SUPABASE_KEY" -H "Authorization: Bearer $SUPABASE_KEY" -H "x-github-token: $GH_TOKEN" \
+            -H "Content-Type: application/json" --data "$(jq -nc --arg id "$REQUEST_ID" '{action:"cancel",id:$id}')"
 
       - name: Mark failed
         if: failure() && steps.claim.outputs.found == 'true'
         env:
           SUPABASE_URL: https://wfvvmyixqcwosmuldxoq.supabase.co
           SUPABASE_KEY: sb_publishable_Imgtr_W_Z868cBsNEcWpeg_89FE2Mvb
+          GH_TOKEN: ${{ secrets.APK_STORE_TOKEN }}
           REQUEST_ID: ${{ steps.claim.outputs.id }}
         run: |
-          curl -fsS -X PATCH "$SUPABASE_URL/rest/v1/build_requests?id=eq.$REQUEST_ID" -H "apikey: $SUPABASE_KEY" -H "Authorization: Bearer $SUPABASE_KEY" -H "Content-Type: application/json" --data '{"status":"failed","error":"Build or publication failed","updated_at":"'"$(date -u +%Y-%m-%dT%H:%M:%SZ)"'"}'
+          curl -fsS -X POST "$SUPABASE_URL/functions/v1/aem-build-queue" \
+            -H "apikey: $SUPABASE_KEY" -H "Authorization: Bearer $SUPABASE_KEY" -H "x-github-token: $GH_TOKEN" \
+            -H "Content-Type: application/json" --data "$(jq -nc --arg id "$REQUEST_ID" --arg error "Build or publication failed" '{action:"fail",id:$id,error:$error}')"
