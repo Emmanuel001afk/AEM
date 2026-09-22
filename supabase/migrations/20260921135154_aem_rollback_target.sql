@@ -1,0 +1,2 @@
+-- Historical migration 20260921135154_aem_rollback_target is included in the squashed baseline for reproducibility.
+-- No additional SQL is required here on a fresh database.
