@@ -24,6 +24,8 @@ Deno.serve(async(req)=>{
   if(action==="claim"){
     const row=(await sb.from("build_requests").select("*").eq("status","queued").order("created_at",{ascending:true}).limit(1).maybeSingle()).data;
     if(!row)return json({found:false});
+    const access=await fetch(`https://api.github.com/repos/${row.repository}`,{headers:{"Accept":"application/vnd.github+json","Authorization":`Bearer ${token}`,"X-GitHub-Api-Version":"2022-11-28"}});
+    if(!access.ok)return json({found:false});
     const updated=await sb.from("build_requests").update({status:"running",workflow_run_id:Number(body.run_id||0)||null,updated_at:new Date().toISOString()}).eq("id",row.id).eq("status","queued").select("*").single();
     if(updated.error)throw updated.error;
     return json({found:true,request:updated.data});
