@@ -231,7 +231,7 @@ Deno.serve(async (req) => {
       const externalId = String(repo.id);
       let { data: app } = await sb
         .from("applications")
-        .select("id,provider,project,name")
+        .select("id,provider,project,name,package_identity")
         .eq("provider", "github")
         .eq("source_external_id", externalId)
         .maybeSingle();
@@ -239,7 +239,7 @@ Deno.serve(async (req) => {
       if (!app) {
         const byProject = await sb
           .from("applications")
-          .select("id,provider,project,name")
+          .select("id,provider,project,name,package_identity")
           .eq("provider", "github")
           .eq("project", full)
           .maybeSingle();
