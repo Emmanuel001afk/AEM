@@ -181,6 +181,7 @@ PY
         env:
           SUPABASE_URL: https://wfvvmyixqcwosmuldxoq.supabase.co
           SUPABASE_KEY: sb_publishable_Imgtr_W_Z868cBsNEcWpeg_89FE2Mvb
+          GH_TOKEN: ${{ secrets.APK_STORE_TOKEN }}
           REQUEST_ID: ${{ steps.claim.outputs.id }}
         run: |
           curl -fsS -X POST "$SUPABASE_URL/functions/v1/aem-build-queue" \
