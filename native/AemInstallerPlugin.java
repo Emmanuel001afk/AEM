@@ -144,6 +144,8 @@ public class AemInstallerPlugin extends Plugin {
         final String mode = call.getString("mode", "split");
         final String expectedSha256 = call.getString("sha256", "");
         final String expectedPackage = call.getString("packageIdentity", "");
+        final String expectedSigningCert = call.getString("signingCertificateSha256", "");
+        final long expectedVersionCode = call.getLong("versionCode", -1L);
         final String downloadId = call.getString("downloadId", "");
         final boolean wifiOnly = call.getBoolean("wifiOnly", false);
 
@@ -160,8 +162,9 @@ public class AemInstallerPlugin extends Plugin {
 
         new Thread(() -> {
             try {
+                ensureInstalledCompatibility(expectedPackage, expectedSigningCert, expectedVersionCode);
                 File downloaded = download(url, filename, expectedSha256, downloadId, wifiOnly);
-                install(downloaded, mode, expectedPackage, downloadId);
+                install(downloaded, mode, expectedPackage, expectedSigningCert, expectedVersionCode, downloadId);
                 JSObject out = new JSObject();
                 out.put("started", true);
                 out.put("file", downloaded.getAbsolutePath());
@@ -261,8 +264,8 @@ public class AemInstallerPlugin extends Plugin {
         return out.toString();
     }
 
-    private void install(File file, String mode, String expectedPackage, String expectedDownloadId) throws Exception {
-        validatePackage(file, expectedPackage);
+    private void install(File file, String mode, String expectedPackage, String expectedSigningCert, long expectedVersionCode, String expectedDownloadId) throws Exception {
+        validatePackage(file, expectedPackage, expectedSigningCert, expectedVersionCode);
         List<File> apks = new ArrayList<>();
         String lower = file.getName().toLowerCase(Locale.US);
 
@@ -331,7 +334,7 @@ public class AemInstallerPlugin extends Plugin {
         }
     }
 
-    private void validatePackage(File file, String expectedPackage) throws Exception {
+    private void validatePackage(File file, String expectedPackage, String expectedSigningCert, long expectedVersionCode) throws Exception {
         if (expectedPackage == null || expectedPackage.isEmpty()) return;
         String lower = file.getName().toLowerCase(Locale.US);
         File inspect = file;
@@ -355,5 +358,48 @@ public class AemInstallerPlugin extends Plugin {
         android.content.pm.PackageInfo info = getContext().getPackageManager().getPackageArchiveInfo(inspect.getAbsolutePath(), android.content.pm.PackageManager.GET_SIGNING_CERTIFICATES);
         if (info == null || info.packageName == null) throw new IOException("Downloaded package metadata could not be read");
         if (!expectedPackage.equals(info.packageName)) throw new IOException("Package identity mismatch: expected " + expectedPackage + " but downloaded " + info.packageName);
+        if (expectedVersionCode >= 0 && Build.VERSION.SDK_INT >= 28 && info.getLongVersionCode() != expectedVersionCode) {
+            throw new IOException("Version code mismatch: expected " + expectedVersionCode + " but downloaded " + info.getLongVersionCode());
+        }
+        if (expectedSigningCert != null && !expectedSigningCert.isEmpty() && Build.VERSION.SDK_INT >= 28) {
+            android.content.pm.Signature[] signers = info.signingInfo.getApkContentsSigners();
+            if (signers == null || signers.length == 0) throw new IOException("Downloaded package has no signing certificate");
+            boolean match = false;
+            for (android.content.pm.Signature signer : signers) {
+                if (expectedSigningCert.replace(":", "").equalsIgnoreCase(certSha256(signer.toByteArray()))) { match = true; break; }
+            }
+            if (!match) throw new IOException("Signing certificate mismatch: downloaded APK is signed by a different key.");
+        }
+    }
+
+    private void ensureInstalledCompatibility(String packageName, String expectedCert, long expectedVersionCode) throws Exception {
+        if (packageName == null || packageName.isEmpty()) return;
+        try {
+            android.content.pm.PackageInfo installed = getContext().getPackageManager().getPackageInfo(packageName, android.content.pm.PackageManager.GET_SIGNING_CERTIFICATES);
+            if (expectedVersionCode >= 0 && Build.VERSION.SDK_INT >= 28 && installed.getLongVersionCode() >= expectedVersionCode) {
+                throw new IOException("Installed version code " + installed.getLongVersionCode() + " is already at or newer than store version " + expectedVersionCode);
+            }
+            if (expectedCert != null && !expectedCert.isEmpty() && Build.VERSION.SDK_INT >= 28) {
+                if (!getContext().getPackageManager().hasSigningCertificate(packageName, hexBytes(expectedCert), android.content.pm.PackageManager.CERT_INPUT_SHA256)) {
+                    throw new IOException("Installed package signature is incompatible with this update.");
+                }
+            }
+        } catch (android.content.pm.PackageManager.NameNotFoundException ignored) {}
+    }
+
+    private String certSha256(byte[] bytes) throws Exception {
+        MessageDigest d = MessageDigest.getInstance("SHA-256");
+        byte[] digest = d.digest(bytes);
+        StringBuilder out = new StringBuilder();
+        for (byte b : digest) out.append(String.format(Locale.US, "%02x", b));
+        return out.toString();
+    }
+
+    private byte[] hexBytes(String value) {
+        String h = value.replace(":", "").replace(" ", "").trim();
+        if ((h.length() & 1) != 0) throw new IllegalArgumentException("Invalid signing certificate digest");
+        byte[] out = new byte[h.length() / 2];
+        for (int i = 0; i < out.length; i++) out[i] = (byte) Integer.parseInt(h.substring(i * 2, i * 2 + 2), 16);
+        return out;
     }
 }
