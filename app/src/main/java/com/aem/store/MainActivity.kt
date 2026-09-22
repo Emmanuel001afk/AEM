@@ -208,7 +208,10 @@ private fun AemApp(onDownload:(StoreApp)->Unit,onOpen:(StoreApp)->Unit) {
     var selectedApp by remember { mutableStateOf<StoreApp?>(null) }
     var downloadRows by remember { mutableStateOf(emptyList<DownloadRow>()) }
     val context=LocalContext.current
-    var apps by remember { mutableStateOf(listOf(
+    var apps by remember { mutableStateOf(emptyList<StoreApp>()) }
+    /* source-driven catalog */
+    var legacyAppsDisabled by remember { mutableStateOf(false) }
+    if (false) listOf(
         StoreApp("Phormi","Private Android browser partner for AEM.","Browsers","GitHub · phormi-android",
             listOf("Web browsing","Downloads","AI/API integration"),listOf("Internet"),"Android","com.uong.phormi",null),
         StoreApp("Lite Read","PDF and document platform.","Productivity","GitHub · lite-read",
