@@ -60,6 +60,8 @@ Deno.serve(async(req)=>{
   const ins=await sb.from("artifacts").insert({release_id:release.id,platform:"android",kind:filename.toLowerCase().endsWith(".apks")?"apks":filename.toLowerCase().endsWith(".xapk")?"xapk":filename.toLowerCase().endsWith(".apkm")?"apkm":"apk",filename,download_url:url,size_bytes:bytes.byteLength,sha256:sha,package_identity:packageIdentity||null,version_code:versionCode}).select("id").single();
   if(ins.error)throw ins.error;
   if(requestId)await sb.from("build_requests").update({status:"succeeded",workflow_run_id:runId,application_id:appId,release_id:release.id,artifact_id:ins.data.id,error:null,updated_at:new Date().toISOString()}).eq("id",requestId);
+  await sb.from("release_history").insert({application_id:appId,release_id:release.id,reason:"published"}).catch(()=>{});
+  await sb.from("notifications").insert({kind:"release",title:`New ${appName} release`,body:`${versionName} is now available in AEM Store.`,app_id:appId,release_id:release.id}).catch(()=>{});
   return json({ok:true,release_id:release.id,artifact_id:ins.data.id,download_url:url,sha256:sha,size_bytes:bytes.byteLength});
  }catch(e){return json({error:e instanceof Error?e.message:String(e)},500)}
 });
