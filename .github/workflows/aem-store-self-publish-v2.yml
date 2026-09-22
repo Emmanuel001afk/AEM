@@ -30,7 +30,8 @@ jobs:
         run: |
           set -euo pipefail
           signing_cert="$(keytool -printcert -jarfile "$APK" | sed -n '/SHA256:/{s/^[[:space:]]*SHA256:[[:space:]]*//;p;q}')"
-          test -n "$signing_cert"\n          SUPABASE_KEY="$(sed -n 's/.*DEFAULT_PUBLISHABLE_KEY="\([^"]*\)".*/\1/p' src/services/supabase/client.ts)"
+          test -n "$signing_cert"
+          SUPABASE_KEY="$(sed -n 's/.*DEFAULT_PUBLISHABLE_KEY="\([^"]*\)".*/\1/p' src/services/supabase/client.ts)"
           AAPT="$(find "${ANDROID_HOME:-/opt/android-sdk}" -type f -name aapt | sort -V | tail -n 1)"
           badging="$("$AAPT" dump badging "$APK" | head -n 1)"
           package="$(sed -n "s/.*package: name='\\([^\']*\\)'.*/\\1/p" <<<"$badging")"
