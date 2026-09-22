@@ -141,7 +141,6 @@ jobs:
                 sed -i '/^[[:space:]]*storePassword System.getenv("AEM_KEYSTORE_PASSWORD")[[:space:]]*$/a\            keyAlias System.getenv("AEM_KEY_ALIAS")' android/app/build.gradle
                 sed -i '/^[[:space:]]*keyAlias System.getenv("AEM_KEY_ALIAS")[[:space:]]*$/a\            keyPassword System.getenv("AEM_KEY_PASSWORD")' android/app/build.gradle
                 sed -i '/^[[:space:]]*keyPassword System.getenv("AEM_KEY_PASSWORD")[[:space:]]*$/a\        }' android/app/build.gradle
-                sed -i '/^[[:space:]]*aemRelease[[:space:]]*{/,/^[[:space:]]*}/ { }' android/app/build.gradle
                 sed -i '/^[[:space:]]*keyPassword System.getenv("AEM_KEY_PASSWORD")[[:space:]]*$/a\    }' android/app/build.gradle
               fi
               if ! grep -q 'signingConfig signingConfigs.aemRelease' android/app/build.gradle; then
