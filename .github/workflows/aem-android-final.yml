@@ -18,6 +18,9 @@ jobs:
         with:
           distribution: temurin
           java-version: "21"
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          cache-overwrite-existing: true
       - run: npm install
       - run: npx vite build --config vite.mobile.config.ts
       - run: npm install --no-save @capacitor/cli@7 @capacitor/core@7 @capacitor/android@7
@@ -95,13 +98,40 @@ jobs:
           p.write_text(s)
           PY
 
+      - name: Configure Maven Central mirror
+        working-directory: android
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path("settings.gradle")
+          if not p.exists():
+              raise SystemExit("Capacitor Android settings.gradle not found")
+          s = p.read_text()
+          mirror = 'maven { url "https://maven-central.storage-download.googleapis.com/maven2/" }'
+          if mirror not in s:
+              s = s.replace("mavenCentral()", mirror + "\n            mavenCentral()")
+              p.write_text(s)
+          PY
+
       - name: Build signed release APK
         working-directory: android
         env:
           AEM_KEYSTORE_PASSWORD: ${{ secrets.AEM_KEYSTORE_PASSWORD }}
           AEM_KEY_ALIAS: ${{ secrets.AEM_KEY_ALIAS }}
           AEM_KEY_PASSWORD: ${{ secrets.AEM_KEY_PASSWORD }}
-        run: ./gradlew assembleRelease
+        run: |
+          set -euo pipefail
+          for attempt in 1 2 3 4 5; do
+            echo "Release build attempt $attempt/5"
+            if ./gradlew --max-workers=2 assembleRelease; then
+              exit 0
+            fi
+            if [ "$attempt" -lt 5 ]; then
+              sleep $((attempt * 20))
+            fi
+          done
+          exit 1
 
       - uses: actions/upload-artifact@v4
         with:
