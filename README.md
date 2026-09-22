@@ -1,8 +1,8 @@
 # AEM
 
-AEM is a personal software distribution store. It can discover GitHub repositories, queue Android source builds, store produced APKs in its own Supabase artifact storage, and distribute releases through the shared web + Android clients.
+AEM is a personal software distribution store. It uses GitHub as its source provider, receives published APK artifacts, stores them in its own Supabase artifact storage, and distributes releases through the shared web + Android clients.
 
-Core pipeline: source -> existing build -> release artifact -> release event -> AEM ingestion -> validation -> publication -> install/update.
+Core pipeline: GitHub source -> published artifact -> AEM ingestion -> validation -> publication -> install/update.
 
 The foundation is domain-first, provider-neutral, event-driven, storage-neutral, installer-aware, partner-aware, and designed for shared web + Android clients. GitHub is the first source provider. Android package identity, signing identity, and version code remain deterministic security boundaries; AI does not decide installation safety.
 
