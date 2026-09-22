@@ -23,7 +23,8 @@ Deno.serve(async(req)=>{
    channel=["stable","beta","development"].includes(req.headers.get("x-aem-channel")||"")?req.headers.get("x-aem-channel")!:"development";
    packageIdentity=req.headers.get("x-aem-package")||"";
    title=req.headers.get("x-aem-title")||"AEM APK";
-   sourceReleaseId=req.headers.get("x-aem-source-release-id")||`github-actions-${runId}`;\n   signingCertificateSha256=(req.headers.get("x-aem-signing-cert")||"").trim();
+   sourceReleaseId=req.headers.get("x-aem-source-release-id")||`github-actions-${runId}`;
+   signingCertificateSha256=(req.headers.get("x-aem-signing-cert")||"").trim();
    bytes=new Uint8Array(await req.arrayBuffer());
   }else{
    const b=await req.json();repo=String(b.repo||"");requestId=String(b.request_id||"");runId=Number(b.run_id||0);filename=String(b.filename||"app.apk");appName=String(b.application_name||"Application");versionName=String(b.version_name||"unknown");const vc=Number(b.version_code);versionCode=Number.isFinite(vc)?vc:null;channel=["stable","beta","development"].includes(String(b.channel))?String(b.channel):"development";packageIdentity=String(b.package_identity||"");title=String(b.title||"AEM APK");sourceReleaseId=String(b.source_release_id||`github-actions-${runId}`);signingCertificateSha256=String(b.signing_certificate_sha256||"").trim();if(!repo||!runId)return json({error:"Missing publish metadata"},400);const token=req.headers.get("x-github-token");if(!token)return json({error:"Missing GitHub credential"},401);return json({error:"JSON artifact publishing is disabled; send the APK bytes directly."},415);
