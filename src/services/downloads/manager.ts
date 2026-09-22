@@ -1,5 +1,5 @@
 import {supabaseRequest} from "../supabase/client";
-export type DownloadStatus="queued"|"downloading"|"paused"|"completed"|"failed"|"cancelled";
+export type DownloadStatus="queued"|"downloading"|"paused"|"installing"|"completed"|"failed"|"cancelled";
 export interface DownloadTask{id:string;appId:string;releaseId:string;filename:string;url:string;status:DownloadStatus;bytesDownloaded:number;totalBytes?:number;error?:string;createdAt:string;}
 export async function recordDownload(t:Omit<DownloadTask,"id"|"createdAt">){
  const r=await supabaseRequest("/rest/v1/downloads",{method:"POST",headers:{Prefer:"return=representation"},body:JSON.stringify({application_id:Number(t.appId),release_id:Number(t.releaseId),filename:t.filename,url:t.url,status:t.status,bytes_downloaded:t.bytesDownloaded,total_bytes:t.totalBytes,error:t.error})});
