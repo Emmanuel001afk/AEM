@@ -1,0 +1,2 @@
+-- Historical migration 20260921133545_aem_build_pipeline is included in the squashed baseline for reproducibility.
+-- No additional SQL is required here on a fresh database.
