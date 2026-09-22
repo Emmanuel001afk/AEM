@@ -7,7 +7,11 @@ export interface ManagerOptions {
 }
 
 function releaseCode(release:any):number {
-  return Number(release?.version?.code ?? 0);
+  const releaseCode=Number(release?.version?.code ?? 0);
+  const artifactCodes=(Array.isArray(release?.artifacts)?release.artifacts:[])
+    .map((artifact:any)=>Number(artifact?.versionCode ?? 0))
+    .filter((code:number)=>Number.isFinite(code));
+  return Math.max(releaseCode,...artifactCodes);
 }
 
 function releaseTime(release:any):number {
