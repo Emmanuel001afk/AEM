@@ -84,6 +84,18 @@ jobs:
             fi
             npm install --no-save @capacitor/cli@7 @capacitor/core@7 @capacitor/android@7
             npx --yes @capacitor/cli@7 add android
+            if [ -f "android/app/build.gradle" ]; then
+              python3 - <<'PY'
+from pathlib import Path
+import os,re
+p=Path("android/app/build.gradle")
+s=p.read_text()
+n=os.environ.get("GITHUB_RUN_NUMBER","1")
+s=re.sub(r"versionCode\\s*(?:=\\s*|\\s+)\\d+", f"versionCode {n}", s)
+s=re.sub(r'versionName\\s*(?:=\\s*)?"[^"]+"', f'versionName "0.1.{n}"', s)
+p.write_text(s)
+PY
+            fi
             if [ -f "native/MainActivity.java" ] && [ -f "native/AemInstallerPlugin.java" ]; then
               mkdir -p android/app/src/main/java/com/aem/store
               cp native/MainActivity.java android/app/src/main/java/com/aem/store/MainActivity.java
