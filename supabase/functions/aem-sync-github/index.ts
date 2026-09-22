@@ -392,7 +392,7 @@ Deno.serve(async (req) => {
         .eq("releases.application_id", app.id)
         .eq("platform", "android");
 
-      if (android && (androidArtifactCount.count || 0) === 0) {
+      if (android && (!app.package_identity || (androidArtifactCount.count || 0) === 0)) {
         const pending = await sb
           .from("build_requests")
           .select("id")
