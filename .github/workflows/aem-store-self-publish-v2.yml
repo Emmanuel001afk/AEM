@@ -50,7 +50,7 @@ jobs:
             -H "x-aem-app-name: $app_name" \
             -H "x-aem-version-name: $version_name" \
             -H "x-aem-version-code: $version_code" \
-            -H "x-aem-channel: development" \
+            -H "x-aem-channel: stable" \
             -H "x-aem-package: $package" \
             -H "x-aem-signing-cert: $signing_cert" \
             -H "x-aem-title: AEM Store APK" \
