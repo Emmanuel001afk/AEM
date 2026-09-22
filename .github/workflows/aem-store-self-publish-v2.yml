@@ -59,11 +59,29 @@ jobs:
             -H "Content-Type: application/json" -H "x-github-token: $GH_TOKEN" --data "$META")"
           upload_url="$(jq -r '.upload_url' <<<"$PREPARE")"
           test -n "$upload_url" -a "$upload_url" != "null"
-          curl -fsS -X PUT "$upload_url" \
-            -H "Content-Type: application/vnd.android.package-archive" \
-            -H "Cache-Control: max-age=3600" \
-            -H "x-upsert: true" \
-            --data-binary "@$APK"
+          upload_response="$(mktemp)"
+          apk_size="$size_bytes"
+          for attempt in 1 2 3; do
+            status="$(
+              curl -sS -o "$upload_response" -w '%{http_code}' \
+                --retry 2 --retry-all-errors --connect-timeout 30 --max-time 600 \
+                -X PUT "$upload_url" \
+                -H "Content-Type: application/vnd.android.package-archive" \
+                -H "Content-Length: $apk_size" \
+                -H "Cache-Control: max-age=3600" \
+                --upload-file "$APK"
+            )" || status="000"
+            if [ "$status" -ge 200 ] && [ "$status" -lt 300 ]; then
+              cat "$upload_response"
+              break
+            fi
+            echo "APK upload attempt $attempt failed with HTTP $status" >&2
+            cat "$upload_response" >&2
+            if [ "$attempt" -eq 3 ]; then
+              exit 1
+            fi
+            sleep $((attempt * 10))
+          done
           FINALIZE="$(jq -n \
             --arg action "finalize" \
             --arg repo "Emmanuel001afk/AEM" \
