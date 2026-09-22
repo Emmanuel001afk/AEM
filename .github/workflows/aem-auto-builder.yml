@@ -1,4 +1,5 @@
 name: AEM Automatic GitHub Builder
+run-name: AEM Manager build #${{ github.run_number }}
 
 concurrency:
   group: aem-build-queue
