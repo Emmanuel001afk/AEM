@@ -41,11 +41,9 @@ Deno.serve(async(req)=>{
   const appId=appRes.data.id;
   if(appRes.data.package_identity&&appRes.data.package_identity!==packageIdentity)return json({error:`APK package identity ${packageIdentity} does not match catalog package ${appRes.data.package_identity}`},409);
 
-  const latest=await sb.from("releases").select("version_code").eq("application_id",appId).eq("channel",channel).eq("status","published").order("version_code",{ascending:false}).limit(1).maybeSingle();
-  if(latest.error)throw latest.error;
-  if(latest.data&&Number(versionCode)<=Number(latest.data.version_code||0))return json({error:`Refusing to publish version code ${versionCode}: latest published ${channel} version code is ${latest.data.version_code}.`},409);
-
   const path=`${repo}/${clean(versionName)}/${clean(sourceReleaseId)}/${clean(filename)}`;
+  const requestedObjectPath=String(b.object_path||b.path||path);
+  if(requestedObjectPath!==path)return json({error:`Storage object path mismatch: expected ${path}, received ${requestedObjectPath}.`},409);
 
   if(action==="prepare"){
     if(!path||path.startsWith("/")||path.includes(".."))return json({error:"Invalid Storage object path"},400);
@@ -61,6 +59,16 @@ Deno.serve(async(req)=>{
   }
 
   if(action!=="finalize")return json({error:"Unknown action"},400);
+  const existingRelease=await sb.from("releases").select("id,version_name,version_code,channel,status").eq("application_id",appId).eq("source_release_id",sourceReleaseId).maybeSingle();
+  if(existingRelease.error)throw existingRelease.error;
+  if(existingRelease.data){
+    const existingArtifact=await sb.from("artifacts").select("id,download_url,size_bytes,sha256").eq("release_id",existingRelease.data.id).eq("filename",filename).maybeSingle();
+    if(existingArtifact.error)throw existingArtifact.error;
+    if(existingArtifact.data)return json({ok:true,duplicate:true,release_id:existingRelease.data.id,artifact_id:existingArtifact.data.id,download_url:existingArtifact.data.download_url,size_bytes:existingArtifact.data.size_bytes,sha256:existingArtifact.data.sha256});
+  }
+  const latest=await sb.from("releases").select("version_code").eq("application_id",appId).eq("channel",channel).eq("status","published").order("version_code",{ascending:false}).limit(1).maybeSingle();
+  if(latest.error)throw latest.error;
+  if(latest.data&&Number(versionCode)<=Number(latest.data.version_code||0))return json({error:`Refusing to publish version code ${versionCode}: latest published ${channel} version code is ${latest.data.version_code}.`},409);
   const sizeBytes=Number(b.size_bytes||0);
   const sha256=String(b.sha256||"").trim();
   if(sizeBytes<=0||!sha256)return json({error:"Missing uploaded artifact checksum/size"},400);
@@ -71,7 +79,7 @@ Deno.serve(async(req)=>{
   const storedSize=Number(head.headers.get("content-length")||0);
   if(storedSize&&storedSize!==sizeBytes)return json({error:`Uploaded APK size mismatch: expected ${sizeBytes}, stored ${storedSize}.`},409);
 
-  let release=(await sb.from("releases").select("id").eq("application_id",appId).eq("source_release_id",sourceReleaseId).maybeSingle()).data;
+  let release=existingRelease.data;
   if(!release){
     const created=await sb.from("releases").insert({application_id:appId,source_release_id:sourceReleaseId,version_name:versionName,version_code:versionCode,channel,status:"published",title,notes:null,published_at:new Date().toISOString()}).select("id").single();
     if(created.error)throw created.error;
