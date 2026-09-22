@@ -25,6 +25,7 @@ jobs:
           SUPABASE_KEY: sb_publishable_Imgtr_W_Z868cBsNEcWpeg_89FE2Mvb
           GH_TOKEN: ${{ secrets.APK_STORE_TOKEN }}
           RUN_ID: ${{ github.run_id }}
+          GH_TOKEN: ${{ secrets.APK_STORE_TOKEN }}
         run: |
           set -euo pipefail
           response="$(curl -fsS -X POST "$SUPABASE_URL/functions/v1/aem-build-queue" \
