@@ -134,14 +134,15 @@ jobs:
               test -n "$AEM_KEY_PASSWORD"
               printf "%s" "$AEM_KEYSTORE_BASE64" | base64 --decode > android/aem-release.keystore
               if ! grep -q 'aemRelease' android/app/build.gradle; then
-                sed -i '/^[[:space:]]*android[[:space:]]*{/a\    signingConfigs {\
-        aemRelease {\
-            storeFile file("../aem-release.keystore")\
-            storePassword System.getenv("AEM_KEYSTORE_PASSWORD")\
-            keyAlias System.getenv("AEM_KEY_ALIAS")\
-            keyPassword System.getenv("AEM_KEY_PASSWORD")\
-        }\
-    }' android/app/build.gradle
+                sed -i '/^[[:space:]]*android[[:space:]]*{/a\    signingConfigs {' android/app/build.gradle
+                sed -i '/^[[:space:]]*signingConfigs[[:space:]]*{/a\        aemRelease {' android/app/build.gradle
+                sed -i '/^[[:space:]]*aemRelease[[:space:]]*{/a\            storeFile file("../aem-release.keystore")' android/app/build.gradle
+                sed -i '/^[[:space:]]*storeFile file("..\/aem-release.keystore")[[:space:]]*$/a\            storePassword System.getenv("AEM_KEYSTORE_PASSWORD")' android/app/build.gradle
+                sed -i '/^[[:space:]]*storePassword System.getenv("AEM_KEYSTORE_PASSWORD")[[:space:]]*$/a\            keyAlias System.getenv("AEM_KEY_ALIAS")' android/app/build.gradle
+                sed -i '/^[[:space:]]*keyAlias System.getenv("AEM_KEY_ALIAS")[[:space:]]*$/a\            keyPassword System.getenv("AEM_KEY_PASSWORD")' android/app/build.gradle
+                sed -i '/^[[:space:]]*keyPassword System.getenv("AEM_KEY_PASSWORD")[[:space:]]*$/a\        }' android/app/build.gradle
+                sed -i '/^[[:space:]]*aemRelease[[:space:]]*{/,/^[[:space:]]*}/ { }' android/app/build.gradle
+                sed -i '/^[[:space:]]*keyPassword System.getenv("AEM_KEY_PASSWORD")[[:space:]]*$/a\    }' android/app/build.gradle
               fi
               if ! grep -q 'signingConfig signingConfigs.aemRelease' android/app/build.gradle; then
                 sed -i '/^[[:space:]]*release[[:space:]]*{/a\        signingConfig signingConfigs.aemRelease' android/app/build.gradle
