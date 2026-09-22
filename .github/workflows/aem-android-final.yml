@@ -110,3 +110,4 @@ jobs:
           if-no-files-found: error
 
 # CI trigger refresh: build the current stable-signed release pipeline.
+# Verification run requested.
