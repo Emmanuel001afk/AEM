@@ -17,4 +17,4 @@ export async function updateDownload(id:string,patch:Partial<DownloadTask>){
    await supabaseRequest("/rest/v1/notifications",{method:"POST",body:JSON.stringify({kind:"download",title,body:patch.error||id,download_id:id})}).catch(()=>{});
  }
 }
-export async function listDownloads(){const r=await supabaseRequest("/rest/v1/downloads?select=*&client_id=eq.${clientId()}&order=created_at.desc&limit=100");if(!r.ok)throw new Error(`Download history failed: ${r.status}`);return r.json();}
+export async function listDownloads(){const r=await supabaseRequest(`/rest/v1/downloads?select=*&client_id=eq.${clientId()}&order=created_at.desc&limit=100`);if(!r.ok)throw new Error(`Download history failed: ${r.status}`);return r.json();}
