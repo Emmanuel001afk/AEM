@@ -168,3 +168,5 @@ jobs:
 # Signing injection order corrected: signingConfigs now live inside the generated android block.
 
 # AEM publish pipeline uses direct signed storage upload.
+
+# Rebuild after signed upload header fix.
