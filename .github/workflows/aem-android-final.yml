@@ -153,3 +153,5 @@ jobs:
 # Trigger publish verification after the signed-storage gateway retry fix.
 
 # Trigger fresh build after storage upload response handling fix
+
+# Trigger rebuild after safe Supabase prepare retry handling
