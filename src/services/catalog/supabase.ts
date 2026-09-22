@@ -14,10 +14,8 @@ export async function loadSupabaseCatalog():Promise<StoreApp[]>{
     if(!android.length)return false;
     return android.some((z:any)=>z.package_identity&&Number(z.version_code??x.version_code??0)>=Number(x.version_code??0));
    }).sort((x:any,y:any)=>{
-    const yWorkflow=String(y.source_release_id||"").startsWith("github-actions-artifact-");
-    const xWorkflow=String(x.source_release_id||"").startsWith("github-actions-artifact-");
-    if(xWorkflow!==yWorkflow)return xWorkflow?1:-1;
-    const yc=Number(y.version_code??0),xc=Number(x.version_code??0);
+    const yc=Math.max(Number(y.version_code??0),...(y.artifacts||[]).map((z:any)=>Number(z.version_code??0)));
+    const xc=Math.max(Number(x.version_code??0),...(x.artifacts||[]).map((z:any)=>Number(z.version_code??0)));
     if(yc!==xc)return yc-xc;
     return new Date(y.published_at||y.created_at).getTime()-new Date(x.published_at||x.created_at).getTime();
    });
