@@ -29,11 +29,16 @@ Deno.serve(async(req)=>{
    const b=await req.json();repo=String(b.repo||"");requestId=String(b.request_id||"");runId=Number(b.run_id||0);filename=String(b.filename||"app.apk");appName=String(b.application_name||"Application");versionName=String(b.version_name||"unknown");const vc=Number(b.version_code);versionCode=Number.isFinite(vc)?vc:null;channel=["stable","beta","development"].includes(String(b.channel))?String(b.channel):"development";packageIdentity=String(b.package_identity||"");title=String(b.title||"AEM APK");sourceReleaseId=String(b.source_release_id||`github-actions-${runId}`);if(!repo||!runId)return json({error:"Missing publish metadata"},400);const token=req.headers.get("x-github-token");if(!token)return json({error:"Missing GitHub credential"},401);return json({error:"JSON artifact publishing is disabled; send the APK bytes directly."},415);
   }
   if(!repo||!bytes?.length)return json({error:"Missing APK payload"},400);
+  if(!packageIdentity)return json({error:"APK package identity is required; refusing to publish unvalidated Android artifact."},400);
+  if(versionCode===null||versionCode<0)return json({error:"APK version code is required; refusing to publish unvalidated Android artifact."},400);
   const sb=admin();
   const appRes=await sb.from("applications").select("id").eq("provider","github").eq("project",repo).maybeSingle();
   if(appRes.error)throw appRes.error;
   if(!appRes.data)return json({error:`AEM application is not registered for ${repo}`},404);
   const appId=appRes.data.id;
+  const existingApp=await sb.from("applications").select("package_identity").eq("id",appId).single();
+  if(existingApp.error)throw existingApp.error;
+  if(existingApp.data.package_identity && existingApp.data.package_identity!==packageIdentity)return json({error:`APK package identity ${packageIdentity} does not match catalog package ${existingApp.data.package_identity}`},409);
   const appPatch:any={name:appName,updated_at:new Date().toISOString()};
   if(packageIdentity)appPatch.package_identity=packageIdentity;
   const appUpdate=await sb.from("applications").update(appPatch).eq("id",appId);
