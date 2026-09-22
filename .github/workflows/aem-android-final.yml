@@ -31,6 +31,7 @@ jobs:
       - run: cp native/InstallResultReceiver.java android/app/src/main/java/com/aem/store/InstallResultReceiver.java
       - run: python3 native/patch_android_manifest.py android/app/src/main/AndroidManifest.xml
       - run: npx --yes @capacitor/cli@7 copy android
+
       - name: Stamp CI version
         env:
           RUN_NUMBER: ${{ github.run_number }}
@@ -63,38 +64,51 @@ jobs:
           printf '%s' "$AEM_KEYSTORE_BASE64" | base64 --decode > android/aem-release.keystore
           python3 - <<'PY'
           from pathlib import Path
+          import re
           p = Path("android/app/build.gradle")
           s = p.read_text()
-          signing = r'''
-          android {
-              signingConfigs {
-                  aemRelease {
-                      storeFile file("../aem-release.keystore")
-                      storePassword System.getenv("AEM_KEYSTORE_PASSWORD")
-                      keyAlias System.getenv("AEM_KEY_ALIAS")
-                      keyPassword System.getenv("AEM_KEY_PASSWORD")
-                  }
+
+          signing_block = '''signingConfigs {
+              aemRelease {
+                  storeFile file("../aem-release.keystore")
+                  storePassword System.getenv("AEM_KEYSTORE_PASSWORD")
+                  keyAlias System.getenv("AEM_KEY_ALIAS")
+                  keyPassword System.getenv("AEM_KEY_PASSWORD")
               }
-          }
-          '''
-          # Inject only the signing config block before the existing android block.
-          s = signing + "\n" + s
-          s = s.replace("buildTypes {", "buildTypes {", 1)
-          marker = "buildTypes {"
-          pos = s.find(marker)
-          if pos < 0:
+          }'''
+
+          android_match = re.search(r'(?m)^android\s*\{', s)
+          if not android_match:
+              raise SystemExit("Android build.gradle has no android block")
+          insert_at = android_match.end()
+          if "aemRelease" not in s:
+              s = s[:insert_at] + "\n    " + signing_block.replace("\n", "\n    ") + "\n" + s[insert_at:]
+
+          build_types_match = re.search(r'(?m)^\s*buildTypes\s*\{', s)
+          if not build_types_match:
               raise SystemExit("Android build.gradle has no buildTypes block")
-          release_marker = "release {"
-          rpos = s.find(release_marker, pos)
-          if rpos < 0:
-              s = s[:pos] + marker + "\n        release { signingConfig signingConfigs.aemRelease }\n" + s[pos+len(marker):]
-          else:
-              end = s.find("}", rpos)
-              if end < 0:
-                  raise SystemExit("Could not locate release build type")
-              block = s[rpos:end]
-              if "signingConfig" not in block:
-                  s = s[:rpos] + "release {\n            signingConfig signingConfigs.aemRelease\n        " + s[rpos+len(release_marker):end] + "}" + s[end+1:]
+
+          release_match = re.search(r'(?m)^\s*release\s*\{', s[build_types_match.start():])
+          if not release_match:
+              raise SystemExit("Android build.gradle has no release build type")
+          release_start = build_types_match.start() + release_match.start()
+          release_open = s.find("{", release_start)
+          depth = 0
+          release_end = None
+          for i in range(release_open, len(s)):
+              if s[i] == "{":
+                  depth += 1
+              elif s[i] == "}":
+                  depth -= 1
+                  if depth == 0:
+                      release_end = i
+                      break
+          if release_end is None:
+              raise SystemExit("Could not parse release build type")
+          release_block = s[release_start:release_end]
+          if "signingConfig signingConfigs.aemRelease" not in release_block:
+              s = s[:release_open+1] + "\n        signingConfig signingConfigs.aemRelease" + s[release_open+1:]
+
           p.write_text(s)
           PY
 
@@ -113,6 +127,16 @@ jobs:
               s = s.replace("mavenCentral()", mirror + "\n            mavenCentral()")
               p.write_text(s)
           PY
+
+      - name: Validate release configuration
+        working-directory: android
+        run: |
+          set -euo pipefail
+          test -f app/build.gradle
+          grep -q "id 'com.android.application'" app/build.gradle || grep -q 'id("com.android.application")' app/build.gradle || true
+          grep -q "aemRelease" app/build.gradle
+          grep -q "signingConfig signingConfigs.aemRelease" app/build.gradle
+          test -f aem-release.keystore
 
       - name: Build signed release APK
         working-directory: android
@@ -140,4 +164,3 @@ jobs:
           if-no-files-found: error
 
 # CI trigger refresh: build the current stable-signed release pipeline.
-# Verification run requested.
