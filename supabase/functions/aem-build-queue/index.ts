@@ -52,7 +52,10 @@ Deno.serve(async(req)=>{
     if(action==="cancel")patch.workflow_run_id=null;
     const updated=await sb.from("build_requests").update(patch).eq("id",id).eq("status","running").select("id,status,error").maybeSingle();
     if(updated.error)throw updated.error;
-    const now=new Date().toISOString();\n    const state:any={id:"default",last_run_at:now,status:action==="cancel"?"idle":"failed",active_operations:0,updated_at:now};\n    if(action==="cancel")state.last_success_at=null;\n    await sb.from("manager_state").upsert(state,{onConflict:"id"});
+    const now=new Date().toISOString();
+    const state:any={id:"default",last_run_at:now,status:action==="cancel"?"idle":"failed",active_operations:0,updated_at:now};
+    if(action==="cancel")state.last_success_at=null;
+    await sb.from("manager_state").upsert(state,{onConflict:"id"});
     return json({ok:true,request:updated.data});
   }
 
