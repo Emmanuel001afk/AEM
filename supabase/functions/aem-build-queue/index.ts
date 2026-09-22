@@ -34,10 +34,16 @@ Deno.serve(async(req)=>{
   if(action==="fail"||action==="cancel"){
     const id=String(body.id||"");
     if(!id)return json({error:"Build request id required"},400);
+    const request=(await sb.from("build_requests").select("id,repository,workflow_run_id").eq("id",id).maybeSingle()).data;
+    if(!request)return json({error:"Build request not found"},404);
+    if(String(body.repository||"")!==String(request.repository))return json({error:"Repository mismatch"},403);
+    if(Number(body.run_id||0)!==Number(request.workflow_run_id||0))return json({error:"Workflow run mismatch"},403);
+    const access=await fetch(`https://api.github.com/repos/${request.repository}`,{headers:{"Accept":"application/vnd.github+json","Authorization":`Bearer ${token}`,"X-GitHub-Api-Version":"2022-11-28"}});
+    if(!access.ok)return json({error:"GitHub credential cannot access the requested repository."},403);
     const status=action==="cancel"?"queued":"failed";
     const patch:any={status,error:body.error?String(body.error):null,updated_at:new Date().toISOString()};
     if(action==="cancel")patch.workflow_run_id=null;
-    const updated=await sb.from("build_requests").update(patch).eq("id",id).select("id,status,error").maybeSingle();
+    const updated=await sb.from("build_requests").update(patch).eq("id",id).eq("status","running").select("id,status,error").maybeSingle();
     if(updated.error)throw updated.error;
     return json({ok:true,request:updated.data});
   }
