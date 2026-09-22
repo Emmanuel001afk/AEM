@@ -172,3 +172,5 @@ jobs:
 # Rebuild after signed upload header fix.
 
 # Rebuild after signed upload retry fix.
+
+# Rebuild after Supabase signed-upload header compatibility fix.
