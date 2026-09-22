@@ -4,6 +4,9 @@ import android.app.PendingIntent;
 import android.content.Intent;
 import android.content.pm.PackageInstaller;
 import android.net.Uri;
+import android.net.ConnectivityManager;
+import android.net.Network;
+import android.net.NetworkCapabilities;
 import android.os.Build;
 import android.provider.Settings;
 import android.content.ActivityNotFoundException;
@@ -25,6 +28,7 @@ import java.util.zip.ZipInputStream;
 @CapacitorPlugin(name="AemInstaller")
 public class AemInstallerPlugin extends Plugin {
     private static final int INSTALL_RESULT = 7412;
+    private final java.util.concurrent.ConcurrentHashMap<String, HttpURLConnection> activeDownloads = new java.util.concurrent.ConcurrentHashMap<>();
 
     @PluginMethod
     public void getInstalledVersions(PluginCall call) {
@@ -91,6 +95,8 @@ public class AemInstallerPlugin extends Plugin {
         final String mode = call.getString("mode", "split");
         final String expectedSha256 = call.getString("sha256", "");
         final String expectedPackage = call.getString("packageIdentity", "");
+        final String downloadId = call.getString("downloadId", "");
+        final boolean wifiOnly = call.getBoolean("wifiOnly", false);
 
         if (url == null || url.isEmpty()) {
             call.reject("Download URL is required");
@@ -106,7 +112,7 @@ public class AemInstallerPlugin extends Plugin {
 
         new Thread(() -> {
             try {
-                File downloaded = download(url, filename, expectedSha256);
+                File downloaded = download(url, filename, expectedSha256, downloadId, wifiOnly);
                 install(downloaded, mode, expectedPackage);
                 JSObject out = new JSObject();
                 out.put("started", true);
@@ -118,8 +124,24 @@ public class AemInstallerPlugin extends Plugin {
         }, "aem-installer").start();
     }
 
-    private File download(String source, String filename, String expectedSha256) throws Exception {
+    @PluginMethod
+    public void cancelDownload(PluginCall call) {
+        String id = call.getString("downloadId", "");
+        HttpURLConnection connection = activeDownloads.remove(id);
+        if (connection != null) {
+            connection.disconnect();
+            JSObject out = new JSObject();
+            out.put("cancelled", true);
+            call.resolve(out);
+        } else {
+            call.resolve(new JSObject());
+        }
+    }
+
+    private File download(String source, String filename, String expectedSha256, String downloadId, boolean wifiOnly) throws Exception {
+        if (wifiOnly && !isWifiConnected()) throw new IOException("Network unavailable: Wi-Fi-only downloads are enabled.");
         HttpURLConnection c = (HttpURLConnection) new URL(source).openConnection();
+        if (downloadId != null && !downloadId.isEmpty()) activeDownloads.put(downloadId, c);
         c.setInstanceFollowRedirects(true);
         c.setConnectTimeout(30000);
         c.setReadTimeout(120000);
@@ -128,19 +150,37 @@ public class AemInstallerPlugin extends Plugin {
 
         int status = c.getResponseCode();
         if (status < 200 || status >= 300) {
-            throw new IOException("Download failed: HTTP " + status);
+            activeDownloads.remove(downloadId);
+            throw new IOException("Network error: HTTP " + status);
         }
 
         File dir = new File(getContext().getCacheDir(), "aem-downloads");
         if (!dir.exists() && !dir.mkdirs()) throw new IOException("Cannot create download directory");
 
         File out = new File(dir, filename.replaceAll("[^A-Za-z0-9._-]", "_"));
+        long total = c.getContentLengthLong();
+        long done = 0;
+        long lastEmit = 0;
         try (InputStream in = new BufferedInputStream(c.getInputStream());
              OutputStream os = new BufferedOutputStream(new FileOutputStream(out))) {
             byte[] buf = new byte[1024 * 64];
             int n;
-            while ((n = in.read(buf)) >= 0) os.write(buf, 0, n);
+            while ((n = in.read(buf)) >= 0) {
+                if (n == 0) continue;
+                os.write(buf, 0, n);
+                done += n;
+                long now = System.currentTimeMillis();
+                if (now - lastEmit >= 250 || (total > 0 && done >= total)) {
+                    JSObject progress = new JSObject();
+                    progress.put("downloadId", downloadId);
+                    progress.put("bytesDownloaded", done);
+                    progress.put("totalBytes", total);
+                    notifyListeners("downloadProgress", progress);
+                    lastEmit = now;
+                }
+            }
         } finally {
+            activeDownloads.remove(downloadId);
             c.disconnect();
         }
 
@@ -152,6 +192,15 @@ public class AemInstallerPlugin extends Plugin {
             }
         }
         return out;
+    }
+
+    private boolean isWifiConnected() {
+        ConnectivityManager cm = (ConnectivityManager) getContext().getSystemService(android.content.Context.CONNECTIVITY_SERVICE);
+        if (cm == null) return false;
+        Network n = cm.getActiveNetwork();
+        if (n == null) return false;
+        NetworkCapabilities caps = cm.getNetworkCapabilities(n);
+        return caps != null && caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI);
     }
 
     private String sha256(File file) throws Exception {
