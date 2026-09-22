@@ -8,7 +8,7 @@ export async function loadSupabaseCatalog():Promise<StoreApp[]>{
  return rows.map((a:any)=>{
   const releases=Array.isArray(a.releases)?a.releases:[];
   const latest=(channel:string)=>{
-   const list=releases.filter((x:any)=>x.status==="published"&&x.channel===channel).sort((x:any,y:any)=>new Date(y.published_at||y.created_at).getTime()-new Date(x.published_at||x.created_at).getTime());
+   const list=releases.filter((x:any)=>x.status==="published"&&x.channel===channel).sort((x:any,y:any)=>{const yc=Number(y.version_code??0),xc=Number(x.version_code??0);if(yc!==xc)return yc-xc;return new Date(y.published_at||y.created_at).getTime()-new Date(x.published_at||x.created_at).getTime();});
    const x=list[0]; if(!x)return undefined;
    return {id:String(x.id),applicationId:{provider:a.provider,project:a.project},version:{name:x.version_name,code:x.version_code??undefined},channel:x.channel,status:x.status,title:x.title,notes:x.notes,publishedAt:x.published_at,sourceReleaseId:x.source_release_id,artifacts:(x.artifacts||[]).map((z:any)=>({id:String(z.id),platform:z.platform,kind:z.kind,filename:z.filename,downloadUrl:z.download_url,sizeBytes:z.size_bytes,sha256:z.sha256,packageIdentity:z.package_identity,signingCertificateSha256:z.signing_certificate_sha256,versionCode:z.version_code}))};
   };
