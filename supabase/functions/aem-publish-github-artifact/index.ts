@@ -48,9 +48,16 @@ Deno.serve(async(req)=>{
   const path=`${repo}/${clean(versionName)}/${clean(sourceReleaseId)}/${clean(filename)}`;
 
   if(action==="prepare"){
+    if(!path||path.startsWith("/")||path.includes(".."))return json({error:"Invalid Storage object path"},400);
+    const bucket=await sb.storage.getBucket("aem-artifacts");
+    if(bucket.error)return json({error:`AEM Storage bucket is unavailable: ${bucket.error.message}`},502);
+    if(!bucket.data)return json({error:"AEM Storage bucket aem-artifacts does not exist"},502);
     const up=await sb.storage.from("aem-artifacts").createSignedUploadUrl(path,{upsert:true});
     if(up.error)return json({error:`Storage signed-upload preparation failed: ${up.error.message}`},502);
-    return json({ok:true,path,token:up.data.token,upload_url:up.data.signedUrl,release_metadata:{repo,runId,filename,appName,versionName,versionCode,channel,packageIdentity,title,sourceReleaseId,signingCertificateSha256}});
+    const uploadUrl=String(up.data?.signedUrl||"");
+    const token=String(up.data?.token||"");
+    if(!uploadUrl||!token)return json({error:"Storage did not return a valid signed upload URL"},502);
+    return json({ok:true,path,storage_path:`aem-artifacts/${path}`,token,upload_url:uploadUrl,release_metadata:{repo,runId,filename,appName,versionName,versionCode,channel,packageIdentity,title,sourceReleaseId,signingCertificateSha256}});
   }
 
   if(action!=="finalize")return json({error:"Unknown action"},400);
