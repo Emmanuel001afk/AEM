@@ -19,13 +19,13 @@ jobs:
           ref: ${{ github.event.workflow_run.head_sha }}
       - uses: actions/download-artifact@v4
         with:
-          name: aem-store-debug-apk-final
+          name: aem-store-release-apk
           path: release
           github-token: ${{ secrets.GITHUB_TOKEN }}
           run-id: ${{ github.event.workflow_run.id }}
       - name: Publish through AEM Supabase gateway
         env:
-          APK: release/app-debug.apk
+          APK: release/app-release.apk
         run: |
           set -euo pipefail
           SUPABASE_KEY="$(sed -n 's/.*DEFAULT_PUBLISHABLE_KEY="\([^"]*\)".*/\1/p' src/services/supabase/client.ts)"
