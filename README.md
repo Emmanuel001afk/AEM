@@ -21,3 +21,5 @@ The Store catalog is provider-backed. GitHub is the current provider, with priva
 
 ### Android client hardening
 The Android wrapper uses the AEM launcher mark, Android package visibility limited to catalog package checks, a secure FileProvider for system installer handoff, and an AEM PackageInstaller session for APK-family packages.
+
+Installer progress and cancellation are emitted by the native Android layer so the Store can show live transfer state instead of raw byte counters.
