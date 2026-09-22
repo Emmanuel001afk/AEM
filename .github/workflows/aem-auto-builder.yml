@@ -256,19 +256,3 @@ jobs:
           curl -fsS -X POST "$SUPABASE_URL/functions/v1/aem-build-queue" \
             -H "apikey: $SUPABASE_KEY" -H "Authorization: Bearer $SUPABASE_KEY" -H "x-github-token: $GH_TOKEN" \
             -H "Content-Type: application/json" --data "$(jq -nc --arg id "$REQUEST_ID" --arg repo "$REPO" --arg run "$RUN_ID" --arg error "Build or publication failed" '{action:"fail",id:$id,repository:$repo,run_id:($run|tonumber),error:$error}')"
-              run_number="${GITHUB_RUN_NUMBER:-1}"
-              version_code="$(date +%s)"
-              sed -i -E "s/versionCode[[:space:]]*(=|[[:space:]])[[:space:]]*[0-9]+/versionCode ${version_code}/" android/app/build.gradle
-              if ! grep -q 'aemRelease' android/app/build.gradle; then
-                sed -i '/^[[:space:]]*android[[:space:]]*{/a\    signingConfigs {\
-        aemRelease {\
-            storeFile file("../aem-release.keystore")\
-            storePassword System.getenv("AEM_KEYSTORE_PASSWORD")\
-            keyAlias System.getenv("AEM_KEY_ALIAS")\
-            keyPassword System.getenv("AEM_KEY_PASSWORD")\
-        }\
-    }' android/app/build.gradle
-              fi
-              if ! grep -q 'signingConfig signingConfigs.aemRelease' android/app/build.gradle; then
-                sed -i '/^[[:space:]]*release[[:space:]]*{/a\        signingConfig signingConfigs.aemRelease' android/app/build.gradle
-              fi
