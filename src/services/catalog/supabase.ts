@@ -19,7 +19,6 @@ export async function loadSupabaseCatalog():Promise<StoreApp[]>{
     return new Date(y.published_at||y.created_at).getTime()-new Date(x.published_at||x.created_at).getTime();
    });
    const x=list[0];if(!x)return undefined;
-   const android=(x.artifacts||[]).filter((z:any)=>z.platform==="android"&&["apk","apks","xapk","apkm"].includes(z.kind)).sort((a:any,b:any)=>Number(b.version_code??0)-Number(a.version_code??0));
    return {id:String(x.id),applicationId:{provider:a.provider,project:a.project},version:{name:x.version_name,code:x.version_code??undefined},channel:x.channel,status:x.status,title:x.title,notes:x.notes,publishedAt:x.published_at,sourceReleaseId:x.source_release_id,artifacts:(x.artifacts||[]).map((z:any)=>({id:String(z.id),platform:z.platform,kind:z.kind,filename:z.filename,downloadUrl:z.download_url,sizeBytes:z.size_bytes,sha256:z.sha256,packageIdentity:z.package_identity,signingCertificateSha256:z.signing_certificate_sha256,versionCode:z.version_code}))};
   };
   return {databaseId:Number(a.id),id:{provider:a.provider,project:a.project},packageIdentity:a.package_identity||releases.flatMap((x:any)=>x.artifacts||[]).map((z:any)=>z.package_identity).find(Boolean),name:a.name,description:a.description,sourceUrl:a.source_url,iconUrl:a.icon_url,platforms:a.platforms??[],category:a.category??"Other",functionality:a.functionality??[],screenshots:a.screenshots??[],permissions:a.permissions??[],latest:{stable:latest("stable"),beta:latest("beta"),development:latest("development")}};
