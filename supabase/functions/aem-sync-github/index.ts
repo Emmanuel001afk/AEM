@@ -1,5 +1,41 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
-// Deployed implementation is kept in sync with Supabase; this source file is the repository record for the function.
-// The function scans every repository owned by Emmanuel001afk for GitHub release APK-family assets and APK files,
-// then stores durable catalog metadata/artifacts in AEM Supabase Storage.
-export { };
+import { createClient } from "npm:@supabase/supabase-js@2";
+const cors={"Access-Control-Allow-Origin":"*","Access-Control-Allow-Headers":"authorization,apikey,content-type","Access-Control-Allow-Methods":"POST,OPTIONS"};
+const GH="https://api.github.com";
+function out(x:any,s=200){return Response.json(x,{status:s,headers:{...cors,"Content-Type":"application/json"}})}
+function db(){const k=JSON.parse(Deno.env.get("SUPABASE_SECRET_KEYS")||"{}").default||Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");if(!k)throw Error("Supabase server key unavailable");return createClient(Deno.env.get("SUPABASE_URL")!,k)}
+function kind(n:string){n=n.toLowerCase();return n.endsWith(".apk")?"apk":n.endsWith(".apks")?"apks":n.endsWith(".xapk")?"xapk":n.endsWith(".apkm")?"apkm":null}
+function channel(t:string):"stable"|"beta"|"development"{t=t.toLowerCase();if(/(^|[-_.])(beta|b)([-_.]|\d|$)/.test(t))return"beta";if(/(^|[-_.])(dev|development|nightly|alpha|canary)([-_.]|\d|$)/.test(t))return"development";return"stable"}
+async function gh(url:string,h:any){const r=await fetch(url,{headers:h});if(!r.ok)throw Error("GitHub API "+r.status);return r.json()}
+async function hash(b:Uint8Array){const d=await crypto.subtle.digest("SHA-256",b);return Array.from(new Uint8Array(d)).map(x=>x.toString(16).padStart(2,"0")).join("")}
+Deno.serve(async req=>{
+ if(req.method==="OPTIONS")return new Response("ok",{headers:cors}); if(req.method!=="POST")return out({error:"POST required"},405);
+ const sb=db(), started=new Date(), token=(Deno.env.get("AEM_GITHUB_TOKEN")||Deno.env.get("GITHUB_TOKEN")||"").trim();
+ if(!token)return out({error:"AEM_GITHUB_TOKEN is not configured in Supabase Edge Function secrets."},503);
+ const h={"Accept":"application/vnd.github+json","Authorization":"Bearer "+token,"X-GitHub-Api-Version":"2026-03-10"};
+ try{
+  const me=await gh(GH+"/user",h); if(String(me.login)!=="Emmanuel001afk")return out({error:"GitHub token is not for Emmanuel001afk."},403);
+  const st=(await sb.from("source_sync_state").select("status,last_started_at,last_success_at").eq("provider","github").maybeSingle()).data;
+  const now=Date.now(), ls=st?.last_success_at?Date.parse(st.last_success_at):0, lt=st?.last_started_at?Date.parse(st.last_started_at):0;
+  if(st?.status==="running"&&now-lt<300000)return out({ok:true,throttled:true});
+  if(ls&&now-ls<30000)return out({ok:true,throttled:true,last_success_at:st.last_success_at});
+  await sb.from("source_sync_state").upsert({provider:"github",status:"running",last_started_at:started.toISOString(),last_error:null,updated_at:started.toISOString()},{onConflict:"provider"});
+  const repos:any[]=[]; for(let p=1;;p++){const rows=await gh(GH+`/user/repos?visibility=all&affiliation=owner&per_page=100&page=${p}`,h);if(!rows.length)break;repos.push(...rows);if(rows.length<100)break}
+  let apps=0,releases=0,artifacts=0;
+  for(const repo of repos){try{
+   const tree=await gh(GH+`/repos/${repo.full_name}/git/trees/${repo.default_branch||"main"}?recursive=1`,h).catch(()=>({tree:[]}));
+   const files=(tree.tree||[]).filter((x:any)=>x.type==="blob"&&kind(String(x.path))).slice(0,10);
+   const rr=await gh(GH+`/repos/${repo.full_name}/releases?per_page=50`,h).catch(()=>[]);
+   const rels=Array.isArray(rr)?rr.filter((r:any)=>!r.draft&&(r.assets||[]).some((a:any)=>kind(a.name))):[];
+   if(!files.length&&!rels.length)continue;
+   let a=(await sb.from("applications").select("id,package_identity,description_source,icon_source").eq("provider","github").eq("project",repo.full_name).maybeSingle()).data;
+   const patch:any={provider:"github",project:repo.full_name,source_external_id:String(repo.id),source_visibility:repo.private?"private":"public",name:String(repo.name),description:repo.description||null,description_source:"github",source_url:repo.html_url,icon_url:repo.owner?.avatar_url||null,icon_source:"github-avatar",platforms:["android"],updated_at:new Date().toISOString()};
+   if(a?.description_source==="manual"){delete patch.description;delete patch.description_source} if(a?.icon_source==="manual"){delete patch.icon_url;delete patch.icon_source}
+   if(!a){a=(await sb.from("applications").insert(patch).select("id,package_identity").single()).data;apps++}else a=(await sb.from("applications").update(patch).eq("id",a.id).select("id,package_identity").single()).data;
+   for(const r of rels){const sid=`github-release-${r.id}`;let rel=(await sb.from("releases").select("id").eq("application_id",a.id).eq("source_release_id",sid).maybeSingle()).data;if(!rel){rel=(await sb.from("releases").insert({application_id:a.id,source_release_id:sid,version_name:String(r.tag_name||r.name||"unknown"),channel:channel(String(r.tag_name||r.name||"")),status:"published",title:r.name||r.tag_name||"GitHub release",notes:r.body||null,published_at:r.published_at||r.created_at}).select("id").single()).data;releases++}for(const asset of (r.assets||[]).filter((x:any)=>kind(x.name))){const ex=(await sb.from("artifacts").select("id").eq("release_id",rel.id).eq("filename",asset.name).maybeSingle()).data;if(ex)continue;const f=await fetch(asset.browser_download_url,{headers:h});if(!f.ok)continue;const b=new Uint8Array(await f.arrayBuffer()),k=kind(asset.name),path=`${repo.full_name}/${String(r.tag_name||r.id).replace(/[^A-Za-z0-9._-]/g,"_")}/${String(asset.name).replace(/[^A-Za-z0-9._-]/g,"_")}`;const up=await sb.storage.from("aem-artifacts").upload(path,b,{contentType:k==="apk"?"application/vnd.android.package-archive":"application/octet-stream",upsert:true});if(up.error)throw up.error;const ins=await sb.from("artifacts").insert({release_id:rel.id,platform:"android",kind:k,filename:asset.name,download_url:`${Deno.env.get("SUPABASE_URL")}/storage/v1/object/public/aem-artifacts/${path}`,size_bytes:b.byteLength,sha256:await hash(b),package_identity:a.package_identity||null});if(!ins.error)artifacts++}}
+   for(const f of files){const sid=`github-file-${f.sha}`;if((await sb.from("releases").select("id").eq("application_id",a.id).eq("source_release_id",sid).maybeSingle()).data)continue;const raw=`https://raw.githubusercontent.com/${repo.full_name}/${repo.default_branch||"main"}/${String(f.path).split("/").map(encodeURIComponent).join("/")}`;const x=await fetch(raw,{headers:h});if(!x.ok)continue;const b=new Uint8Array(await x.arrayBuffer()),k=kind(String(f.path)),rel=(await sb.from("releases").insert({application_id:a.id,source_release_id:sid,version_name:"Repository APK",channel:"development",status:"published",title:String(f.path),published_at:new Date().toISOString()}).select("id").single()).data,path=`${repo.full_name}/source/${f.sha}/${String(f.path).split("/").pop()}`;const up=await sb.storage.from("aem-artifacts").upload(path,b,{contentType:k==="apk"?"application/vnd.android.package-archive":"application/octet-stream",upsert:true});if(up.error)throw up.error;const ins=await sb.from("artifacts").insert({release_id:rel.id,platform:"android",kind:k,filename:String(f.path).split("/").pop(),download_url:`${Deno.env.get("SUPABASE_URL")}/storage/v1/object/public/aem-artifacts/${path}`,size_bytes:b.byteLength,sha256:await hash(b),package_identity:a.package_identity||null});if(!ins.error){releases++;artifacts++}}
+  }catch(e){console.error("repo sync",repo.full_name,e)}}
+  const finished=new Date().toISOString();await sb.from("source_sync_state").upsert({provider:"github",status:"success",last_started_at:started.toISOString(),last_success_at:finished,last_error:null,repositories_scanned:repos.length,applications_discovered:apps,releases_discovered:releases,artifacts_discovered:artifacts,updated_at:finished},{onConflict:"provider"});
+  return out({ok:true,provider:"github",authenticated_as:me.login,scanned:repos.length,discovered:apps,releases,artifacts});
+ }catch(e){const m=e instanceof Error?e.message:String(e);await sb.from("source_sync_state").upsert({provider:"github",status:"failed",last_error:m,updated_at:new Date().toISOString()},{onConflict:"provider"});return out({error:m},500)}
+});
