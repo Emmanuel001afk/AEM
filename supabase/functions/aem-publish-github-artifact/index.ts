@@ -91,7 +91,8 @@ Deno.serve(async(req)=>{
 
   const ins=await sb.from("artifacts").insert({release_id:release.id,platform:"android",kind:"apk",filename,download_url:objectUrl,size_bytes:sizeBytes,sha256,package_identity:packageIdentity,signing_certificate_sha256:signingCertificateSha256||null,version_code:versionCode}).select("id").single();
   if(ins.error)throw ins.error;
-  await sb.from("applications").update({name:appName,package_identity:packageIdentity,updated_at:new Date().toISOString()}).eq("id",appId);
+  // The catalog name is source metadata; never replace it with the APK manifest label (which may be generic).
+  await sb.from("applications").update({package_identity:packageIdentity,updated_at:new Date().toISOString()}).eq("id",appId);
   try {
     const historyResult=await sb.from("release_history").insert({application_id:appId,release_id:release.id,reason:"published"});
     if(historyResult.error) console.error("Release history insert failed:",historyResult.error);
