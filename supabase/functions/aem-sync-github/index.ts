@@ -34,7 +34,7 @@ Deno.serve(async req=>{
    let workflowApk=false;
    for(const probe of (runProbe.workflow_runs||[])){const pa=await gh(GH+`/repos/${repo.full_name}/actions/runs/${probe.id}/artifacts?per_page=50&direction=desc`,h).catch(()=>({artifacts:[]}));if((pa.artifacts||[]).some((x:any)=>!x.expired&&/(apk|android|build|release)/i.test(String(x.name||"")))){workflowApk=true;break}}
    if(!files.length&&!rels.length&&!workflowApk)continue;
-   let a=(await sb.from("applications").select("id,package_identity,description_source,icon_source").eq("provider","github").eq("project",repo.full_name).maybeSingle()).data;
+   let a=(await sb.from("applications").select("id,name,package_identity,description_source,icon_source").eq("provider","github").eq("project",repo.full_name).maybeSingle()).data;
    const patch:any={provider:"github",project:repo.full_name,source_external_id:String(repo.id),source_visibility:repo.private?"private":"public",name:(a?.name&&a.name!=="Application")?a.name:displayName(String(repo.name)),description:repo.description||null,description_source:"github",source_url:repo.html_url,icon_url:repo.owner?.avatar_url||null,icon_source:"github-avatar",platforms:["android"],updated_at:new Date().toISOString()};
    if(a?.description_source==="manual"){delete patch.description;delete patch.description_source} if(a?.icon_source==="manual"){delete patch.icon_url;delete patch.icon_source}
    if(!a){a=(await sb.from("applications").insert(patch).select("id,package_identity").single()).data;apps++}else a=(await sb.from("applications").update(patch).eq("id",a.id).select("id,package_identity").single()).data;
