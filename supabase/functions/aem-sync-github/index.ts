@@ -13,10 +13,15 @@ async function zipApks(buf:Uint8Array){const dv=new DataView(buf.buffer,buf.byte
 async function hash(b:Uint8Array){const d=await crypto.subtle.digest("SHA-256",b);return Array.from(new Uint8Array(d)).map(x=>x.toString(16).padStart(2,"0")).join("")}
 Deno.serve(async req=>{
  if(req.method==="OPTIONS")return new Response("ok",{headers:cors}); if(req.method!=="POST")return out({error:"POST required"},405);
- const sb=db(), started=new Date(), token=(Deno.env.get("AEM_GITHUB_TOKEN")||Deno.env.get("GITHUB_TOKEN")||"").trim();
- if(!token)return out({error:"AEM_GITHUB_TOKEN is not configured in Supabase Edge Function secrets."},503);
- const h={"Accept":"application/vnd.github+json","Authorization":"Bearer "+token,"X-GitHub-Api-Version":"2026-03-10"};
+ const sb=db(), started=new Date();
  try{
+  const token=(Deno.env.get("AEM_GITHUB_TOKEN")||Deno.env.get("GITHUB_TOKEN")||"").trim();
+  if(!token){
+   const message="AEM_GITHUB_TOKEN is not configured in Supabase Edge Function secrets.";
+   await sb.from("source_sync_state").upsert({provider:"github",status:"failed",last_started_at:started.toISOString(),last_error:message,updated_at:started.toISOString()},{onConflict:"provider"});
+   return out({ok:false,error:message,code:"GITHUB_TOKEN_MISSING"},503);
+  }
+  const h={"Accept":"application/vnd.github+json","Authorization":"Bearer "+token,"X-GitHub-Api-Version":"2026-03-10"};
   const me=await gh(GH+"/user",h); if(String(me.login)!=="Emmanuel001afk")return out({error:"GitHub token is not for Emmanuel001afk."},403);
   const st=(await sb.from("source_sync_state").select("status,last_started_at,last_success_at").eq("provider","github").maybeSingle()).data;
   const now=Date.now(), ls=st?.last_success_at?Date.parse(st.last_success_at):0, lt=st?.last_started_at?Date.parse(st.last_started_at):0;
@@ -24,10 +29,10 @@ Deno.serve(async req=>{
   if(ls&&now-ls<30000)return out({ok:true,throttled:true,last_success_at:st.last_success_at});
   await sb.from("source_sync_state").upsert({provider:"github",status:"running",last_started_at:started.toISOString(),last_error:null,updated_at:started.toISOString()},{onConflict:"provider"});
   const repos:any[]=[]; for(let p=1;;p++){const rows=await gh(GH+`/user/repos?visibility=all&affiliation=owner&per_page=100&page=${p}`,h);if(!rows.length)break;repos.push(...rows);if(rows.length<100)break}
-  let apps=0,releases=0,artifacts=0;
+  let apps=0,releases=0,artifacts=0,failedRepos=0;
   for(const repo of repos){try{
    const tree=await gh(GH+`/repos/${repo.full_name}/git/trees/${repo.default_branch||"main"}?recursive=1`,h).catch(()=>({tree:[]}));
-   const files=(tree.tree||[]).filter((x:any)=>x.type==="blob"&&kind(String(x.path))).slice(0,10);
+   const files=(tree.tree||[]).filter((x:any)=>x.type==="blob"&&kind(String(x.path)));
    const rr=await gh(GH+`/repos/${repo.full_name}/releases?per_page=50`,h).catch(()=>[]);
    const rels=Array.isArray(rr)?rr.filter((r:any)=>!r.draft&&(r.assets||[]).some((a:any)=>kind(a.name))):[];
    const runProbe=await gh(GH+`/repos/${repo.full_name}/actions/runs?status=success&per_page=5`,h).catch(()=>({workflow_runs:[]}));
@@ -53,8 +58,9 @@ Deno.serve(async req=>{
      if(made){releases++}else{await sb.from("releases").delete().eq("id",rr.data.id)}
     }
    }
-  }catch(e){console.error("repo sync",repo.full_name,e)}}
-  const finished=new Date().toISOString();await sb.from("source_sync_state").upsert({provider:"github",status:"success",last_started_at:started.toISOString(),last_success_at:finished,last_error:null,repositories_scanned:repos.length,applications_discovered:apps,releases_discovered:releases,artifacts_discovered:artifacts,updated_at:finished},{onConflict:"provider"});
-  return out({ok:true,provider:"github",authenticated_as:me.login,scanned:repos.length,discovered:apps,releases,artifacts});
+  }catch(e){failedRepos++;console.error("repo sync",repo.full_name,e)}}
+  const finished=new Date().toISOString(), partial=failedRepos>0, syncError=partial?(`${failedRepos} repository sync(s) failed; see Edge Function logs for details.`):null;
+  await sb.from("source_sync_state").upsert({provider:"github",status:partial?"partial":"success",last_started_at:started.toISOString(),last_success_at:finished,last_error:syncError,repositories_scanned:repos.length,applications_discovered:apps,releases_discovered:releases,artifacts_discovered:artifacts,updated_at:finished},{onConflict:"provider"});
+  return out({ok:true,partial,provider:"github",authenticated_as:me.login,scanned:repos.length,failed_repositories:failedRepos,discovered:apps,releases,artifacts});
  }catch(e){const m=e instanceof Error?e.message:String(e);await sb.from("source_sync_state").upsert({provider:"github",status:"failed",last_error:m,updated_at:new Date().toISOString()},{onConflict:"provider"});return out({error:m},500)}
 });
