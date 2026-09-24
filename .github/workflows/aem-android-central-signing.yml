@@ -1,6 +1,9 @@
 name: AEM Central Android Signing
 
 on:
+  push:
+    paths:
+      - ".github/workflows/aem-android-central-signing.yml"
   workflow_dispatch:
   schedule:
     - cron: "*/5 * * * *"
@@ -94,3 +97,5 @@ jobs:
             if ! curl -fsSL --retry 3 --retry-delay 2 -X POST "$API" "${AUTH[@]}" --data "$complete" >/dev/null; then fail_item "$id"; continue; fi
             echo "Signed artifact $id ($filename)."
           done < <(jq -c ".artifacts[]" <<<"$queue")
+
+# Central signing is intentionally hosted in AEM so individual app repositories need no signing configuration.
