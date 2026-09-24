@@ -1,3 +1,12 @@
+create or replace function public.aem_request_client_id()
+returns text
+language sql
+stable
+set search_path=pg_catalog,public
+as $$
+  select (current_setting('request.headers', true)::json ->> 'x-aem-client-id');
+$$;
+
 alter table public.notifications add column if not exists client_id text;
 create index if not exists notifications_client_idx on public.notifications(client_id);
 
