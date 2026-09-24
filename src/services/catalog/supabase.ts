@@ -6,7 +6,7 @@ export async function loadSupabaseCatalog():Promise<StoreApp[]>{
  if(!r.ok) throw new Error(`Supabase catalog request failed: ${r.status}`);
  const rows=await r.json();
  return rows.map((a:any)=>{
-  const releases=Array.isArray(a.releases)?a.releases:[];
+  const releases=Array.isArray(a.releases)?a.releases.map((x:any)=>({...x,artifacts:(Array.isArray(x.artifacts)?x.artifacts:[]).filter((z:any)=>z.signing_status!=="pending"&&z.signing_status!=="processing"&&z.signing_status!=="failed")})).filter((x:any)=>x.artifacts.length):[];
   const latest=(channel:string)=>{
    const list=releases.filter((x:any)=>{
     if(x.status!=="published"||x.channel!==channel)return false;
