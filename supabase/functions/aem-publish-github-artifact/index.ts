@@ -28,11 +28,12 @@ Deno.serve(async(req)=>{
   if(!repo||!runId||versionCode===null||!packageIdentity)return json({error:"Missing required publish metadata"},400);
 
   const githubToken=(req.headers.get("x-github-token")||"").trim();
-  const ghHeaders:Record<string,string>={"Accept":"application/vnd.github+json","X-GitHub-Api-Version":"2022-11-28"};
-  if(githubToken)ghHeaders.Authorization=`Bearer ${githubToken}`;
-  let repoCheck=await fetch(`https://api.github.com/repos/${repo}`,{headers:ghHeaders});
-  if(!repoCheck.ok&&githubToken)repoCheck=await fetch(`https://api.github.com/repos/${repo}`,{headers:{"Accept":"application/vnd.github+json","X-GitHub-Api-Version":"2022-11-28"}});
-  if(!repoCheck.ok)return json({error:"Requested GitHub repository could not be verified."},403);
+  if(!githubToken)return json({error:"GitHub authorization token is required for publishing."},401);
+  const ghHeaders:Record<string,string>={"Accept":"application/vnd.github+json","Authorization":`Bearer ${githubToken}`,"X-GitHub-Api-Version":"2022-11-28"};
+  const repoCheck=await fetch(`https://api.github.com/repos/${repo}`,{headers:ghHeaders});
+  if(!repoCheck.ok)return json({error:"GitHub authorization could not verify the requested repository."},403);
+  const repoInfo=await repoCheck.json();
+  if(String(repoInfo?.owner?.login||"")!=="Emmanuel001afk")return json({error:"Publishing is restricted to repositories owned by Emmanuel001afk."},403);
 
   const sb=admin();
   const appRes=await sb.from("applications").select("id,package_identity").eq("provider","github").eq("project",repo).maybeSingle();
@@ -66,7 +67,7 @@ Deno.serve(async(req)=>{
     if(existingArtifact.error)throw existingArtifact.error;
     if(existingArtifact.data)return json({ok:true,duplicate:true,release_id:existingRelease.data.id,artifact_id:existingArtifact.data.id,download_url:existingArtifact.data.download_url,size_bytes:existingArtifact.data.size_bytes,sha256:existingArtifact.data.sha256});
   }
-  const latest=await sb.from("releases").select("version_code").eq("application_id",appId).eq("channel",channel).eq("status","published").order("version_code",{ascending:false}).limit(1).maybeSingle();
+  const latest=await sb.from("releases").select("version_code").eq("application_id",appId).eq("channel",channel).eq("status","published").not("version_code","is",null).order("version_code",{ascending:false}).limit(1).maybeSingle();
   if(latest.error)throw latest.error;
   if(latest.data&&Number(versionCode)<=Number(latest.data.version_code||0))return json({error:`Refusing to publish version code ${versionCode}: latest published ${channel} version code is ${latest.data.version_code}.`},409);
   const sizeBytes=Number(b.size_bytes||0);
