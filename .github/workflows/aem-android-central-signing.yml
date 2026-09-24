@@ -66,7 +66,7 @@ jobs:
           OIDC_TOKEN="$(cat "$RUNNER_TEMP/aem-oidc-token")"
           API="$SUPABASE_URL/functions/v1/aem-android-signing"
           AUTH=(-H "apikey: $SUPABASE_KEY" -H "Authorization: Bearer $SUPABASE_KEY" -H "Content-Type: application/json" -H "x-aem-oidc: $OIDC_TOKEN")
-          queue="$(curl -fsSL --retry 3 --retry-delay 2 -X POST "$API" "${AUTH[@]}" --data '{"action":"claim","limit":10}')"
+          queue="$(curl -fsSL --retry 3 --retry-delay 2 -X POST "$API" "${AUTH[@]}" --data '{"action":"claim","limit":25}')"
           count="$(jq ".artifacts | length" <<<"$queue")"
           echo "Claimed $count Android APK(s) for central signing."
           if [ "$count" -eq 0 ]; then exit 0; fi
