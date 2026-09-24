@@ -33,9 +33,18 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          APKSIGNER="$(find "\${ANDROID_HOME:-/opt/android-sdk}" -type f -name apksigner | sort -V | tail -n 1)"
-          test -x "$APKSIGNER"
-          signing_cert="$("$APKSIGNER" verify --print-certs "$APK" 2>/dev/null | sed -n 's/.*Signer #1 certificate SHA-256 digest: //p' | head -n 1)"
+          APKSIGNER="$(command -v apksigner || true)"
+          if [ -z "$APKSIGNER" ]; then
+            APKSIGNER="$(find "\${ANDROID_HOME:-/opt/android-sdk}" -type f -name apksigner 2>/dev/null | sort -V | tail -n 1 || true)"
+          fi
+          signing_cert=""
+          if [ -n "$APKSIGNER" ] && [ -x "$APKSIGNER" ]; then
+            signing_cert="$("$APKSIGNER" verify --print-certs "$APK" 2>/dev/null | sed -n 's/.*Signer #1 certificate SHA-256 digest: //p' | head -n 1 || true)"
+          fi
+          if [ -z "$signing_cert" ]; then
+            signing_cert="$(keytool -printcert -jarfile "$APK" 2>/dev/null | sed -n '/SHA256:/{s/^[[:space:]]*SHA256:[[:space:]]*//;p;q}' || true)"
+          fi
+          signing_cert="$(printf '%s' "$signing_cert" | tr -d ':' | tr '[:upper:]' '[:lower:]')"
           test -n "$signing_cert"
           SUPABASE_KEY="$(sed -n 's/.*DEFAULT_PUBLISHABLE_KEY="\([^"]*\)".*/\1/p' src/services/supabase/client.ts)"
           AAPT="$(find "${ANDROID_HOME:-/opt/android-sdk}" -type f -name aapt | sort -V | tail -n 1)"
