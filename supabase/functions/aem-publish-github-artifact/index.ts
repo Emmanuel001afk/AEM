@@ -24,8 +24,8 @@ Deno.serve(async(req)=>{
   const packageIdentity=String(b.package_identity||"");
   const title=String(b.title||"AEM APK");
   const sourceReleaseId=String(b.source_release_id||`github-actions-${runId}`);
-  const signingCertificateSha256=String(b.signing_certificate_sha256||"").trim();
-  if(!repo||!runId||versionCode===null||!packageIdentity)return json({error:"Missing required publish metadata"},400);
+  const signingCertificateSha256=String(b.signing_certificate_sha256||"").trim().replace(/:/g,"").toLowerCase();
+  if(!repo||!runId||versionCode===null||!packageIdentity||!signingCertificateSha256)return json({error:"Missing required publish metadata, including signing certificate SHA-256."},400);
 
   const githubToken=(req.headers.get("x-github-token")||"").trim();
   if(!githubToken)return json({error:"GitHub authorization token is required for publishing."},401);
