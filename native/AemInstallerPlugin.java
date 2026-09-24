@@ -162,7 +162,8 @@ public class AemInstallerPlugin extends Plugin {
         final String expectedSha256 = call.getString("sha256", "");
         final String expectedPackage = call.getString("packageIdentity", "");
         final String expectedSigningCert = call.getString("signingCertificateSha256", "");
-        final long expectedVersionCode = call.getLong("versionCode", -1L);
+        final long requestedVersionCode = call.getLong("versionCode", -1L);
+        final long expectedVersionCode = requestedVersionCode > 0 ? requestedVersionCode : -1L;
         final String downloadId = call.getString("downloadId", "");
         final boolean wifiOnly = call.getBoolean("wifiOnly", false);
 
