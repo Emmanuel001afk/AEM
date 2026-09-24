@@ -9,13 +9,92 @@ function channel(t:string):"stable"|"beta"|"development"{t=t.toLowerCase();if(/(
 function displayName(repo:string){if(repo==="AEM")return"AEM Store";if(repo==="phormi-android")return"Phormi";if(repo==="lite-read")return"Lite Read";return repo}
 async function gh(url:string,h:any){const r=await fetch(url,{headers:h});if(!r.ok)throw Error("GitHub API "+r.status);return r.json()}
 
-async function zipApks(buf:Uint8Array){const dv=new DataView(buf.buffer,buf.byteOffset,buf.byteLength);const u16=(p:number)=>dv.getUint16(p,true),u32=(p:number)=>dv.getUint32(p,true);let e=Math.min(buf.length-22,buf.length-65558);for(let p=buf.length-22;p>=e;p--){if(u32(p)===0x06054b50){const n=u16(p+10),off=u32(p+16),out:any[]=[];let q=off;for(let i=0;i<n&&q+46<=buf.length;i++){if(u32(q)!==0x02014b50)break;const method=u16(q+10),cs=u32(q+20),us=u32(q+24),nl=u16(q+28),xl=u16(q+30),cl=u16(q+32),lo=u32(q+42);const name=new TextDecoder().decode(buf.slice(q+46,q+46+nl));q+=46+nl+xl+cl;if(!/\.(apk|apks|xapk|apkm)$/i.test(name)||us>80*1024*1024)continue;const ln=u16(lo+26),lx=u16(lo+28),raw=buf.slice(lo+30+ln+lx,lo+30+ln+lx+cs);let bytes=raw;if(method===8)bytes=new Uint8Array(await new Response(new Blob([raw]).stream().pipeThrough(new DecompressionStream("deflate-raw"))).arrayBuffer());if(method===0)bytes=raw;if(bytes.length){const meta=kind(name)==="apk"?parseApkManifest(bytes):{};out.push({name:name.split("/").pop()||"application.apk",bytes,packageName:meta.packageName,versionCode:meta.versionCode,versionName:meta.versionName})}}return out} }return []}
+async function unzipEntry(buf:Uint8Array,wanted:string){
+ const dv=new DataView(buf.buffer,buf.byteOffset,buf.byteLength);
+ const u16=(p:number)=>dv.getUint16(p,true),u32=(p:number)=>dv.getUint32(p,true);
+ const e=Math.min(buf.length-22,buf.length-65558);
+ for(let p=buf.length-22;p>=e;p--){
+  if(u32(p)!==0x06054b50)continue;
+  const n=u16(p+10),off=u32(p+16); let q=off;
+  for(let i=0;i<n&&q+46<=buf.length;i++){
+   if(u32(q)!==0x02014b50)break;
+   const method=u16(q+10),cs=u32(q+20),us=u32(q+24),nl=u16(q+28),xl=u16(q+30),cl=u16(q+32),lo=u32(q+42);
+   const name=new TextDecoder().decode(buf.slice(q+46,q+46+nl));
+   q+=46+nl+xl+cl;
+   if(name!==wanted)continue;
+   const ln=u16(lo+26),lx=u16(lo+28),raw=buf.slice(lo+30+ln+lx,lo+30+ln+lx+cs);
+   if(method===0)return raw;
+   if(method===8)return new Uint8Array(await new Response(new Blob([raw]).stream().pipeThrough(new DecompressionStream("deflate-raw"))).arrayBuffer());
+   return null;
+  }
+ }
+ return null;
+}
+async function apkMetadata(buf:Uint8Array){
+ const manifest=await unzipEntry(buf,"AndroidManifest.xml");
+ return manifest?parseApkManifest(manifest):{};
+}
+async function zipApks(buf:Uint8Array){
+ const dv=new DataView(buf.buffer,buf.byteOffset,buf.byteLength);
+ const u16=(p:number)=>dv.getUint16(p,true),u32=(p:number)=>dv.getUint32(p,true);
+ const e=Math.min(buf.length-22,buf.length-65558);
+ for(let p=buf.length-22;p>=e;p--){
+  if(u32(p)!==0x06054b50)continue;
+  const n=u16(p+10),off=u32(p+16),out:any[]=[];let q=off;
+  for(let i=0;i<n&&q+46<=buf.length;i++){
+   if(u32(q)!==0x02014b50)break;
+   const method=u16(q+10),cs=u32(q+20),us=u32(q+24),nl=u16(q+28),xl=u16(q+30),cl=u16(q+32),lo=u32(q+42);
+   const name=new TextDecoder().decode(buf.slice(q+46,q+46+nl));
+   q+=46+nl+xl+cl;
+   if(!/\.(apk|apks|xapk|apkm)$/i.test(name)||us>80*1024*1024)continue;
+   const ln=u16(lo+26),lx=u16(lo+28),raw=buf.slice(lo+30+ln+lx,lo+30+ln+lx+cs);
+   let bytes=raw;
+   if(method===8)bytes=new Uint8Array(await new Response(new Blob([raw]).stream().pipeThrough(new DecompressionStream("deflate-raw"))).arrayBuffer());
+   if(method!==0&&method!==8)continue;
+   if(bytes.length){
+    const meta=kind(name)==="apk"?await apkMetadata(bytes):{};
+    out.push({name:name.split("/").pop()||"application.apk",bytes,packageName:meta.packageName,versionCode:meta.versionCode,versionName:meta.versionName});
+   }
+  }
+  return out;
+ }
+ return [];
+}
 function readU16(v:DataView,p:number){return v.getUint16(p,true)}
 function readU32(v:DataView,p:number){return v.getUint32(p,true)}
 function readLen8(b:Uint8Array,p:number){let n=0,shift=0,x=0;do{x=b[p++];n|=(x&127)<<shift;shift+=7}while(x&128);return [n,p] as const}
 function readLen16(v:DataView,p:number){const first=readU16(v,p);if(first&0x8000)return [((first&0x7fff)<<16)|readU16(v,p+2),p+4] as const;return [first,p+2] as const}
-function axmlStrings(buf:Uint8Array,v:DataView,off:number){if(readU16(v,off)!==1)return null;const count=readU32(v,off+8),flags=readU32(v,off+16),start=readU32(v,off+20),utf8=(flags&0x100)!==0,base=off+start,offs=Array.from({length:count},(_,i)=>readU32(v,off+28+i*4));return (idx:number)=>{if(idx<0||idx>=offs.length)return "";let p=base+offs[idx];if(utf8){const a=readLen8(buf,p),b=readLen8(buf,a[1]);return new TextDecoder().decode(buf.slice(b[1],b[1]+a[0]))}const a=readLen16(v,p);return new TextDecoder("utf-16le").decode(buf.slice(a[1],a[1]+a[0]*2))}}
-function parseApkManifest(buf:Uint8Array){try{const v=new DataView(buf.buffer,buf.byteOffset,buf.byteLength);if(buf.length<8||readU16(v,0)!==3)return {};let p=8,strings:any=null,packageName="",versionCode:number|undefined,versionName:string|undefined;while(p+8<=buf.length){const type=readU16(v,p),size=readU32(v,p+4);if(size<8||p+size>buf.length)break;if(type===1)strings=axmlStrings(buf,v,p);else if(type===0x102&&strings&&p+36<=buf.length){const attrStart=readU16(v,p+24),attrSize=readU16(v,p+26),attrCount=readU16(v,p+28),attrs=p+16+attrStart;for(let i=0;i<attrCount;i++){const q=attrs+i*attrSize;if(q+20>p+size)break;const name=strings(readU32(v,q+4)),raw=readU32(v,q+8),dataType=buf[q+15],data=readU32(v,q+16),value=raw===0xffffffff?"":strings(raw);if(name==="package")packageName=value||packageName;if(name==="versionName")versionName=value;if(name==="versionCode")versionCode=dataType===0x10||dataType===0x11?data:Number(value)}}p+=size}return {packageName,versionCode,versionName}}catch{return {}}}
+function axmlStrings(buf:Uint8Array,v:DataView,off:number){
+ if(readU16(v,off)!==1)return null;
+ const count=readU32(v,off+8),flags=readU32(v,off+16),start=readU32(v,off+20),utf8=(flags&0x100)!==0,base=off+start;
+ const offs=Array.from({length:count},(_,i)=>readU32(v,off+28+i*4));
+ return (idx:number)=>{if(idx<0||idx>=offs.length)return "";let p=base+offs[idx];
+  if(utf8){const a=readLen8(buf,p),b=readLen8(buf,a[1]);return new TextDecoder().decode(buf.slice(b[1],b[1]+a[0]))}
+  const a=readLen16(v,p);return new TextDecoder("utf-16le").decode(buf.slice(a[1],a[1]+a[0]*2))}
+}
+function parseApkManifest(buf:Uint8Array){
+ try{
+  const v=new DataView(buf.buffer,buf.byteOffset,buf.byteLength);
+  if(buf.length<8||readU16(v,0)!==3)return {};
+  let p=8,strings:any=null,packageName="",versionCode:number|undefined,versionName:string|undefined;
+  while(p+8<=buf.length){
+   const type=readU16(v,p),size=readU32(v,p+4);if(size<8||p+size>buf.length)break;
+   if(type===1)strings=axmlStrings(buf,v,p);
+   else if(type===0x102&&strings&&p+36<=buf.length){
+    const attrStart=readU16(v,p+24),attrSize=readU16(v,p+26),attrCount=readU16(v,p+28),attrs=p+16+attrStart;
+    for(let i=0;i<attrCount;i++){
+     const q=attrs+i*attrSize;if(q+20>p+size)break;
+     const name=strings(readU32(v,q+4)),raw=readU32(v,q+8),dataType=buf[q+15],data=readU32(v,q+16),value=raw===0xffffffff?"":strings(raw);
+     if(name==="package")packageName=value||packageName;
+     if(name==="versionName")versionName=value;
+     if(name==="versionCode")versionCode=dataType===0x10||dataType===0x11?data:Number(value);
+    }
+   }
+   p+=size;
+  }
+  return {packageName,versionCode,versionName};
+ }catch{return {}}
+}
 async function hash(b:Uint8Array){const d=await crypto.subtle.digest("SHA-256",b);return Array.from(new Uint8Array(d)).map(x=>x.toString(16).padStart(2,"0")).join("")}
 Deno.serve(async req=>{
  if(req.method==="OPTIONS")return new Response("ok",{headers:cors}); if(req.method!=="POST")return out({error:"POST required"},405);
@@ -49,8 +128,8 @@ Deno.serve(async req=>{
    const patch:any={provider:"github",project:repo.full_name,source_external_id:String(repo.id),source_visibility:repo.private?"private":"public",name:(a?.name&&a.name!=="Application")?a.name:displayName(String(repo.name)),description:repo.description||null,description_source:"github",source_url:repo.html_url,icon_url:repo.owner?.avatar_url||null,icon_source:"github-avatar",platforms:["android"],updated_at:new Date().toISOString()};
    if(a?.description_source==="manual"){delete patch.description;delete patch.description_source} if(a?.icon_source==="manual"){delete patch.icon_url;delete patch.icon_source}
    if(!a){a=(await sb.from("applications").insert(patch).select("id,package_identity").single()).data;apps++}else a=(await sb.from("applications").update(patch).eq("id",a.id).select("id,package_identity").single()).data;
-   for(const r of rels){const sid=`github-release-${r.id}`;let rel=(await sb.from("releases").select("id").eq("application_id",a.id).eq("source_release_id",sid).maybeSingle()).data;if(!rel){rel=(await sb.from("releases").insert({application_id:a.id,source_release_id:sid,version_name:String(r.tag_name||r.name||"unknown"),channel:channel(String(r.tag_name||r.name||"")),status:"published",title:r.name||r.tag_name||"GitHub release",notes:r.body||null,published_at:r.published_at||r.created_at}).select("id").single()).data;releases++}for(const asset of (r.assets||[]).filter((x:any)=>kind(x.name))){const ex=(await sb.from("artifacts").select("id").eq("release_id",rel.id).eq("filename",asset.name).maybeSingle()).data;if(ex)continue;const f=await fetch(asset.browser_download_url,{headers:h});if(!f.ok)continue;const b=new Uint8Array(await f.arrayBuffer()),k=kind(asset.name),path=`${repo.full_name}/${String(r.tag_name||r.id).replace(/[^A-Za-z0-9._-]/g,"_")}/${String(asset.name).replace(/[^A-Za-z0-9._-]/g,"_")}`;const up=await sb.storage.from("aem-artifacts").upload(path,b,{contentType:k==="apk"?"application/vnd.android.package-archive":"application/octet-stream",upsert:true});if(up.error)throw up.error;const ins=await sb.from("artifacts").insert({release_id:rel.id,platform:"android",kind:k,filename:asset.name,download_url:`${Deno.env.get("SUPABASE_URL")}/storage/v1/object/public/aem-artifacts/${path}`,size_bytes:b.byteLength,sha256:await hash(b),package_identity:a.package_identity||null});if(!ins.error)artifacts++}}
-   for(const f of files){const sid=`github-file-${f.sha}`;if((await sb.from("releases").select("id").eq("application_id",a.id).eq("source_release_id",sid).maybeSingle()).data)continue;const raw=`https://raw.githubusercontent.com/${repo.full_name}/${repo.default_branch||"main"}/${String(f.path).split("/").map(encodeURIComponent).join("/")}`;const x=await fetch(raw,{headers:h});if(!x.ok)continue;const b=new Uint8Array(await x.arrayBuffer()),k=kind(String(f.path)),rel=(await sb.from("releases").insert({application_id:a.id,source_release_id:sid,version_name:"Repository APK",channel:"development",status:"published",title:String(f.path),published_at:new Date().toISOString()}).select("id").single()).data,path=`${repo.full_name}/source/${f.sha}/${String(f.path).split("/").pop()}`;const up=await sb.storage.from("aem-artifacts").upload(path,b,{contentType:k==="apk"?"application/vnd.android.package-archive":"application/octet-stream",upsert:true});if(up.error)throw up.error;const ins=await sb.from("artifacts").insert({release_id:rel.id,platform:"android",kind:k,filename:String(f.path).split("/").pop(),download_url:`${Deno.env.get("SUPABASE_URL")}/storage/v1/object/public/aem-artifacts/${path}`,size_bytes:b.byteLength,sha256:await hash(b),package_identity:a.package_identity||null});if(!ins.error){releases++;artifacts++}}
+   for(const r of rels){const sid=`github-release-${r.id}`;let rel=(await sb.from("releases").select("id").eq("application_id",a.id).eq("source_release_id",sid).maybeSingle()).data;if(!rel){rel=(await sb.from("releases").insert({application_id:a.id,source_release_id:sid,version_name:String(r.tag_name||r.name||"unknown"),channel:channel(String(r.tag_name||r.name||"")),status:"published",title:r.name||r.tag_name||"GitHub release",notes:r.body||null,published_at:r.published_at||r.created_at}).select("id").single()).data;releases++}for(const asset of (r.assets||[]).filter((x:any)=>kind(x.name))){const f=await fetch(asset.browser_download_url,{headers:h});if(!f.ok)continue;const b=new Uint8Array(await f.arrayBuffer()),k=kind(asset.name),meta=k==="apk"?await apkMetadata(b):{},path=`${repo.full_name}/${String(r.tag_name||r.id).replace(/[^A-Za-z0-9._-]/g,"_")}/${String(asset.name).replace(/[^A-Za-z0-9._-]/g,"_")}`;const up=await sb.storage.from("aem-artifacts").upload(path,b,{contentType:k==="apk"?"application/vnd.android.package-archive":"application/octet-stream",upsert:true});if(up.error)throw up.error;const sha=await hash(b);const existing=(await sb.from("artifacts").select("id").eq("release_id",rel.id).eq("filename",asset.name).maybeSingle()).data;const payload={release_id:rel.id,platform:"android",kind:k,filename:asset.name,download_url:`${Deno.env.get("SUPABASE_URL")}/storage/v1/object/public/aem-artifacts/${path}`,size_bytes:b.byteLength,sha256:sha,package_identity:meta.packageName||a.package_identity||null,version_code:meta.versionCode??null};const ins=existing?await sb.from("artifacts").update(payload).eq("id",existing.id):await sb.from("artifacts").insert(payload);if(!ins.error){artifacts++;if(meta.packageName&&!a.package_identity){a.package_identity=meta.packageName;await sb.from("applications").update({package_identity:meta.packageName,updated_at:new Date().toISOString()}).eq("id",a.id)}}}}
+   for(const f of files){const sid=`github-file-${f.sha}`;if((await sb.from("releases").select("id").eq("application_id",a.id).eq("source_release_id",sid).maybeSingle()).data)continue;const raw=`https://raw.githubusercontent.com/${repo.full_name}/${repo.default_branch||"main"}/${String(f.path).split("/").map(encodeURIComponent).join("/")}`;const x=await fetch(raw,{headers:h});if(!x.ok)continue;const b=new Uint8Array(await x.arrayBuffer()),k=kind(String(f.path)),meta=k==="apk"?await apkMetadata(b):{},rel=(await sb.from("releases").insert({application_id:a.id,source_release_id:sid,version_name:meta.versionName||"Repository APK",version_code:meta.versionCode??null,channel:"development",status:"published",title:String(f.path),published_at:new Date().toISOString()}).select("id").single()).data,path=`${repo.full_name}/source/${f.sha}/${String(f.path).split("/").pop()}`;const up=await sb.storage.from("aem-artifacts").upload(path,b,{contentType:k==="apk"?"application/vnd.android.package-archive":"application/octet-stream",upsert:true});if(up.error)throw up.error;const ins=await sb.from("artifacts").insert({release_id:rel.id,platform:"android",kind:k,filename:String(f.path).split("/").pop(),download_url:`${Deno.env.get("SUPABASE_URL")}/storage/v1/object/public/aem-artifacts/${path}`,size_bytes:b.byteLength,sha256:await hash(b),package_identity:meta.packageName||a.package_identity||null,version_code:meta.versionCode??null});if(!ins.error){releases++;artifacts++;if(meta.packageName&&!a.package_identity)await sb.from("applications").update({package_identity:meta.packageName,updated_at:new Date().toISOString()}).eq("id",a.id)}}
 
    const runs=await gh(GH+`/repos/${repo.full_name}/actions/runs?status=success&per_page=10`,h).catch(()=>({workflow_runs:[]}));
    for(const run of (runs.workflow_runs||[])){
@@ -59,9 +138,9 @@ Deno.serve(async req=>{
      if(wa.expired||!/(apk|android|build|release)/i.test(String(wa.name||"")))continue;
      const sid=`github-actions-artifact-${wa.id}`;if((await sb.from("releases").select("id").eq("application_id",a.id).eq("source_release_id",sid).maybeSingle()).data)continue;
      const z=await fetch(wa.archive_download_url,{headers:h});if(!z.ok)continue;const entries=await zipApks(new Uint8Array(await z.arrayBuffer()));if(!entries.length)continue;
-     const rr=await sb.from("releases").insert({application_id:a.id,source_release_id:sid,version_name:`workflow-${run.run_number||run.id}`,version_code:Number(run.run_number||0)||null,channel:channel(String(wa.name||run.name||"")),status:"published",title:String(wa.name||"GitHub Actions APK"),notes:`APK discovered from GitHub Actions workflow run ${run.id}.`,published_at:run.updated_at||run.created_at}).select("id").single();if(rr.error)throw rr.error;let made=0;
-     for(const ent of entries){const path=`${repo.full_name}/actions/${wa.id}/${ent.name}`,up=await sb.storage.from("aem-artifacts").upload(path,ent.bytes,{contentType:"application/vnd.android.package-archive",upsert:true});if(up.error)throw up.error;const ins=await sb.from("artifacts").insert({release_id:rr.data.id,platform:"android",kind:kind(ent.name),filename:ent.name,download_url:`${Deno.env.get("SUPABASE_URL")}/storage/v1/object/public/aem-artifacts/${path}`,size_bytes:ent.bytes.byteLength,sha256:await hash(ent.bytes),package_identity:ent.packageName||a.package_identity||null,version_code:ent.versionCode??null});if(!ins.error){artifacts++;made++}}
-     if(made){releases++}else{await sb.from("releases").delete().eq("id",rr.data.id)}
+     const versioned=entries.filter((x:any)=>Number.isFinite(Number(x.versionCode))&&Number(x.versionCode)>0).sort((x:any,y:any)=>Number(y.versionCode)-Number(x.versionCode));const primary=versioned[0]||entries[0];const realCode=primary?.versionCode!=null?Number(primary.versionCode):null;const realName=primary?.versionName?String(primary.versionName):`workflow-${run.run_number||run.id}`;const pkg=primary?.packageName?String(primary.packageName):a.package_identity||null;const existingRelease=(await sb.from("releases").select("id").eq("application_id",a.id).eq("source_release_id",sid).maybeSingle()).data;const rr=existingRelease?{data:existingRelease,error:null}:await sb.from("releases").insert({application_id:a.id,source_release_id:sid,version_name:realName,version_code:realCode,channel:channel(String(wa.name||run.name||"")),status:"published",title:String(wa.name||"GitHub Actions APK"),notes:`APK discovered from GitHub Actions workflow run ${run.id}.`,published_at:run.updated_at||run.created_at}).select("id").single();if(rr.error)throw rr.error;if(existingRelease)await sb.from("releases").update({version_name:realName,version_code:realCode,channel:channel(String(wa.name||run.name||"")),title:String(wa.name||"GitHub Actions APK"),published_at:run.updated_at||run.created_at}).eq("id",existingRelease.id);let made=0;
+     for(const ent of entries){const path=`${repo.full_name}/actions/${wa.id}/${ent.name}`,up=await sb.storage.from("aem-artifacts").upload(path,ent.bytes,{contentType:"application/vnd.android.package-archive",upsert:true});if(up.error)throw up.error;const sha=await hash(ent.bytes);const existingArtifact=(await sb.from("artifacts").select("id").eq("release_id",rr.data.id).eq("filename",ent.name).maybeSingle()).data;const payload={release_id:rr.data.id,platform:"android",kind:kind(ent.name),filename:ent.name,download_url:`${Deno.env.get("SUPABASE_URL")}/storage/v1/object/public/aem-artifacts/${path}`,size_bytes:ent.bytes.byteLength,sha256:sha,package_identity:ent.packageName||a.package_identity||null,version_code:ent.versionCode??null};const ins=existingArtifact?await sb.from("artifacts").update(payload).eq("id",existingArtifact.id):await sb.from("artifacts").insert(payload);if(!ins.error){artifacts++;made++;if(ent.packageName&&!a.package_identity){a.package_identity=ent.packageName;await sb.from("applications").update({package_identity:ent.packageName,updated_at:new Date().toISOString()}).eq("id",a.id)}}}
+     if(made){if(!existingRelease)releases++}else if(!existingRelease){await sb.from("releases").delete().eq("id",rr.data.id)}
     }
    }
   }catch(e){failedRepos++;console.error("repo sync",repo.full_name,e)}}
