@@ -352,6 +352,7 @@ public class AemInstallerPlugin extends Plugin {
             intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_GRANT_READ_URI_PERMISSION);
             try { getContext().startActivity(intent); }
             catch (ActivityNotFoundException e) { throw new IOException("No Android package installer is available on this device.", e); }
+            monitorSystemInstall(expectedPackage, expectedVersionCode, expectedDownloadId);
             return;
         }
 
@@ -386,6 +387,27 @@ public class AemInstallerPlugin extends Plugin {
         } finally {
             session.close();
         }
+    }
+
+    private void monitorSystemInstall(final String packageName, final long targetVersionCode, final String downloadId) {
+        if (packageName == null || packageName.isEmpty() || targetVersionCode < 0) return;
+        new Thread(() -> {
+            boolean installed = false;
+            for (int attempt = 0; attempt < 90; attempt++) {
+                try {
+                    android.content.pm.PackageInfo p = getContext().getPackageManager().getPackageInfo(packageName, android.content.pm.PackageManager.GET_SIGNING_CERTIFICATES);
+                    long code = Build.VERSION.SDK_INT >= 28 ? p.getLongVersionCode() : p.versionCode;
+                    if (code >= targetVersionCode) { installed = true; break; }
+                } catch (Exception ignored) {}
+                try { Thread.sleep(1000L); } catch (InterruptedException e) { Thread.currentThread().interrupt(); break; }
+            }
+            JSObject out = new JSObject();
+            out.put("downloadId", downloadId);
+            out.put("success", installed);
+            out.put("status", installed ? PackageInstaller.STATUS_SUCCESS : PackageInstaller.STATUS_FAILURE);
+            out.put("message", installed ? "Installation completed" : "Installation was not completed");
+            notifyListeners("installResult", out);
+        }, "aem-system-install-monitor").start();
     }
 
     private void validatePackage(File file, String expectedPackage, String expectedSigningCert, long expectedVersionCode) throws Exception {
