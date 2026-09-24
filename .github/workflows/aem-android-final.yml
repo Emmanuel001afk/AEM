@@ -40,6 +40,7 @@ jobs:
         with:
           cache-overwrite-existing: true
       - run: npm install
+      - run: npm run typecheck
       - run: npx vite build --config vite.mobile.config.ts
       - run: npm install --no-save @capacitor/cli@7 @capacitor/core@7 @capacitor/android@7
       - run: npx --yes @capacitor/cli@7 add android
