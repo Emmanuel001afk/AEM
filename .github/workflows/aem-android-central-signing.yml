@@ -66,8 +66,15 @@ jobs:
           OIDC_TOKEN="$(cat "$RUNNER_TEMP/aem-oidc-token")"
           API="$SUPABASE_URL/functions/v1/aem-android-signing"
           AUTH=(-H "apikey: $SUPABASE_KEY" -H "Authorization: Bearer $SUPABASE_KEY" -H "Content-Type: application/json" -H "x-aem-oidc: $OIDC_TOKEN")
-          queue="$(curl -fsSL --retry 3 --retry-delay 2 -X POST "$API" "${AUTH[@]}" --data '{"action":"claim","limit":25}')"
-          count="$(jq ".artifacts | length" <<<"$queue")"
+          response_file="$RUNNER_TEMP/aem-claim-response.json"
+          http_code="$(curl --silent --show-error --retry 3 --retry-delay 2 --output "$response_file" --write-out "%{http_code}" -X POST "$API" "${AUTH[@]}" --data '{"action":"claim","limit":25}')"
+          if [ "$http_code" -lt 200 ] || [ "$http_code" -ge 300 ]; then
+            echo "Artifact claim failed with HTTP $http_code"
+            jq -C . "$response_file" 2>/dev/null || cat "$response_file"
+            exit 1
+          fi
+          queue="$(cat "$response_file")"
+          count="$(jq -e ".artifacts | length" <<<"$queue")"
           echo "Claimed $count Android APK(s) for central signing."
           if [ "$count" -eq 0 ]; then exit 0; fi
 
