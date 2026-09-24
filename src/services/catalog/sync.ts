@@ -1,4 +1,5 @@
 import {supabaseRequest} from "../supabase/client";
+// GitHub discovery is performed by the scheduled backend sync; the app only refreshes the catalog.
 
 export async function syncGithubCatalog():Promise<{ok:boolean;partial?:boolean;scanned?:number;failed_repositories?:number;discovered?:number;releases?:number;artifacts?:number;queued?:number;error?:string;code?:string}>{
   const r=await supabaseRequest("/functions/v1/aem-sync-github",{method:"POST",body:JSON.stringify({owner:"Emmanuel001afk"})});
