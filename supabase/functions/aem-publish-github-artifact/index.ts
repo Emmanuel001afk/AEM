@@ -94,18 +94,7 @@ Deno.serve(async(req)=>{
   if(ins.error)throw ins.error;
   // The catalog name is source metadata; never replace it with the APK manifest label (which may be generic).
   await sb.from("applications").update({package_identity:packageIdentity,updated_at:new Date().toISOString()}).eq("id",appId);
-  try {
-    const historyResult=await sb.from("release_history").insert({application_id:appId,release_id:release.id,reason:"published"});
-    if(historyResult.error) console.error("Release history insert failed:",historyResult.error);
-  } catch(error) {
-    console.error("Unexpected release history insert error:",error);
-  }
-  try {
-    const notificationResult=await sb.from("notifications").insert({kind:"release",title:`New ${appName} release`,body:`${versionName} is now available in AEM Store.`,app_id:appId,release_id:release.id});
-    if(notificationResult.error) console.error("Notification insert failed:",notificationResult.error);
-  } catch(error) {
-    console.error("Unexpected notification insert error:",error);
-  }
+  // Release history and release notifications are generated centrally by the database trigger.
   return json({ok:true,release_id:release.id,artifact_id:ins.data.id,download_url:objectUrl,sha256,size_bytes:sizeBytes});
  }catch(e){console.error("AEM publish error",e);return json({error:e instanceof Error?e.message:String(e)},500)}
 });
