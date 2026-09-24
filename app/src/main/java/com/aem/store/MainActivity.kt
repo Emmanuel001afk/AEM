@@ -101,7 +101,7 @@ private suspend fun loadRemoteApps():List<StoreApp> = withContext(Dispatchers.IO
                 val r=best ?: continue
                 val arts=r.optJSONArray("artifacts") ?: JSONArray()
                 var apk:JSONObject?=null
-                for(k in 0 until arts.length()) if(arts.getJSONObject(k).optString("kind")=="apk"){apk=arts.getJSONObject(k);break}
+                for(k in 0 until arts.length()) if(arts.getJSONObject(k).optString("kind")=="apk" && arts.getJSONObject(k).optString("signing_status","ready")=="ready"){apk=arts.getJSONObject(k);break}
                 val z=apk ?: continue
                 add(StoreApp(a.optString("name"),a.optString("description"),a.optString("category","Other"),
                     "Published APK · "+a.optString("project"),listOf("Android APK","Published release"),
