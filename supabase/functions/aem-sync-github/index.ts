@@ -5,7 +5,7 @@ const GH="https://api.github.com";
 function out(x:any,s=200){return Response.json(x,{status:s,headers:{...cors,"Content-Type":"application/json"}})}
 function db(){const k=JSON.parse(Deno.env.get("SUPABASE_SECRET_KEYS")||"{}").default||Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");if(!k)throw Error("Supabase server key unavailable");return createClient(Deno.env.get("SUPABASE_URL")!,k)}
 function kind(n:string){n=n.toLowerCase();return n.endsWith(".apk")?"apk":n.endsWith(".apks")?"apks":n.endsWith(".xapk")?"xapk":n.endsWith(".apkm")?"apkm":null}
-function channel(t:string):"stable"|"beta"|"development"{t=t.toLowerCase();if(/(^|[-_.])(beta|b)([-_.]|\d|$)/.test(t))return"beta";if(/(^|[-_.])(dev|development|nightly|alpha|canary)([-_.]|\d|$)/.test(t))return"development";return"stable"}
+function channel(t:string):"stable"|"beta"|"development"{t=t.toLowerCase();if(/(^|[-_.])(beta|b)([-_.]|\d|$)/.test(t))return"beta";if(/(^|[-_.])(dev|development|debug|nightly|alpha|canary)([-_.]|\d|$)/.test(t))return"development";return"stable"}
 function displayName(repo:string){if(repo==="AEM")return"AEM Store";if(repo==="phormi-android")return"Phormi";if(repo==="lite-read")return"Lite Read";return repo}
 async function gh(url:string,h:any){const r=await fetch(url,{headers:h});if(!r.ok)throw Error("GitHub API "+r.status);return r.json()}
 
