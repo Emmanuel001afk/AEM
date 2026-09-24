@@ -3,6 +3,18 @@ name: AEM Store Android APK Final
 on:
   push:
     branches: [main]
+    paths:
+      - "src/**"
+      - "native/**"
+      - "public/**"
+      - "package.json"
+      - "package-lock.json"
+      - "vite.config.*"
+      - "vite.mobile.config.*"
+      - "capacitor.config.*"
+      - "index.html"
+      - "mobile-index.html"
+      - ".github/workflows/aem-android-final.yml"
   workflow_dispatch:
 
 concurrency:
@@ -49,10 +61,14 @@ jobs:
           import re
           p = Path("android/app/build.gradle")
           s = p.read_text()
-          n = os.environ["RUN_NUMBER"]
-          version_code = str(int(__import__("time").time()))
+          from datetime import date
+          run_number = int(os.environ["RUN_NUMBER"])
+          days = (date.today() - date(2020, 1, 1)).days
+          version_code = 1_800_000_000 + days * 1000 + (run_number % 1000)
+          if version_code >= 2_100_000_000:
+              raise SystemExit(f"Computed versionCode {version_code} exceeds Android limit")
           s = re.sub(r"versionCode\s*(?:=\s*|\s+)\d+", f"versionCode {version_code}", s)
-          s = re.sub(r'versionName\s*(?:=\s*)?"[^"]+"', f'versionName "0.1.{n}"', s)
+          s = re.sub(r'versionName\s*(?:=\s*)?"[^"]+"', f'versionName "0.1.{run_number}"', s)
           p.write_text(s)
           PY
 
@@ -153,13 +169,3 @@ jobs:
           name: aem-store-release-apk
           path: android/app/build/outputs/apk/release/app-release.apk
           if-no-files-found: error
-
-# Trigger publish verification after the signed-storage gateway retry fix.
-
-# Trigger fresh build after storage upload response handling fix
-
-# Trigger rebuild after safe Supabase prepare retry handling
-
-# Trigger rebuild after monotonic version-code fix
-
-# Trigger publish after finalize payload and diagnostics fix.
