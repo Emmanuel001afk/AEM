@@ -100,6 +100,9 @@ Deno.serve(async req=>{
  if(req.method==="OPTIONS")return new Response("ok",{headers:cors}); if(req.method!=="POST")return out({error:"POST required"},405);
  const sb=db(), started=new Date();
  try{
+  const callerSecret=(req.headers.get("x-aem-sync-secret")||"").trim();
+  const secretResult=await sb.rpc("aem_get_sync_secret");
+  if(secretResult.error||!secretResult.data||callerSecret!==String(secretResult.data))return out({ok:false,error:"Unauthorized sync caller."},401);
   const token=(Deno.env.get("AEM_GITHUB_TOKEN")||Deno.env.get("GITHUB_TOKEN")||"").trim();
   if(!token){
    const message="AEM_GITHUB_TOKEN is not configured in Supabase Edge Function secrets.";
