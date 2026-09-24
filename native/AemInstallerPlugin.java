@@ -191,6 +191,12 @@ public class AemInstallerPlugin extends Plugin {
             } catch (DownloadPausedException e) {
                 JSObject out = new JSObject(); out.put("paused", true); out.put("downloadId", spec.downloadId); call.resolve(out);
             } catch (Exception e) {
+                if (pausedDownloads.contains(spec.downloadId)) {
+                    JSObject out = new JSObject(); out.put("paused", true); out.put("downloadId", spec.downloadId); call.resolve(out); return;
+                }
+                if (cancelledDownloads.contains(spec.downloadId)) {
+                    JSObject out = new JSObject(); out.put("cancelled", true); out.put("downloadId", spec.downloadId); call.resolve(out); return;
+                }
                 call.reject(e.getMessage() == null ? "Installation failed" : e.getMessage(), e);
             }
         }, "aem-installer").start();
