@@ -10,7 +10,7 @@ export async function loadSupabaseCatalog():Promise<StoreApp[]>{
   const latest=(channel:string)=>{
    const list=releases.filter((x:any)=>{
     if(x.status!=="published"||x.channel!==channel)return false;
-    if(String(x.version_name||"").startsWith("workflow-") && releases.some((r:any)=>r.status==="published"&&r.channel===channel&&!String(r.version_name||"").startsWith("workflow-"))) return false;
+    // Workflow releases are valid sources too; their APK manifest versionCode is authoritative.
     return (x.artifacts||[]).some((z:any)=>z.platform==="android"&&["apk","apks","xapk","apkm"].includes(z.kind));
    }).sort((x:any,y:any)=>{
     const yc=Math.max(Number(y.version_code??0),...(y.artifacts||[]).map((z:any)=>Number(z.version_code??0)));
