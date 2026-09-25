@@ -8,5 +8,5 @@ export interface Artifact{id:string;platform:Platform;kind:ArtifactKind;filename
 export interface Release{id:string;applicationId:ApplicationId;version:Version;channel:ReleaseChannel;status:ReleaseStatus;title?:string;notes?:string;publishedAt?:string;sourceReleaseId:string;artifacts:Artifact[]}
 export type InstallState="not-installed"|"installed"|"update-available"|"local-newer"|"identity-mismatch";
 export interface InstalledApplication{packageIdentity:string;versionName:string;versionCode:number;signingCertificateSha256?:string;installSource?:string}
-export interface InstallDecision{state:InstallState;action:"INSTALL"|"OPEN"|"UPDATE"|"CURRENT"|"INCOMPATIBLE";reason:string}
+export interface InstallDecision{state:InstallState;action:"INSTALL"|"OPEN"|"UPDATE"|"INCOMPATIBLE";reason:string}
 export interface ReleaseEvent{provider:string;eventType:"release"|"workflow_run"|"repository_dispatch";sourceProject:string;sourceReleaseId:string;occurredAt:string;payload:unknown}
