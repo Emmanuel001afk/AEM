@@ -26,7 +26,7 @@ Deno.serve(async(req)=>{
   const sourceReleaseId=String(b.source_release_id||`github-actions-${runId}`);
   const signingCertificateSha256=String(b.signing_certificate_sha256||"").trim().replace(/:/g,"").toLowerCase();
   if(!repo||!runId||versionCode===null||!packageIdentity)return json({error:"Missing required publish metadata."},400);
-  const androidArtifactNeedsCentralSigning=!signingCertificateSha256;
+  const androidArtifactNeedsCentralSigning=true;
 
   const githubToken=(req.headers.get("x-github-token")||"").trim();
   if(!githubToken)return json({error:"GitHub authorization token is required for publishing."},401);
@@ -91,7 +91,7 @@ Deno.serve(async(req)=>{
   if(existing.error)throw existing.error;
   if(existing.data)return json({ok:true,duplicate:true,release_id:release.id,artifact_id:existing.data.id,download_url:existing.data.download_url});
 
-  const ins=await sb.from("artifacts").insert({release_id:release.id,platform:"android",kind:"apk",filename,download_url:objectUrl,size_bytes:sizeBytes,sha256,package_identity:packageIdentity,signing_certificate_sha256:signingCertificateSha256||null,signing_status:androidArtifactNeedsCentralSigning?"pending":"ready",version_code:versionCode}).select("id").single();
+  const ins=await sb.from("artifacts").insert({release_id:release.id,platform:"android",kind:"apk",filename,download_url:objectUrl,size_bytes:sizeBytes,sha256,package_identity:packageIdentity,signing_certificate_sha256:null,signing_status:androidArtifactNeedsCentralSigning?"pending":"ready",signing_authority:"source",version_code:versionCode}).select("id").single();
   if(ins.error)throw ins.error;
   // The catalog name is source metadata; never replace it with the APK manifest label (which may be generic).
   await sb.from("applications").update({package_identity:packageIdentity,updated_at:new Date().toISOString()}).eq("id",appId);
