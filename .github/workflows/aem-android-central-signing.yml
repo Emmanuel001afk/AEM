@@ -98,7 +98,7 @@ jobs:
               fail_item "$id" "apksigner sign failed: $(tail -c 1800 "$sign_log" | tr '\n' ' ')"
               continue
             fi
-            verify_out="$("\${{ steps.tools.outputs.apksigner }}" verify --print-certs "$output" 2>&1 || true)"
+            verify_out="$("${{ steps.tools.outputs.apksigner }}" verify --print-certs "$output" 2>&1 || true)"
             cert="$(printf '%s\n' "$verify_out" | grep -Eio '[0-9a-f]{64}' | head -n 1 | tr '[:upper:]' '[:lower:]' || true)"
             if [ -z "$cert" ]; then
               cert="$(keytool -printcert -jarfile "$output" 2>/dev/null | grep -Eio '[0-9a-f]{64}' | head -n 1 | tr '[:upper:]' '[:lower:]' || true)"
