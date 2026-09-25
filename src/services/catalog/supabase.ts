@@ -2,7 +2,7 @@ import type {StoreApp} from "../../domain/catalog";
 import {supabaseRequest} from "../supabase/client";
 
 export async function loadSupabaseCatalog():Promise<StoreApp[]>{
- const r=await supabaseRequest(`/rest/v1/applications?select=*,releases!releases_application_id_fkey(*,artifacts!artifacts_release_id_fkey(*))&order=name.asc&_aem_refresh=${Date.now()}`,{cache:"no-store"});
+ const r=await supabaseRequest("/rest/v1/applications?select=*,releases!releases_application_id_fkey(*,artifacts!artifacts_release_id_fkey(*))&order=name.asc",{cache:"no-store",headers:{"Cache-Control":"no-cache"}});
  if(!r.ok) throw new Error(`Supabase catalog request failed: ${r.status}`);
  const rows=await r.json();
  return rows.map((a:any)=>{
