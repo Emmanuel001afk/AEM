@@ -111,7 +111,7 @@ Deno.serve(async (req) => {
 
     if (action === "fail") {
       await sb.from("artifacts").update({
-        signing_status: "failed",
+        signing_status: "pending",
         signing_authority: "source",
       }).eq("id", id).eq("signing_status", "processing");
       return json({ ok: true, artifact_id: id, signing_status: "failed" });
