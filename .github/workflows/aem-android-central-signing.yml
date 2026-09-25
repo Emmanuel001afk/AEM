@@ -67,7 +67,7 @@ jobs:
           API="$SUPABASE_URL/functions/v1/aem-android-signing"
           AUTH=(-H "apikey: $SUPABASE_KEY" -H "Authorization: Bearer $SUPABASE_KEY" -H "Content-Type: application/json" -H "x-aem-oidc: $OIDC_TOKEN")
           response_file="$RUNNER_TEMP/aem-claim-response.json"
-          http_code="$(curl --silent --show-error --retry 3 --retry-delay 2 --output "$response_file" --write-out "%{http_code}" -X POST "$API" "${AUTH[@]}" --data '{"action":"claim","limit":25}')"
+          http_code="$(curl --silent --show-error --retry 3 --retry-delay 2 --output "$response_file" --write-out "%{http_code}" -X POST "$API" "${AUTH[@]}" --data '{"action":"claim","limit":10}')"
           if [ "$http_code" -lt 200 ] || [ "$http_code" -ge 300 ]; then
             echo "Artifact claim failed with HTTP $http_code"
             jq -C . "$response_file" 2>/dev/null || cat "$response_file"
@@ -92,7 +92,7 @@ jobs:
             safe="${filename//[^A-Za-z0-9._-]/_}"
             input="$RUNNER_TEMP/aem-signing/$id-$safe"
             output="$RUNNER_TEMP/aem-signing/$id-signed.apk"
-            if ! curl -fsSL --retry 3 --retry-delay 2 "$url" -o "$input"; then fail_item "$id" "APK download failed: $url"; continue; fi
+            if ! curl -fsSL --connect-timeout 20 --max-time 180 --retry 3 --retry-delay 2 "$url" -o "$input"; then fail_item "$id" "APK download failed: $url"; continue; fi
             sign_log="$RUNNER_TEMP/aem-signing/$id-sign.log"
             if ! "${{ steps.tools.outputs.apksigner }}" sign --ks "$RUNNER_TEMP/aem-release.keystore" --ks-key-alias "$AEM_KEY_ALIAS" --ks-pass "env:AEM_KEYSTORE_PASSWORD" --key-pass "env:AEM_KEY_PASSWORD" --out "$output" "$input" 2>"$sign_log"; then
               fail_item "$id" "apksigner sign failed: $(tail -c 1800 "$sign_log" | tr '\n' ' ')"
