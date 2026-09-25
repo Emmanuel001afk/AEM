@@ -67,7 +67,7 @@ jobs:
           API="$SUPABASE_URL/functions/v1/aem-android-signing"
           AUTH=(-H "apikey: $SUPABASE_KEY" -H "Authorization: Bearer $SUPABASE_KEY" -H "Content-Type: application/json" -H "x-aem-oidc: $OIDC_TOKEN")
           response_file="$RUNNER_TEMP/aem-claim-response.json"
-          http_code="$(curl --silent --show-error --retry 3 --retry-delay 2 --output "$response_file" --write-out "%{http_code}" -X POST "$API" "${AUTH[@]}" --data '{"action":"claim","limit":10}')"
+          http_code="$(curl --silent --show-error --retry 3 --retry-delay 2 --output "$response_file" --write-out "%{http_code}" -X POST "$API" "${AUTH[@]}" --data '{"action":"claim","limit":25}')"
           if [ "$http_code" -lt 200 ] || [ "$http_code" -ge 300 ]; then
             echo "Artifact claim failed with HTTP $http_code"
             jq -C . "$response_file" 2>/dev/null || cat "$response_file"
