@@ -6,7 +6,7 @@ export function getInstallDecision(release:Release,installed:InstalledApplicatio
     const state=compareAndroidRelease(release,installed);
     if(state==="update-available") return {state,action:"UPDATE",reason:"A compatible newer release is available"};
     if(state==="installed") return {state,action:"OPEN",reason:"Installed version matches the store release"};
-    if(state==="local-newer") return {state,action:"CURRENT",reason:"Installed version is newer than this release"};
+    if(state==="local-newer") return {state,action:"OPEN",reason:"Installed application is already present and can be opened"};
     return {state:"identity-mismatch",action:"INCOMPATIBLE",reason:"Package identity or signing certificate does not match"};
 }
 
