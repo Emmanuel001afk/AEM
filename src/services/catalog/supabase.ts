@@ -2,16 +2,16 @@ import type {StoreApp} from "../../domain/catalog";
 import {supabaseRequest} from "../supabase/client";
 
 export async function loadSupabaseCatalog():Promise<StoreApp[]>{
- const r=await supabaseRequest("/rest/v1/applications?select=*,releases!releases_application_id_fkey(*,artifacts!artifacts_release_id_fkey(*))&order=name.asc");
+ const r=await supabaseRequest(`/rest/v1/applications?select=*,releases!releases_application_id_fkey(*,artifacts!artifacts_release_id_fkey(*))&order=name.asc&_aem_refresh=${Date.now()}`,{cache:"no-store"});
  if(!r.ok) throw new Error(`Supabase catalog request failed: ${r.status}`);
  const rows=await r.json();
  return rows.map((a:any)=>{
-  const releases=Array.isArray(a.releases)?a.releases.map((x:any)=>({...x,artifacts:(Array.isArray(x.artifacts)?x.artifacts:[]).filter((z:any)=>z.signing_status==="ready"&&z.signing_authority==="aem")})).filter((x:any)=>x.artifacts.length):[];
+  const releases=Array.isArray(a.releases)?a.releases.map((x:any)=>({...x,artifacts:(Array.isArray(x.artifacts)?x.artifacts:[]).filter((z:any)=>z.signing_status==="ready")})).filter((x:any)=>x.artifacts.length):[];
   const latest=(channel:string)=>{
    const list=releases.filter((x:any)=>{
     if(x.status!=="published"||x.channel!==channel)return false;
     // Workflow releases are valid sources too; their APK manifest versionCode is authoritative.
-    return (x.artifacts||[]).some((z:any)=>z.platform==="android"&&z.kind==="apk"&&z.signing_status==="ready"&&z.signing_authority==="aem");
+    return (x.artifacts||[]).some((z:any)=>z.platform==="android"&&z.kind==="apk"&&z.signing_status==="ready");
    }).sort((x:any,y:any)=>{
     const yc=Math.max(Number(y.version_code??0),...(y.artifacts||[]).map((z:any)=>Number(z.version_code??0)));
     const xc=Math.max(Number(x.version_code??0),...(x.artifacts||[]).map((z:any)=>Number(z.version_code??0)));
