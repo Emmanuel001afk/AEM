@@ -106,4 +106,5 @@ jobs:
           done < <(jq -c ".artifacts[]" <<<"$queue")
 
 # Central signing is intentionally hosted in AEM so individual app repositories need no signing configuration.
+# AEM central signing gateway v2.
 # Queue backfill trigger.
