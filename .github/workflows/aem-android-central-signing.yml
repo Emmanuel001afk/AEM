@@ -81,7 +81,8 @@ jobs:
           mkdir -p "$RUNNER_TEMP/aem-signing"
           fail_item() {
             local id="$1"
-            curl -fsSL --retry 2 -X POST "$API" "${AUTH[@]}" --data "$(jq -nc --argjson artifact_id "$id" '{action:"fail",artifact_id:$artifact_id}')" >/dev/null || true
+            local reason="${2:-Central signing failed}"
+            curl -fsSL --retry 2 -X POST "$API" "${AUTH[@]}" --data "$(jq -nc --argjson artifact_id "$id" --arg error "$reason" '{action:"fail",artifact_id:$artifact_id,error:$error}')" >/dev/null || true
           }
 
           while IFS= read -r item; do
@@ -91,10 +92,14 @@ jobs:
             safe="${filename//[^A-Za-z0-9._-]/_}"
             input="$RUNNER_TEMP/aem-signing/$id-$safe"
             output="$RUNNER_TEMP/aem-signing/$id-signed.apk"
-            if ! curl -fsSL --retry 3 --retry-delay 2 "$url" -o "$input"; then fail_item "$id"; continue; fi
-            if ! "${{ steps.tools.outputs.apksigner }}" sign --ks "$RUNNER_TEMP/aem-release.keystore" --ks-key-alias "$AEM_KEY_ALIAS" --ks-pass "env:AEM_KEYSTORE_PASSWORD" --key-pass "env:AEM_KEY_PASSWORD" --out "$output" "$input"; then fail_item "$id"; continue; fi
+            if ! curl -fsSL --retry 3 --retry-delay 2 "$url" -o "$input"; then fail_item "$id" "APK download failed: $url"; continue; fi
+            sign_log="$RUNNER_TEMP/aem-signing/$id-sign.log"
+            if ! "${{ steps.tools.outputs.apksigner }}" sign --ks "$RUNNER_TEMP/aem-release.keystore" --ks-key-alias "$AEM_KEY_ALIAS" --ks-pass "env:AEM_KEYSTORE_PASSWORD" --key-pass "env:AEM_KEY_PASSWORD" --out "$output" "$input" 2>"$sign_log"; then
+              fail_item "$id" "apksigner sign failed: $(tail -c 1800 "$sign_log" | tr '\n' ' ')"
+              continue
+            fi
             cert="$("${{ steps.tools.outputs.apksigner }}" verify --print-certs "$output" 2>/dev/null | sed -n 's/.*Signer #1 certificate SHA-256 digest: //p' | tr -d ":" | tr "[:upper:]" "[:lower:]" | head -n 1 || true)"
-            if [ -z "$cert" ]; then fail_item "$id"; continue; fi
+            if [ -z "$cert" ]; then fail_item "$id" "apksigner produced no certificate fingerprint."; continue; fi
             prep="$(curl -fsSL --retry 3 --retry-delay 2 -X POST "$API" "${AUTH[@]}" --data "$(jq -nc --argjson artifact_id "$id" '{action:"prepare-upload",artifact_id:$artifact_id}')")"
             upload_url="$(jq -er ".upload_url" <<<"$prep")"
             if ! curl -fsSL --retry 3 --retry-delay 2 -X PUT "$upload_url" -H "Content-Type: application/vnd.android.package-archive" -H "Content-Length: $(stat -c "%s" "$output")" -H "x-upsert: true" --upload-file "$output" >/dev/null; then fail_item "$id"; continue; fi
