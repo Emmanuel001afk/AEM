@@ -98,11 +98,15 @@ jobs:
               fail_item "$id" "apksigner sign failed: $(tail -c 1800 "$sign_log" | tr '\n' ' ')"
               continue
             fi
-            cert="$("\${{ steps.tools.outputs.apksigner }}" verify --print-certs "$output" 2>/dev/null | sed -n 's/.*Signer #1 certificate SHA-256 digest: //p' | tr -d ":" | tr "[:upper:]" "[:lower:]" | head -n 1 || true)"
+            verify_out="$("\${{ steps.tools.outputs.apksigner }}" verify --print-certs "$output" 2>&1 || true)"
+            cert="$(printf '%s\n' "$verify_out" | grep -Eio '[0-9a-f]{64}' | head -n 1 | tr '[:upper:]' '[:lower:]' || true)"
             if [ -z "$cert" ]; then
-              cert="$(keytool -printcert -jarfile "$output" 2>/dev/null | sed -n '/SHA256:/{s/^[[:space:]]*SHA256:[[:space:]]*//;p;q}' | tr -d ":" | tr "[:upper:]" "[:lower:]" || true)"
+              cert="$(keytool -printcert -jarfile "$output" 2>/dev/null | grep -Eio '[0-9a-f]{64}' | head -n 1 | tr '[:upper:]' '[:lower:]' || true)"
             fi
-            if [ -z "$cert" ]; then fail_item "$id" "No certificate fingerprint could be extracted from the signed APK."; continue; ficate fingerprint."; continue; fi
+            if [ -z "$cert" ]; then
+              fail_item "$id" "No certificate fingerprint could be extracted. apksigner: $(printf '%s' "$verify_out" | tail -c 1400 | tr '\n' ' ')"
+              continue
+            fi
             prep="$(curl -fsSL --retry 3 --retry-delay 2 -X POST "$API" "${AUTH[@]}" --data "$(jq -nc --argjson artifact_id "$id" '{action:"prepare-upload",artifact_id:$artifact_id}')")"
             upload_url="$(jq -er ".upload_url" <<<"$prep")"
             if ! curl -fsSL --retry 3 --retry-delay 2 -X PUT "$upload_url" -H "Content-Type: application/vnd.android.package-archive" -H "Content-Length: $(stat -c "%s" "$output")" -H "x-upsert: true" --upload-file "$output" >/dev/null; then fail_item "$id"; continue; fi
