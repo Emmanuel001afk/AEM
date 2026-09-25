@@ -101,6 +101,7 @@ Deno.serve(async (req) => {
       const updated = await sb.from("artifacts").update({
         signing_status: "ready",
         signing_authority: "aem",
+        signing_error: null,
         signing_certificate_sha256: cert,
         sha256: sha,
         size_bytes: size,
@@ -113,6 +114,7 @@ Deno.serve(async (req) => {
       await sb.from("artifacts").update({
         signing_status: "pending",
         signing_authority: "source",
+        signing_error: String(body.error || "Central signing failed").slice(0, 2000),
       }).eq("id", id).eq("signing_status", "processing");
       return json({ ok: true, artifact_id: id, signing_status: "failed" });
     }
