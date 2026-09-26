@@ -8,8 +8,8 @@ export async function loadSupabaseCatalog():Promise<StoreApp[]>{
  return rows.map((a:any)=>{
   const releases=Array.isArray(a.releases)?a.releases.map((x:any)=>({...x,artifacts:Array.isArray(x.artifacts)?x.artifacts:[]})).filter((x:any)=>x.status==="published"):[];
   // The actionable catalog release must have a ready Android artifact.
-  // A newer published release with signing_status=pending must not block
-  // installation/update from the newest already-ready APK.
+  // A newer published release with signing_status=pending/processing must not
+  // block installation/update from the newest already-ready APK.
   const latestRelease=(()=>{
    const list=releases.filter((x:any)=>{
     if(x.status!=="published")return false;
