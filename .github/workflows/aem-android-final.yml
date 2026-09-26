@@ -40,7 +40,17 @@ jobs:
         with:
           cache-overwrite-existing: true
       - run: npm install
-      - run: npm run typecheck
+      - name: Typecheck
+        run: |
+          set -o pipefail
+          npm run typecheck 2>&1 | tee typecheck.log
+      - name: Upload typecheck diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: aem-typecheck-diagnostics
+          path: typecheck.log
+          if-no-files-found: error
       - run: npx vite build --config vite.mobile.config.ts
       - run: npm install --no-save @capacitor/cli@7.4.4 @capacitor/core@7.4.4 @capacitor/android@7.4.4
       - run: npx --yes @capacitor/cli@7.4.4 add android
@@ -150,7 +160,6 @@ jobs:
           grep -q "signingConfig signingConfigs.aemRelease" app/build.gradle
           test -f aem-release.keystore
 
-      # Keep the release build retry loop: transient Gradle/network failures should not block the APK.
       - name: Build signed release APK
         working-directory: android
         env:
