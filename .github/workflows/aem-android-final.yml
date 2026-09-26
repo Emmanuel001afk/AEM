@@ -42,14 +42,14 @@ jobs:
       - run: npm install
       - run: npm run typecheck
       - run: npx vite build --config vite.mobile.config.ts
-      - run: npm install --no-save @capacitor/cli@7 @capacitor/core@7 @capacitor/android@7
-      - run: npx --yes @capacitor/cli@7 add android
+      - run: npm install --no-save @capacitor/cli@7.4.4 @capacitor/core@7.4.4 @capacitor/android@7.4.4
+      - run: npx --yes @capacitor/cli@7.4.4 add android
       - run: mkdir -p android/app/src/main/java/com/aem/store
       - run: cp native/AemInstallerPlugin.java android/app/src/main/java/com/aem/store/AemInstallerPlugin.java
       - run: cp native/MainActivity.java android/app/src/main/java/com/aem/store/MainActivity.java
       - run: cp native/InstallResultReceiver.java android/app/src/main/java/com/aem/store/InstallResultReceiver.java
       - run: python3 native/patch_android_manifest.py android/app/src/main/AndroidManifest.xml
-      - run: npx --yes @capacitor/cli@7 copy android
+      - run: npx --yes @capacitor/cli@7.4.4 copy android
 
       - name: Stamp CI version
         env:
