@@ -1,0 +1,124 @@
+name: AEM Central Android Signing
+
+on:
+  push:
+    paths:
+      - ".github/workflows/aem-android-central-signing-v2.yml"
+      - "supabase/functions/aem-android-signing/index.ts"
+  workflow_dispatch:
+  schedule:
+    - cron: "*/5 * * * *"
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: aem-central-android-signing
+  cancel-in-progress: false
+
+jobs:
+  sign:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AEM signing key
+        env:
+          AEM_KEYSTORE_BASE64: ${{ secrets.AEM_KEYSTORE_BASE64 }}
+          AEM_KEYSTORE_PASSWORD: ${{ secrets.AEM_KEYSTORE_PASSWORD }}
+          AEM_KEY_ALIAS: ${{ secrets.AEM_KEY_ALIAS }}
+          AEM_KEY_PASSWORD: ${{ secrets.AEM_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          test -n "$AEM_KEYSTORE_BASE64"
+          test -n "$AEM_KEYSTORE_PASSWORD"
+          test -n "$AEM_KEY_ALIAS"
+          test -n "$AEM_KEY_PASSWORD"
+          printf "%s" "$AEM_KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/aem-release.keystore"
+
+      - name: Locate Android signing tools
+        id: tools
+        run: |
+          set -euo pipefail
+          APKSIGNER="$(find "${ANDROID_HOME:-/opt/android-sdk}" -type f -name apksigner 2>/dev/null | sort -V | tail -n 1 || true)"
+          test -n "$APKSIGNER"
+          test -x "$APKSIGNER"
+          echo "apksigner=$APKSIGNER" >> "$GITHUB_OUTPUT"
+
+      - name: Get GitHub OIDC token
+        run: |
+          set -euo pipefail
+          token="$(curl -fsSL -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=https://wfvvmyixqcwosmuldxoq.supabase.co/functions/v1/aem-android-signing" | jq -er ".value")"
+          echo "::add-mask::$token"
+          printf "%s" "$token" > "$RUNNER_TEMP/aem-oidc-token"
+
+      - name: Sign pending AEM Android APKs
+        env:
+          SUPABASE_URL: https://wfvvmyixqcwosmuldxoq.supabase.co
+          AEM_KEYSTORE_PASSWORD: ${{ secrets.AEM_KEYSTORE_PASSWORD }}
+          AEM_KEY_ALIAS: ${{ secrets.AEM_KEY_ALIAS }}
+          AEM_KEY_PASSWORD: ${{ secrets.AEM_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          SUPABASE_KEY="$(sed -n 's/.*DEFAULT_PUBLISHABLE_KEY="\([^"]*\)".*/\1/p' src/services/supabase/client.ts)"
+          test -n "$SUPABASE_KEY"
+          OIDC_TOKEN="$(cat "$RUNNER_TEMP/aem-oidc-token")"
+          API="$SUPABASE_URL/functions/v1/aem-android-signing"
+          AUTH=(-H "apikey: $SUPABASE_KEY" -H "Authorization: Bearer $SUPABASE_KEY" -H "Content-Type: application/json" -H "x-aem-oidc: $OIDC_TOKEN")
+          response_file="$RUNNER_TEMP/aem-claim-response.json"
+          http_code="$(curl --silent --show-error --retry 3 --retry-delay 2 --output "$response_file" --write-out "%{http_code}" -X POST "$API" "${AUTH[@]}" --data '{"action":"claim","limit":25}')"
+          if [ "$http_code" -lt 200 ] || [ "$http_code" -ge 300 ]; then
+            echo "Artifact claim failed with HTTP $http_code"
+            jq -C . "$response_file" 2>/dev/null || cat "$response_file"
+            exit 1
+          fi
+          queue="$(cat "$response_file")"
+          count="$(jq -e ".artifacts | length" <<<"$queue")"
+          echo "Claimed $count Android APK(s) for central signing."
+          if [ "$count" -eq 0 ]; then exit 0; fi
+
+          mkdir -p "$RUNNER_TEMP/aem-signing"
+          fail_item() {
+            local id="$1"
+            local reason="${2:-Central signing failed}"
+            curl -fsSL --retry 2 -X POST "$API" "${AUTH[@]}" --data "$(jq -nc --argjson artifact_id "$id" --arg error "$reason" '{action:"fail",artifact_id:$artifact_id,error:$error}')" >/dev/null || true
+          }
+
+          while IFS= read -r item; do
+            id="$(jq -r ".id" <<<"$item")"
+            url="$(jq -r ".download_url" <<<"$item")"
+            filename="$(jq -r ".filename" <<<"$item")"
+            safe="${filename//[^A-Za-z0-9._-]/_}"
+            input="$RUNNER_TEMP/aem-signing/$id-$safe"
+            output="$RUNNER_TEMP/aem-signing/$id-signed.apk"
+            if ! curl -fsSL --connect-timeout 20 --max-time 180 --retry 3 --retry-delay 2 "$url" -o "$input"; then fail_item "$id" "APK download failed: $url"; continue; fi
+            sign_log="$RUNNER_TEMP/aem-signing/$id-sign.log"
+            if ! "${{ steps.tools.outputs.apksigner }}" sign --ks "$RUNNER_TEMP/aem-release.keystore" --ks-key-alias "$AEM_KEY_ALIAS" --ks-pass "env:AEM_KEYSTORE_PASSWORD" --key-pass "env:AEM_KEY_PASSWORD" --out "$output" "$input" 2>"$sign_log"; then
+              fail_item "$id" "apksigner sign failed: $(tail -c 1800 "$sign_log" | tr '\n' ' ')"
+              continue
+            fi
+            verify_out="$("${{ steps.tools.outputs.apksigner }}" verify --print-certs "$output" 2>&1 || true)"
+            cert="$(printf '%s\n' "$verify_out" | grep -Eio '[0-9a-f]{64}' | head -n 1 | tr '[:upper:]' '[:lower:]' || true)"
+            if [ -z "$cert" ]; then
+              cert="$(keytool -printcert -jarfile "$output" 2>/dev/null | grep -Eio '[0-9a-f]{64}' | head -n 1 | tr '[:upper:]' '[:lower:]' || true)"
+            fi
+            if [ -z "$cert" ]; then
+              fail_item "$id" "No certificate fingerprint could be extracted. apksigner: $(printf '%s' "$verify_out" | tail -c 1400 | tr '\n' ' ')"
+              continue
+            fi
+            prep="$(curl -fsSL --retry 3 --retry-delay 2 -X POST "$API" "${AUTH[@]}" --data "$(jq -nc --argjson artifact_id "$id" '{action:"prepare-upload",artifact_id:$artifact_id}')")"
+            upload_url="$(jq -er ".upload_url" <<<"$prep")"
+            if ! curl -fsSL --retry 3 --retry-delay 2 -X PUT "$upload_url" -H "Content-Type: application/vnd.android.package-archive" -H "Content-Length: $(stat -c "%s" "$output")" -H "x-upsert: true" --upload-file "$output" >/dev/null; then fail_item "$id"; continue; fi
+            signed_sha="$(sha256sum "$output" | awk '{print $1}')"
+            signed_size="$(stat -c "%s" "$output")"
+            complete="$(jq -nc --argjson artifact_id "$id" --arg cert "$cert" --arg sha "$signed_sha" --argjson size "$signed_size" '{action:"complete",artifact_id:$artifact_id,signing_certificate_sha256:$cert,sha256:$sha,size_bytes:$size}')"
+            if ! curl -fsSL --retry 3 --retry-delay 2 -X POST "$API" "${AUTH[@]}" --data "$complete" >/dev/null; then fail_item "$id"; continue; fi
+            echo "Signed artifact $id ($filename)."
+          done < <(jq -c ".artifacts[]" <<<"$queue")
+
+# Central signing is intentionally hosted in AEM so individual app repositories need no signing configuration.
+# AEM central signing gateway v2.
+# Queue backfill trigger.
+# Trigger signing queue after browser/store release tests.
