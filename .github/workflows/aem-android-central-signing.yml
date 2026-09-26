@@ -1,13 +1,7 @@
 name: AEM Central Android Signing
 
 on:
-  push:
-    paths:
-      - ".github/workflows/aem-android-central-signing.yml"
-      - "supabase/functions/aem-android-signing/index.ts"
   workflow_dispatch:
-  schedule:
-    - cron: "*/5 * * * *"
 
 permissions:
   contents: read
