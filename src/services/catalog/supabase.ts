@@ -7,13 +7,15 @@ export async function loadSupabaseCatalog():Promise<StoreApp[]>{
  const rows=await r.json();
  return rows.map((a:any)=>{
   const releases=Array.isArray(a.releases)?a.releases.map((x:any)=>({...x,artifacts:Array.isArray(x.artifacts)?x.artifacts:[]})).filter((x:any)=>x.status==="published"):[];
-  // The store display follows the newest published release row. Signing is an
-  // installability concern, not a reason to hide a newly published release.
-  // Pending artifacts remain non-installable until signing completes.
+  // The actionable catalog release must have a ready Android artifact.
+  // A newer published release with signing_status=pending must not block
+  // installation/update from the newest already-ready APK.
   const latestRelease=(()=>{
    const list=releases.filter((x:any)=>{
     if(x.status!=="published")return false;
-    return (x.artifacts||[]).some((z:any)=>z.platform==="android"&&z.kind==="apk");
+    return (x.artifacts||[]).some((z:any)=>z.platform==="android"&&
+      ["apk","apks","xapk","apkm"].includes(String(z.kind||"").toLowerCase()) &&
+      (z.signing_status??z.signingStatus)==="ready");
    }).sort((x:any,y:any)=>{
     const yc=Math.max(Number(y.version_code??0),...(y.artifacts||[]).map((z:any)=>Number(z.version_code??0)));
     const xc=Math.max(Number(x.version_code??0),...(x.artifacts||[]).map((z:any)=>Number(z.version_code??0)));
