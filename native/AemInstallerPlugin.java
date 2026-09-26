@@ -438,19 +438,45 @@ public class AemInstallerPlugin extends Plugin {
                 }
             }
         }
-        android.content.pm.PackageInfo info = getContext().getPackageManager().getPackageArchiveInfo(inspect.getAbsolutePath(), android.content.pm.PackageManager.GET_SIGNING_CERTIFICATES);
+        android.content.pm.PackageManager pm = getContext().getPackageManager();
+        android.content.pm.PackageInfo info = pm.getPackageArchiveInfo(
+                inspect.getAbsolutePath(),
+                Build.VERSION.SDK_INT >= 28 ? android.content.pm.PackageManager.GET_SIGNING_CERTIFICATES : android.content.pm.PackageManager.GET_SIGNATURES
+        );
         if (info == null || info.packageName == null) throw new IOException("Downloaded package metadata could not be read");
         if (!expectedPackage.equals(info.packageName)) throw new IOException("Package identity mismatch: expected " + expectedPackage + " but downloaded " + info.packageName);
         if (expectedVersionCode >= 0 && Build.VERSION.SDK_INT >= 28 && info.getLongVersionCode() != expectedVersionCode) {
             throw new IOException("Version code mismatch: expected " + expectedVersionCode + " but downloaded " + info.getLongVersionCode());
         }
         if (expectedSigningCert != null && !expectedSigningCert.isEmpty() && Build.VERSION.SDK_INT >= 28) {
-            if (info.signingInfo == null) throw new IOException("Downloaded package has no signing information");
-            android.content.pm.Signature[] signers = info.signingInfo.getApkContentsSigners();
-            if (signers == null || signers.length == 0) throw new IOException("Downloaded package has no signing certificate");
+            android.content.pm.Signature[] signers = null;
+            if (info.signingInfo != null) {
+                signers = info.signingInfo.hasMultipleSigners()
+                        ? info.signingInfo.getApkContentsSigners()
+                        : info.signingInfo.getSigningCertificateHistory();
+            }
+            // Some Android releases/devices do not populate PackageInfo.signingInfo when
+            // inspecting an APK archive. Fall back to the legacy archive signature field;
+            // this still reads the certificate embedded in the APK and lets us validate it.
+            if (signers == null || signers.length == 0) {
+                signers = info.signatures;
+            }
+            if (signers == null || signers.length == 0) {
+                android.content.pm.PackageInfo legacy = pm.getPackageArchiveInfo(
+                        inspect.getAbsolutePath(),
+                        android.content.pm.PackageManager.GET_SIGNATURES
+                );
+                if (legacy != null) signers = legacy.signatures;
+            }
+            if (signers == null || signers.length == 0) {
+                throw new IOException("Downloaded APK signature could not be read on this Android device");
+            }
             boolean match = false;
             for (android.content.pm.Signature signer : signers) {
-                if (expectedSigningCert.replace(":", "").equalsIgnoreCase(certSha256(signer.toByteArray()))) { match = true; break; }
+                if (expectedSigningCert.replace(":", "").equalsIgnoreCase(certSha256(signer.toByteArray()))) {
+                    match = true;
+                    break;
+                }
             }
             if (!match) throw new IOException("Signing certificate mismatch: downloaded APK is signed by a different key.");
         }
