@@ -7,13 +7,13 @@ export async function loadSupabaseCatalog():Promise<StoreApp[]>{
  const rows=await r.json();
  return rows.map((a:any)=>{
   const releases=Array.isArray(a.releases)?a.releases.map((x:any)=>({...x,artifacts:(Array.isArray(x.artifacts)?x.artifacts:[]).filter((z:any)=>z.signing_status==="ready")})).filter((x:any)=>x.artifacts.length):[];
-  // AEM has one installable APK stream. Release rows may retain channel metadata
-  // for history/audit purposes, but the store must select the newest published,
-  // signed Android APK regardless of that historical channel label.
+  // The store display follows the newest published release row. Signing is an
+  // installability concern, not a reason to hide a newly published release.
+  // Pending artifacts remain non-installable until signing completes.
   const latestRelease=(()=>{
    const list=releases.filter((x:any)=>{
     if(x.status!=="published")return false;
-    return (x.artifacts||[]).some((z:any)=>z.platform==="android"&&z.kind==="apk"&&z.signing_status==="ready");
+    return (x.artifacts||[]).some((z:any)=>z.platform==="android"&&z.kind==="apk");
    }).sort((x:any,y:any)=>{
     const yc=Math.max(Number(y.version_code??0),...(y.artifacts||[]).map((z:any)=>Number(z.version_code??0)));
     const xc=Math.max(Number(x.version_code??0),...(x.artifacts||[]).map((z:any)=>Number(z.version_code??0)));
