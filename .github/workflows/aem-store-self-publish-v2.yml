@@ -89,6 +89,12 @@ jobs:
               echo "Prepare attempt $prepare_attempt failed with HTTP $status" >&2
               cat "$response_file" >&2
               if [[ "$status" == "409" ]]; then
+                response_body="$(cat "$response_file")"
+                if grep -Fq "latest published stable version code is $version_code" <<<"$response_body"; then
+                  echo "Version code $version_code is already the latest stable release; treating publish as idempotent success." >&2
+                  rm -f "$response_file"
+                  return 0
+                fi
                 echo "Publish rejected: APK versionCode is not newer than the latest stable release." >&2
                 rm -f "$response_file"
                 return 1
