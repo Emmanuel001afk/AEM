@@ -6,7 +6,7 @@ export async function loadSupabaseCatalog():Promise<StoreApp[]>{
  if(!r.ok) throw new Error(`Supabase catalog request failed: ${r.status}`);
  const rows=await r.json();
  return rows.map((a:any)=>{
-  const releases=Array.isArray(a.releases)?a.releases.map((x:any)=>({...x,artifacts:(Array.isArray(x.artifacts)?x.artifacts:[]).filter((z:any)=>z.signing_status==="ready")})).filter((x:any)=>x.artifacts.length):[];
+  const releases=Array.isArray(a.releases)?a.releases.map((x:any)=>({...x,artifacts:Array.isArray(x.artifacts)?x.artifacts:[]})).filter((x:any)=>x.status==="published"):[];
   // The store display follows the newest published release row. Signing is an
   // installability concern, not a reason to hide a newly published release.
   // Pending artifacts remain non-installable until signing completes.
