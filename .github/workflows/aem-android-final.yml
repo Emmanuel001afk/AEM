@@ -150,6 +150,7 @@ jobs:
           grep -q "signingConfig signingConfigs.aemRelease" app/build.gradle
           test -f aem-release.keystore
 
+      # Keep the release build retry loop: transient Gradle/network failures should not block the APK.
       - name: Build signed release APK
         working-directory: android
         env:
