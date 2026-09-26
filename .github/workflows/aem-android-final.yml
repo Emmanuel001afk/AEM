@@ -15,6 +15,7 @@ on:
       - "index.html"
       - "mobile-index.html"
       - ".github/workflows/aem-android-final.yml"
+      - ".github/workflows/aem-store-self-publish-v2.yml"
   workflow_dispatch:
 
 concurrency:
