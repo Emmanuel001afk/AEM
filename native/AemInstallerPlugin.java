@@ -445,6 +445,7 @@ public class AemInstallerPlugin extends Plugin {
             throw new IOException("Version code mismatch: expected " + expectedVersionCode + " but downloaded " + info.getLongVersionCode());
         }
         if (expectedSigningCert != null && !expectedSigningCert.isEmpty() && Build.VERSION.SDK_INT >= 28) {
+            if (info.signingInfo == null) throw new IOException("Downloaded package has no signing information");
             android.content.pm.Signature[] signers = info.signingInfo.getApkContentsSigners();
             if (signers == null || signers.length == 0) throw new IOException("Downloaded package has no signing certificate");
             boolean match = false;
