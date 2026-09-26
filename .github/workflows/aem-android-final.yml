@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - "src/**"
+      - "src/services/catalog/supabase.ts"
       - "native/**"
       - "public/**"
       - "package.json"
