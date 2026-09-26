@@ -120,3 +120,4 @@ jobs:
 # Central signing is intentionally hosted in AEM so individual app repositories need no signing configuration.
 # AEM central signing gateway v2.
 # Queue backfill trigger.
+# Trigger signing queue after browser/store release tests.
