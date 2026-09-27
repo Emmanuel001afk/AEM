@@ -6,6 +6,9 @@ on:
       - ".github/workflows/aem-android-central-signing-v2.yml"
       - "supabase/functions/aem-android-signing/index.ts"
   workflow_dispatch:
+  repository_dispatch:
+    types:
+      - aem-android-artifact-pending
   schedule:
     - cron: "2/5 * * * *"
     - cron: "4/5 * * * *"
