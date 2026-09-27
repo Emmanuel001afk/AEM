@@ -1,0 +1,1 @@
+{"name":"aem-signing-worker","private":true,"type":"module","engines":{"node":">=22"},"scripts":{"start":"node worker.mjs"}}
