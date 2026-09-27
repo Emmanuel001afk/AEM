@@ -26,7 +26,7 @@ Deno.serve(async(req)=>{
   const sourceReleaseId=String(b.source_release_id||`github-actions-${runId}`);
   const signingCertificateSha256=String(b.signing_certificate_sha256||"").trim().replace(/:/g,"").toLowerCase();
   if(!repo||!runId||versionCode===null||!packageIdentity)return json({error:"Missing required publish metadata."},400);
-  const androidArtifactNeedsCentralSigning=true;
+  const androidArtifactNeedsCentralSigning=!signingCertificateSha256;
 
   const githubToken=(req.headers.get("x-github-token")||"").trim();
   if(!githubToken)return json({error:"GitHub authorization token is required for publishing."},401);
@@ -91,11 +91,36 @@ Deno.serve(async(req)=>{
   if(existing.error)throw existing.error;
   if(existing.data)return json({ok:true,duplicate:true,release_id:release.id,artifact_id:existing.data.id,download_url:existing.data.download_url});
 
-  const ins=await sb.from("artifacts").insert({release_id:release.id,platform:"android",kind:"apk",filename,download_url:objectUrl,size_bytes:sizeBytes,sha256,package_identity:packageIdentity,signing_certificate_sha256:null,signing_status:androidArtifactNeedsCentralSigning?"pending":"ready",signing_authority:"source",version_code:versionCode}).select("id").single();
+  const ins=await sb.from("artifacts").insert({release_id:release.id,platform:"android",kind:"apk",filename,download_url:objectUrl,size_bytes:sizeBytes,sha256,package_identity:packageIdentity,signing_certificate_sha256:signingCertificateSha256||null,signing_status:androidArtifactNeedsCentralSigning?"pending":"ready",version_code:versionCode}).select("id").single();
   if(ins.error)throw ins.error;
   // The catalog name is source metadata; never replace it with the APK manifest label (which may be generic).
   await sb.from("applications").update({package_identity:packageIdentity,updated_at:new Date().toISOString()}).eq("id",appId);
   // Release history and release notifications are generated centrally by the database trigger.
+  // Wake the central AEM signing workflow immediately when central signing is required.
+  // The credential is held centrally in Supabase; source repositories do not need an AEM secret.
+  if(androidArtifactNeedsCentralSigning){
+    const dispatchToken=(Deno.env.get("AEM_GITHUB_DISPATCH_TOKEN")||"").trim();
+    if(dispatchToken){
+      try{
+        const dispatch=await fetch("https://api.github.com/repos/Emmanuel001afk/AEM/dispatches",{
+          method:"POST",
+          headers:{
+            "Accept":"application/vnd.github+json",
+            "Authorization":`Bearer ${dispatchToken}`,
+            "X-GitHub-Api-Version":"2022-11-28",
+            "Content-Type":"application/json"
+          },
+          body:JSON.stringify({
+            event_type:"aem-android-artifact-pending",
+            client_payload:{source_repo:repo,source_release_id:sourceReleaseId,artifact_id:ins.data.id}
+          })
+        });
+        if(!dispatch.ok) console.error("AEM immediate signing dispatch failed",dispatch.status,await dispatch.text());
+      }catch(dispatchError){ console.error("AEM immediate signing dispatch error",dispatchError); }
+    }else{
+      console.warn("AEM_GITHUB_DISPATCH_TOKEN is not configured; scheduler remains the signing safety net.");
+    }
+  }
   return json({ok:true,release_id:release.id,artifact_id:ins.data.id,download_url:objectUrl,sha256,size_bytes:sizeBytes});
  }catch(e){console.error("AEM publish error",e);return json({error:e instanceof Error?e.message:String(e)},500)}
 });
