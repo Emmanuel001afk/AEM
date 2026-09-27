@@ -4,7 +4,7 @@ import { createRemoteJWKSet, jwtVerify } from "npm:jose@6";
 
 const cors = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization,apikey,content-type,x-aem-oidc",
+  "Access-Control-Allow-Headers": "authorization,apikey,content-type,x-aem-oidc,x-aem-worker-token",
   "Access-Control-Allow-Methods": "POST,OPTIONS",
 };
 const PROJECT_URL = "https://wfvvmyixqcwosmuldxoq.supabase.co";
@@ -22,6 +22,16 @@ function admin() {
   const key = keys.default || Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
   if (!key) throw new Error("Supabase server key unavailable");
   return createClient(Deno.env.get("SUPABASE_URL") || PROJECT_URL, key);
+}
+
+async function authorizeWorker(sb: ReturnType<typeof admin>, req: Request) {
+  const token = String(req.headers.get("x-aem-worker-token") || "").trim();
+  if (!token) return false;
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(token));
+  const hash = Array.from(new Uint8Array(digest)).map(b => b.toString(16).padStart(2, "0")).join("");
+  const { data, error } = await sb.from("aem_signing_worker_auth").select("id").eq("token_sha256", hash).eq("enabled", true).maybeSingle();
+  if (error) throw error;
+  return Boolean(data);
 }
 
 async function authorizeWorkflow(req: Request) {
@@ -52,7 +62,7 @@ Deno.serve(async (req) => {
   if (req.method !== "POST") return json({ error: "POST required" }, 405);
 
   try {
-    await authorizeWorkflow(req);
+    const workerAuthorized = await authorizeWorker(sb, req);\n    if (!workerAuthorized) await authorizeWorkflow(req);
     const sb = admin();
     const body = await req.json();
     const action = String(body.action || "");
