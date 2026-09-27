@@ -62,8 +62,9 @@ Deno.serve(async (req) => {
   if (req.method !== "POST") return json({ error: "POST required" }, 405);
 
   try {
-    const workerAuthorized = await authorizeWorker(sb, req);\n    if (!workerAuthorized) await authorizeWorkflow(req);
     const sb = admin();
+    const workerAuthorized = await authorizeWorker(sb, req);
+    if (!workerAuthorized) await authorizeWorkflow(req);
     const body = await req.json();
     const action = String(body.action || "");
 
