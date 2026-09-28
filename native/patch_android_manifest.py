@@ -22,6 +22,13 @@ if "REQUEST_INSTALL_PACKAGES" not in s:
         count=1,
     )
 
+if "InstallConfirmationActivity" not in s:
+    s = s.replace(
+        "</application>",
+        '    <activity android:name=".InstallConfirmationActivity" android:exported="false" android:theme="@android:style/Theme.Translucent.NoTitleBar" />\n</application>',
+        1,
+    )
+
 if "InstallResultReceiver" not in s:
     s = s.replace(
         "</application>",
