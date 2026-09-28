@@ -60,6 +60,7 @@ jobs:
       - run: cp native/AemInstallerPlugin.java android/app/src/main/java/com/aem/store/AemInstallerPlugin.java
       - run: cp native/MainActivity.java android/app/src/main/java/com/aem/store/MainActivity.java
       - run: cp native/InstallResultReceiver.java android/app/src/main/java/com/aem/store/InstallResultReceiver.java
+      - run: cp native/InstallConfirmationActivity.java android/app/src/main/java/com/aem/store/InstallConfirmationActivity.java
       - run: python3 native/patch_android_manifest.py android/app/src/main/AndroidManifest.xml
       - run: npx --yes @capacitor/cli@7.4.4 copy android
 
