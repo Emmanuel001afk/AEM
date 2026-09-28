@@ -385,11 +385,16 @@ public class AemInstallerPlugin extends Plugin {
                     session.fsync(out);
                 }
             }
-            Intent status = new Intent(getContext(), InstallResultReceiver.class);
-            status.setPackage(getContext().getPackageName());
+            Intent status = new Intent(getContext(), InstallConfirmationActivity.class);
+            status.setAction("com.aem.store.INSTALL_STATUS");
             status.putExtra("aem_download_path", file.getAbsolutePath());
             status.putExtra("aem_download_id", expectedDownloadId);
-            PendingIntent pi = PendingIntent.getBroadcast(getContext(), INSTALL_RESULT, status, PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_MUTABLE);
+            PendingIntent pi = PendingIntent.getActivity(
+                    getContext(),
+                    INSTALL_RESULT,
+                    status,
+                    PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_MUTABLE
+            );
             session.commit(pi.getIntentSender());
         } finally {
             session.close();
