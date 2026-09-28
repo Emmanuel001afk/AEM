@@ -116,7 +116,7 @@ Deno.serve(async req=>{
   if(st?.status==="running"&&now-lt<300000)return out({ok:true,throttled:true});
   if(ls&&now-ls<30000)return out({ok:true,throttled:true,last_success_at:st.last_success_at});
   await sb.from("source_sync_state").upsert({provider:"github",status:"running",last_started_at:started.toISOString(),last_error:null,updated_at:started.toISOString()},{onConflict:"provider"});
-  const repos:any[]=[]; for(let p=1;;p++){const rows=await gh(GH+`/user/repos?visibility=all&affiliation=owner&per_page=100&page=${p}`,h);if(!rows.length)break;repos.push(...rows);if(rows.length<100)break}
+  const repos:any[]=[]; for(let p=1;;p++){const rows=await gh(GH+`/user/repos?visibility=all&affiliation=owner,collaborator,organization_member&per_page=100&page=${p}`,h);if(!rows.length)break;repos.push(...rows);if(rows.length<100)break}
   let apps=0,releases=0,artifacts=0,failedRepos=0;
   for(const repo of repos){try{
    const tree=await gh(GH+`/repos/${repo.full_name}/git/trees/${repo.default_branch||"main"}?recursive=1`,h).catch(()=>({tree:[]}));
