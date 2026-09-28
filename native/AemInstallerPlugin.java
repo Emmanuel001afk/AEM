@@ -1,6 +1,10 @@
 package com.aem.store;
 
 import android.app.PendingIntent;
+import android.app.NotificationChannel;
+import android.app.NotificationManager;
+import android.app.Notification;
+import android.content.SharedPreferences;
 import android.content.Intent;
 import android.content.pm.PackageInstaller;
 import android.net.Uri;
@@ -28,10 +32,14 @@ import java.util.zip.ZipInputStream;
 @CapacitorPlugin(name="AemInstaller")
 public class AemInstallerPlugin extends Plugin {
     private static final int INSTALL_RESULT = 7412;
+    private static final String PREFS = "aem_installer_state";
+    private static final String NOTIFICATION_CHANNEL = "aem_downloads";
+    private static final int NOTIFICATION_BASE = 38000;
     private android.content.BroadcastReceiver installReceiver;
 
     @Override public void load() {
         super.load();
+        ensureNotificationChannel();
         installReceiver = new android.content.BroadcastReceiver() {
             @Override public void onReceive(android.content.Context context, android.content.Intent intent) {
                 JSObject out = new JSObject();
@@ -60,6 +68,28 @@ public class AemInstallerPlugin extends Plugin {
     private final java.util.Set<String> cancelledDownloads = java.util.concurrent.ConcurrentHashMap.newKeySet();
     private final java.util.Set<String> pausedDownloads = java.util.concurrent.ConcurrentHashMap.newKeySet();
     private final java.util.concurrent.ConcurrentHashMap<String, DownloadSpec> downloadSpecs = new java.util.concurrent.ConcurrentHashMap<>();
+    private void ensureNotificationChannel() {
+        if (Build.VERSION.SDK_INT >= 26) {
+            NotificationManager nm = (NotificationManager) getContext().getSystemService(android.content.Context.NOTIFICATION_SERVICE);
+            if (nm != null) nm.createNotificationChannel(new NotificationChannel(NOTIFICATION_CHANNEL, "AEM downloads", NotificationManager.IMPORTANCE_LOW));
+        }
+    }
+    private int notificationId(String id) { return NOTIFICATION_BASE + Math.abs(id == null ? 0 : id.hashCode() % 10000); }
+    private void notifyDownload(String id, String title, String text, int progress, boolean ongoing) {
+        if (id == null || id.isEmpty()) return;
+        try {
+            NotificationManager nm=(NotificationManager)getContext().getSystemService(android.content.Context.NOTIFICATION_SERVICE);
+            if(nm==null)return;
+            Intent open=getContext().getPackageManager().getLaunchIntentForPackage(getContext().getPackageName());
+            PendingIntent pi=open==null?null:PendingIntent.getActivity(getContext(),notificationId(id),open,PendingIntent.FLAG_UPDATE_CURRENT|(Build.VERSION.SDK_INT>=23?PendingIntent.FLAG_IMMUTABLE:0));
+            Notification.Builder b=Build.VERSION.SDK_INT>=26?new Notification.Builder(getContext(),NOTIFICATION_CHANNEL):new Notification.Builder(getContext());
+            b.setSmallIcon(android.R.drawable.stat_sys_download).setContentTitle(title).setContentText(text).setOngoing(ongoing).setOnlyAlertOnce(true);
+            if(pi!=null)b.setContentIntent(pi);
+            if(progress>=0)b.setProgress(100,Math.max(0,Math.min(100,progress)),false);
+            nm.notify(notificationId(id),b.build());
+        } catch(Exception ignored) {}
+    }
+    private void clearDownloadNotification(String id) { try { NotificationManager nm=(NotificationManager)getContext().getSystemService(android.content.Context.NOTIFICATION_SERVICE); if(nm!=null&&id!=null)nm.cancel(notificationId(id)); } catch(Exception ignored) {} }
 
     private static final class DownloadSpec {
         final String url, filename, mode, sha256, packageIdentity, signingCert, downloadId;
@@ -173,7 +203,7 @@ public class AemInstallerPlugin extends Plugin {
         }
 
         DownloadSpec spec = new DownloadSpec(url, filename, mode, expectedSha256, expectedPackage, expectedSigningCert, expectedVersionCode, downloadId, wifiOnly);
-        if (!downloadId.isEmpty()) downloadSpecs.put(downloadId, spec);
+        if (!downloadId.isEmpty()) { downloadSpecs.put(downloadId, spec); notifyDownload(downloadId, "AEM Store", "Download starting…", 0, true); }
         startDownloadAndInstall(spec, call);
     }
 
@@ -202,6 +232,27 @@ public class AemInstallerPlugin extends Plugin {
         }, "aem-installer").start();
     }
 
+    @PluginMethod
+    public void reopenInstall(PluginCall call) {
+        String id=call.getString("downloadId","");
+        if(id.isEmpty()){call.reject("Download ID is required");return;}
+        try {
+            SharedPreferences prefs=getContext().getSharedPreferences(PREFS,android.content.Context.MODE_PRIVATE);
+            int sessionId=prefs.getInt("session_"+id,-1);
+            if(sessionId<0){call.reject("No pending installer session found");return;}
+            PackageInstaller installer=getContext().getPackageManager().getPackageInstaller();
+            if(installer.getSessionInfo(sessionId)==null){call.reject("Installer session is no longer available");return;}
+            Intent status=new Intent(getContext(),InstallConfirmationActivity.class);
+            status.setAction("com.aem.store.INSTALL_STATUS");
+            status.putExtra("aem_download_id",id);
+            status.putExtra("aem_download_path",prefs.getString("path_"+id,""));
+            PendingIntent pi=PendingIntent.getActivity(getContext(),INSTALL_RESULT+Math.abs(id.hashCode()),status,PendingIntent.FLAG_UPDATE_CURRENT|PendingIntent.FLAG_MUTABLE);
+            PackageInstaller.Session session=installer.openSession(sessionId);
+            try{session.commit(pi.getIntentSender());}finally{session.close();}
+            notifyDownload(id,"Installation ready","Tap to continue installing",-1,true);
+            call.resolve();
+        } catch(Exception e){call.reject(e.getMessage()==null?"Unable to reopen installer":e.getMessage(),e);}
+    }
     @PluginMethod
     public void pauseDownload(PluginCall call) {
         String id = call.getString("downloadId", "");
@@ -275,6 +326,7 @@ public class AemInstallerPlugin extends Plugin {
                 os.write(buf, 0, n);
                 done += n;
                 long now = System.currentTimeMillis();
+                if (total > 0) notifyDownload(downloadId, "Downloading " + filename, (int)(done * 100L / total) + "%", (int)(done * 100L / total), true);
                 if (now - lastEmit >= 250 || (total > 0 && done >= total)) {
                     JSObject progress = new JSObject();
                     progress.put("downloadId", downloadId);
@@ -294,6 +346,7 @@ public class AemInstallerPlugin extends Plugin {
         File out = new File(dir, filename.replaceAll("[^A-Za-z0-9._-]", "_"));
         if (out.exists()) out.delete();
         if (!partial.renameTo(out)) throw new IOException("Unable to finalize downloaded package");
+        notifyDownload(downloadId, "Download complete", filename, 100, true);
         if (expectedSha256 != null && !expectedSha256.isEmpty()) {
             String actual = sha256(out);
             if (!actual.equalsIgnoreCase(expectedSha256)) {
@@ -395,6 +448,7 @@ public class AemInstallerPlugin extends Plugin {
                     status,
                     PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_MUTABLE
             );
+            getContext().getSharedPreferences(PREFS, android.content.Context.MODE_PRIVATE).edit().putInt("session_" + expectedDownloadId, id).putString("path_" + expectedDownloadId, file.getAbsolutePath()).apply();
             session.commit(pi.getIntentSender());
         } finally {
             session.close();
