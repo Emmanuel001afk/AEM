@@ -20,6 +20,9 @@ export async function loadSupabaseCatalog():Promise<StoreApp[]>{
     const yc=Math.max(Number(y.version_code??0),...(y.artifacts||[]).map((z:any)=>Number(z.version_code??0)));
     const xc=Math.max(Number(x.version_code??0),...(x.artifacts||[]).map((z:any)=>Number(z.version_code??0)));
     if(yc!==xc)return yc-xc;
+    const yHasRelease=y.artifacts?.some((z:any)=>z.platform==="android"&&["apk","apks","xapk","apkm"].includes(String(z.kind||"").toLowerCase())&&!/(^|[-_. ])debug([-. _]|$)/i.test(String(z.filename||""))) ? 1 : 0;
+    const xHasRelease=x.artifacts?.some((z:any)=>z.platform==="android"&&["apk","apks","xapk","apkm"].includes(String(z.kind||"").toLowerCase())&&!/(^|[-_. ])debug([-. _]|$)/i.test(String(z.filename||""))) ? 1 : 0;
+    if(yHasRelease!==xHasRelease)return yHasRelease-xHasRelease;
     return new Date(y.published_at||y.created_at).getTime()-new Date(x.published_at||x.created_at).getTime();
    });
    const x=list[0];if(!x)return undefined;
