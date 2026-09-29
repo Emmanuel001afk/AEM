@@ -97,7 +97,7 @@ public class AemInstallerPlugin extends Plugin {
         final boolean wifiOnly;
         DownloadSpec(String url, String filename, String mode, String sha256, String packageIdentity, String signingCert, long versionCode, String downloadId, boolean wifiOnly) {
             this.url=url; this.filename=filename; this.mode=mode; this.sha256=sha256; this.packageIdentity=packageIdentity; this.signingCert=signingCert;
-            this.versionCode=versionCode; this.downloadId=downloadId; this.wifiOnly=wifiOnly;
+            this.versionCode=versionCode; this.downloadId=downloadId; this.wifiOnly=wifiOnly; this.allowDowngrade=allowDowngrade;
         }
     }
     private static final class DownloadPausedException extends IOException {
@@ -196,13 +196,14 @@ public class AemInstallerPlugin extends Plugin {
         final long expectedVersionCode = requestedVersionCode > 0 ? requestedVersionCode : -1L;
         final String downloadId = call.getString("downloadId", "");
         final boolean wifiOnly = call.getBoolean("wifiOnly", false);
+        final boolean allowDowngrade = call.getBoolean("allowDowngrade", false);
 
         if (url == null || url.isEmpty()) { call.reject("Download URL is required"); return; }
         if (Build.VERSION.SDK_INT >= 26 && !getContext().getPackageManager().canRequestPackageInstalls()) {
             JSObject out = new JSObject(); out.put("permissionRequired", true); call.resolve(out); return;
         }
 
-        DownloadSpec spec = new DownloadSpec(url, filename, mode, expectedSha256, expectedPackage, expectedSigningCert, expectedVersionCode, downloadId, wifiOnly);
+        DownloadSpec spec = new DownloadSpec(url, filename, mode, expectedSha256, expectedPackage, expectedSigningCert, expectedVersionCode, downloadId, wifiOnly, allowDowngrade);
         if (!downloadId.isEmpty()) { downloadSpecs.put(downloadId, spec); notifyDownload(downloadId, "AEM Store", "Download starting…", 0, true); }
         startDownloadAndInstall(spec, call);
     }
@@ -211,7 +212,7 @@ public class AemInstallerPlugin extends Plugin {
         new Thread(() -> {
             try {
                 pausedDownloads.remove(spec.downloadId);
-                ensureInstalledCompatibility(spec.packageIdentity, spec.signingCert, spec.versionCode);
+                ensureInstalledCompatibility(spec.packageIdentity, spec.signingCert, spec.versionCode, spec.allowDowngrade);
                 File downloaded = download(spec.url, spec.filename, spec.sha256, spec.downloadId, spec.wifiOnly);
                 install(downloaded, spec.mode, spec.packageIdentity, spec.signingCert, spec.versionCode, spec.downloadId);
                 JSObject out = new JSObject();
@@ -541,11 +542,11 @@ public class AemInstallerPlugin extends Plugin {
         }
     }
 
-    private void ensureInstalledCompatibility(String packageName, String expectedCert, long expectedVersionCode) throws Exception {
+    private void ensureInstalledCompatibility(String packageName, String expectedCert, long expectedVersionCode, boolean allowDowngrade) throws Exception {
         if (packageName == null || packageName.isEmpty()) return;
         try {
             android.content.pm.PackageInfo installed = getContext().getPackageManager().getPackageInfo(packageName, android.content.pm.PackageManager.GET_SIGNING_CERTIFICATES);
-            if (expectedVersionCode >= 0 && Build.VERSION.SDK_INT >= 28 && installed.getLongVersionCode() >= expectedVersionCode) {
+            if (!allowDowngrade && expectedVersionCode >= 0 && Build.VERSION.SDK_INT >= 28 && installed.getLongVersionCode() >= expectedVersionCode) {
                 throw new IOException("Installed version code " + installed.getLongVersionCode() + " is already at or newer than store version " + expectedVersionCode);
             }
             if (expectedCert != null && !expectedCert.isEmpty() && Build.VERSION.SDK_INT >= 28) {
