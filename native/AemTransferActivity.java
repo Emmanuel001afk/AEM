@@ -12,6 +12,7 @@ import android.graphics.Paint;
 import android.graphics.Typeface;
 import android.net.Uri;
 import android.net.wifi.p2p.*;
+import android.net.wifi.p2p.nsd.*;
 import android.net.wifi.WifiManager;
 import android.location.LocationManager;
 import android.net.wifi.WpsInfo;
