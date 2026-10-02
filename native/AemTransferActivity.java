@@ -216,13 +216,7 @@ public class AemTransferActivity extends Activity {
     private String[] requiredPermissions(){
         ArrayList<String> p=new ArrayList<>();
         p.add(Build.VERSION.SDK_INT>=33?Manifest.permission.NEARBY_WIFI_DEVICES:Manifest.permission.ACCESS_FINE_LOCATION);
-        if(Build.VERSION.SDK_INT>=33){
-            p.add(Manifest.permission.READ_MEDIA_IMAGES);
-            p.add(Manifest.permission.READ_MEDIA_VIDEO);
-            p.add(Manifest.permission.READ_MEDIA_AUDIO);
-        }else if(Build.VERSION.SDK_INT>=23){
-            p.add(Manifest.permission.READ_EXTERNAL_STORAGE);
-        }
+        if(Build.VERSION.SDK_INT<33 && Build.VERSION.SDK_INT>=23){p.add(Manifest.permission.READ_EXTERNAL_STORAGE);}
         return p.toArray(new String[0]);
     }
     @Override public void onRequestPermissionsResult(int r,String[] p,int[] g){super.onRequestPermissionsResult(r,p,g);if(r==PERM){status.setText(hasPermission()?"Permission granted. Ready.":"Required permission was not granted.");renderCategory();}}
@@ -286,7 +280,7 @@ public class AemTransferActivity extends Activity {
             card.setBackground(bg(Color.rgb(25,27,32),16));
             CheckBox box=new CheckBox(this);box.setText("SELECT");box.setTextColor(Color.LTGRAY);box.setTextSize(11);
             ImageView icon=new ImageView(this);
-            try{icon.setImageDrawable(pm.getApplicationIcon(app));}catch(Exception ignored){}
+            icon.setImageResource(android.R.drawable.sym_def_app_icon); final ImageView iconView=icon; io.execute(()->{try{Drawable d=pm.getApplicationIcon(app);runOnUiThread(()->iconView.setImageDrawable(d));}catch(Exception ignored){}});
             card.addView(icon,new LinearLayout.LayoutParams(-1,dp(64)));
             TextView name=label(String.valueOf(pm.getApplicationLabel(app)),14,Color.WHITE);
             name.setTypeface(Typeface.DEFAULT,Typeface.BOLD);name.setGravity(Gravity.CENTER);
@@ -582,7 +576,7 @@ public class AemTransferActivity extends Activity {
         }
     }
     private void requestPeers(){if(!hasPermission()||manager==null||channel==null)return;manager.requestPeers(channel,list->{peers.clear();peers.addAll(list.getDeviceList());renderPeers();});}
-    private void renderPeers(){peerBox.removeAllViews();if(peers.isEmpty()){TextView empty=label("No receiver found yet",15,Color.WHITE);empty.setTypeface(Typeface.DEFAULT,Typeface.BOLD);peerBox.addView(empty);peerBox.addView(label("Keep the other phone on AEM → Transfer → Receive, then scan again.",13,Color.LTGRAY));return;}TextView heading=label(peers.size()+" nearby device"+(peers.size()==1?"":"s"),13,Color.rgb(170,175,185));heading.setPadding(0,dp(2),0,dp(6));peerBox.addView(heading);for(WifiP2pDevice d:peers){
+    private void renderPeers(){peerBox.removeAllViews();if(peers.isEmpty()){TextView empty=label(sending?"Scanning for nearby receivers…":"No receiver found yet",15,Color.WHITE);empty.setTypeface(Typeface.DEFAULT,Typeface.BOLD);peerBox.addView(empty);if(sending){ProgressBar scan=new ProgressBar(this);scan.setIndeterminate(true);peerBox.addView(scan,new LinearLayout.LayoutParams(-1,dp(4)));peerBox.addView(label("Keep the receiver on AEM → Transfer → Receive. AEM will update this list when a compatible phone is found.",13,Color.LTGRAY));}else peerBox.addView(label("Keep the other phone on AEM → Transfer → Receive, then scan again.",13,Color.LTGRAY));if(sending){Button retry=actionButton("SCAN AGAIN");retry.setBackground(bg(Color.rgb(50,92,210),12));retry.setOnClickListener(v->discover());peerBox.addView(retry,new LinearLayout.LayoutParams(-1,dp(46)));}return;}TextView heading=label(peers.size()+" nearby device"+(peers.size()==1?"":"s"),13,Color.rgb(170,175,185));heading.setPadding(0,dp(2),0,dp(6));peerBox.addView(heading);for(WifiP2pDevice d:peers){
         LinearLayout card=new LinearLayout(this);
         card.setGravity(Gravity.CENTER_VERTICAL);
         card.setPadding(dp(14),dp(8),dp(8),dp(8));
