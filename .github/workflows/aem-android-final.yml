@@ -60,6 +60,7 @@ jobs:
       - run: cp native/AemInstallerPlugin.java android/app/src/main/java/com/aem/store/AemInstallerPlugin.java
       - run: cp native/AemTransferPlugin.java android/app/src/main/java/com/aem/store/AemTransferPlugin.java
       - run: cp native/AemTransferActivity.java android/app/src/main/java/com/aem/store/AemTransferActivity.java
+      - run: cp native/AemTransferService.java android/app/src/main/java/com/aem/store/AemTransferService.java
       - run: cp native/MainActivity.java android/app/src/main/java/com/aem/store/MainActivity.java
       - run: cp native/InstallResultReceiver.java android/app/src/main/java/com/aem/store/InstallResultReceiver.java
       - run: cp native/InstallConfirmationActivity.java android/app/src/main/java/com/aem/store/InstallConfirmationActivity.java
