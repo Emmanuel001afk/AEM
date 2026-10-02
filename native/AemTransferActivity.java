@@ -230,25 +230,41 @@ public class AemTransferActivity extends Activity {
     }
 
     private void renderApps(){
-        TextView hint=section("INSTALLED APPLICATIONS");
-        hint.setPadding(0,0,0,8);contentGrid.addView(hint);
+        contentGrid.removeAllViews();
+        contentGrid.addView(section("INSTALLED APPLICATIONS"));
+        TextView loading=label("Loading installed apps…",14,Color.LTGRAY);
+        loading.setPadding(0,dp(12),0,dp(12));
+        contentGrid.addView(loading);
+        io.execute(()->{
+            PackageManager pm=getPackageManager();
+            ArrayList<ApplicationInfo> all=new ArrayList<>();
+            try{all.addAll(pm.getInstalledApplications(PackageManager.GET_META_DATA));}catch(Exception ignored){}
+            all.removeIf(a->a.packageName.equals(getPackageName()));
+            Collections.sort(all,(a,b)->String.valueOf(pm.getApplicationLabel(a)).compareToIgnoreCase(String.valueOf(pm.getApplicationLabel(b))));
+            final ArrayList<ApplicationInfo> apps=all;
+            runOnUiThread(()->showInstalledApps(apps));
+        });
+    }
+
+    private void showInstalledApps(ArrayList<ApplicationInfo> all){
+        contentGrid.removeAllViews();
+        contentGrid.addView(section(all.size()+" APPLICATIONS AVAILABLE"));
         GridLayout grid=new GridLayout(this);grid.setColumnCount(2);
         PackageManager pm=getPackageManager();
-        List<ApplicationInfo> all=new ArrayList<>(pm.getInstalledApplications(PackageManager.GET_META_DATA));
-        all.removeIf(a->a.packageName.equals(getPackageName()));
-        Collections.sort(all,(a,b)->String.valueOf(pm.getApplicationLabel(a)).compareToIgnoreCase(String.valueOf(pm.getApplicationLabel(b))));
-        for(ApplicationInfo app:all){
+        int limit=Math.min(all.size(),300);
+        for(int index=0;index<limit;index++){
+            ApplicationInfo app=all.get(index);
             LinearLayout card=new LinearLayout(this);card.setOrientation(LinearLayout.VERTICAL);card.setPadding(dp(10),dp(10),dp(10),dp(10));
             card.setBackground(bg(Color.rgb(25,27,32),16));
             CheckBox box=new CheckBox(this);box.setText("SELECT");box.setTextColor(Color.LTGRAY);box.setTextSize(11);
-            ImageView icon=new ImageView(this);Drawable d=null;try{d=pm.getApplicationIcon(app);}catch(Exception ignored){}
-            if(d!=null)icon.setImageDrawable(d);
-            card.addView(icon,new LinearLayout.LayoutParams(-1,dp(78)));
-            TextView name=label(String.valueOf(pm.getApplicationLabel(app)),15,Color.WHITE);
+            ImageView icon=new ImageView(this);
+            try{icon.setImageDrawable(pm.getApplicationIcon(app));}catch(Exception ignored){}
+            card.addView(icon,new LinearLayout.LayoutParams(-1,dp(64)));
+            TextView name=label(String.valueOf(pm.getApplicationLabel(app)),14,Color.WHITE);
             name.setTypeface(Typeface.DEFAULT,Typeface.BOLD);name.setGravity(Gravity.CENTER);
             card.addView(name,new LinearLayout.LayoutParams(-1,-2));
-            TextView pkg=label(app.packageName,10,Color.GRAY);pkg.setGravity(Gravity.CENTER);card.addView(pkg);
-            TextView badge=label(isSystemApp(app)?"SYSTEM APP":"INSTALLED APP",10,isSystemApp(app)?Color.rgb(255,190,80):Color.rgb(110,210,150));
+            TextView pkg=label(app.packageName,9,Color.GRAY);pkg.setGravity(Gravity.CENTER);card.addView(pkg);
+            TextView badge=label(isSystemApp(app)?"SYSTEM APP":"INSTALLED APP",9,isSystemApp(app)?Color.rgb(255,190,80):Color.rgb(110,210,150));
             badge.setGravity(Gravity.CENTER);card.addView(badge);
             box.setOnCheckedChangeListener((button,checked)->{
                 button.setEnabled(false);
@@ -259,12 +275,8 @@ public class AemTransferActivity extends Activity {
                         ArrayList<Item> made=new ArrayList<>();
                         exportInstalledApp(app,made);
                         runOnUiThread(()->{
-                            if(button.isChecked()){
-                                exportedApps.put(packageName,made);
-                            }else{
-                                selected.removeAll(made);
-                                made.clear();
-                            }
+                            if(button.isChecked())exportedApps.put(packageName,made);
+                            else{selected.removeAll(made);made.clear();}
                             button.setEnabled(true);
                             status.setText(made.isEmpty()?"Could not prepare app for transfer":"App ready to send");
                             refreshSelectedText();
@@ -275,8 +287,7 @@ public class AemTransferActivity extends Activity {
                         ArrayList<Item> made=exportedApps.remove(packageName);
                         runOnUiThread(()->{
                             if(made!=null)selected.removeAll(made);
-                            button.setEnabled(true);
-                            refreshSelectedText();
+                            button.setEnabled(true);refreshSelectedText();
                         });
                     });
                 }
@@ -289,6 +300,7 @@ public class AemTransferActivity extends Activity {
             grid.addView(card,gp);
         }
         contentGrid.addView(grid);
+        if(all.size()>limit)contentGrid.addView(label("Showing the first "+limit+" apps. Use Add files to transfer an APK directly.",12,Color.GRAY));
     }
 
     private void renderMedia(String category){
@@ -412,14 +424,69 @@ public class AemTransferActivity extends Activity {
     private boolean isSystemApp(ApplicationInfo a){return (a.flags&(ApplicationInfo.FLAG_SYSTEM|ApplicationInfo.FLAG_UPDATED_SYSTEM_APP))!=0;}
     private int exportInstalledApp(ApplicationInfo app){ArrayList<Item> made=new ArrayList<>();return exportInstalledApp(app,made);}
 
-    private void startReceive(){if(!hasPermission()){requestPermissions(requiredPermissions(),PERM);return;}
+    private void startReceive(){
+        if(!hasPermission()){requestPermissions(requiredPermissions(),PERM);return;}
         sending=false;
-        modeHint.setText("Receive mode: keep this screen open while the sender connects.");if(manager==null||channel==null){status.setText("Wi-Fi Direct is unavailable.");return;}
-        status.setText("Creating private transfer connection...");manager.createGroup(channel,new WifiP2pManager.ActionListener(){public void onSuccess(){status.setText("Waiting for another AEM phone...");startServer();}public void onFailure(int r){status.setText("Could not create transfer connection: "+r);}});
+        modeHint.setText("Receive mode: keep this screen open. The sender will appear when nearby.");
+        if(manager==null||channel==null){status.setText("Wi-Fi Direct is unavailable on this phone.");return;}
+        peerBox.removeAllViews();
+        status.setText("Preparing receiver…");
+        cleanupGroupThenCreate();
     }
-    private void discover(){if(!hasPermission()){requestPermissions(requiredPermissions(),PERM);return;}
-        modeHint.setText("Send mode: select a nearby phone below to begin.");if(manager==null||channel==null)return;peerBox.removeAllViews();status.setText("Looking for nearby phones...");
-        manager.discoverPeers(channel,new WifiP2pManager.ActionListener(){public void onSuccess(){status.setText("Nearby phones will appear below.");}public void onFailure(int r){status.setText("Discovery failed: "+r);}});
+    private void cleanupGroupThenCreate(){
+        try{
+            manager.removeGroup(channel,new WifiP2pManager.ActionListener(){
+                public void onSuccess(){createReceiverGroup();}
+                public void onFailure(int r){createReceiverGroup();}
+            });
+        }catch(Exception e){createReceiverGroup();}
+    }
+    private void createReceiverGroup(){
+        manager.createGroup(channel,new WifiP2pManager.ActionListener(){
+            public void onSuccess(){
+                status.setText("Receiver ready • waiting for sender…");
+                startServer();
+                showConnectionGuide(false);
+            }
+            public void onFailure(int r){
+                status.setText("Receiver setup failed ("+r+"). Tap Receive again to retry.");
+                showConnectionGuide(false);
+            }
+        });
+    }
+    private void discover(){
+        if(!hasPermission()){requestPermissions(requiredPermissions(),PERM);return;}
+        modeHint.setText("Send mode: AEM is scanning for nearby receivers.");
+        if(manager==null||channel==null){status.setText("Wi-Fi Direct is unavailable on this phone.");return;}
+        peerBox.removeAllViews();
+        showConnectionGuide(true);
+        status.setText("Scanning for nearby AEM phones…");
+        try{
+            manager.stopPeerDiscovery(channel,new WifiP2pManager.ActionListener(){public void onSuccess(){beginDiscovery();}public void onFailure(int r){beginDiscovery();}});
+        }catch(Exception e){beginDiscovery();}
+    }
+    private void beginDiscovery(){
+        manager.discoverPeers(channel,new WifiP2pManager.ActionListener(){
+            public void onSuccess(){status.setText("Scanning… keep both phones on this screen.");}
+            public void onFailure(int r){
+                String msg=r==WifiP2pManager.BUSY?"Wi-Fi Direct is busy. Turn Wi-Fi off/on, then tap Send again.":"Discovery failed ("+r+").";
+                status.setText(msg);
+                showConnectionGuide(true);
+            }
+        });
+    }
+    private void showConnectionGuide(boolean sender){
+        peerBox.removeAllViews();
+        TextView h=label(sender?"1. On the receiving phone, tap Receive.":"1. On the sending phone, tap Send.",15,Color.WHITE);
+        h.setTypeface(Typeface.DEFAULT,Typeface.BOLD);peerBox.addView(h);
+        peerBox.addView(label(sender?"2. Keep Wi-Fi on and allow Nearby devices.":"2. Keep this screen open while waiting.",13,Color.LTGRAY));
+        peerBox.addView(label(sender?"3. Keep both phones close. A receiver will appear here automatically.":"3. The sender will connect to this phone automatically.",13,Color.LTGRAY));
+        if(sender){
+            Button retry=actionButton("SCAN AGAIN");
+            retry.setBackground(bg(Color.rgb(50,92,210),12));
+            retry.setOnClickListener(v->discover());
+            peerBox.addView(retry,new LinearLayout.LayoutParams(-1,dp(48)));
+        }
     }
     private void requestPeers(){if(!hasPermission()||manager==null||channel==null)return;manager.requestPeers(channel,list->{peers.clear();peers.addAll(list.getDeviceList());renderPeers();});}
     private void renderPeers(){peerBox.removeAllViews();for(WifiP2pDevice d:peers){
