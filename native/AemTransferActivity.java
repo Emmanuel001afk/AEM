@@ -585,8 +585,8 @@ public class AemTransferActivity extends Activity {
         manager.connect(channel,c,new WifiP2pManager.ActionListener(){public void onSuccess(){status.setText("Connection requested...");}public void onFailure(int r){sending=false;status.setText("Connection failed: "+r);}});
     }
     private void requestConnection(){if(!hasPermission()||manager==null||channel==null)return;manager.requestConnectionInfo(channel,info->{if(info.groupFormed&&!info.isGroupOwner&&info.groupOwnerAddress!=null&&sending){
-            sending=false;final String host=info.groupOwnerAddress.getHostAddress();io.execute(()->sendFiles(host));
-        }});}
+        sending=false;final String host=info.groupOwnerAddress.getHostAddress();io.execute(()->sendFiles(host));
+    }});}
     private void startServer(){if(server!=null&&!server.isClosed())return;io.execute(()->{try{server=new ServerSocket(PORT);while(!server.isClosed()){Socket s=server.accept();receiveFiles(s);}}catch(Exception ignored){}});}
 
     private long skipFully(InputStream in,long offset)throws IOException{
@@ -615,9 +615,47 @@ public class AemTransferActivity extends Activity {
                 out.flush();
                 DataInputStream ackIn=new DataInputStream(new BufferedInputStream(s.getInputStream(),64*1024));
                 long[] offsets=new long[selected.size()];for(int i=0;i<offsets.length;i++)offsets[i]=ackIn.readLong();
-                long done=0;for(long o:offsets)done+=Math.min(o,total);
-                SpeedMeter speed    private void receiveFiles(Socket s){io.execute(()->{
+                long done=0;for(long o:offsets)done+=o;
+                SpeedMeter speed=new SpeedMeter();byte[] b=new byte[1024*1024];
+                for(int i=0;i<selected.size();i++){
+                    Item x=selected.get(i);long offset=Math.max(0,Math.min(offsets[i],x.size));
+                    if(offset>=x.size){update("Resuming "+x.name+" · already received",percent(done,total));continue;}
+                    try(InputStream in=getContentResolver().openInputStream(x.uri)){
+                        if(in==null)throw new IOException("Cannot read "+x.name);
+                        skipFully(in,offset);
+                        long left=x.size-offset;int n;
+                        MessageDigest md=MessageDigest.getInstance("SHA-256");
+                        if(offset>0){
+                            try(InputStream prefix=getContentResolver().openInputStream(x.uri)){
+                                if(prefix==null)throw new IOException("Cannot read "+x.name);
+                                byte[] pb=new byte[1024*1024];long remain=offset;int pn;
+                                while(remain>0&&(pn=prefix.read(pb,0,(int)Math.min(pb.length,remain)))>0){md.update(pb,0,pn);remain-=pn;}
+                            }
+                        }
+                        while(left>0&&(n=in.read(b,0,(int)Math.min(b.length,left)))>0){
+                            out.write(b,0,n);md.update(b,0,n);left-=n;done+=n;
+                            update((offset>0?"Resuming ":"Sending ")+x.name+" · "+percent(done,total)+"% · "+speed.formatRate(done),percent(done,total));
+                        }
+                        if(left!=0)throw new IOException("Source changed while reading "+x.name);
+                        out.write(md.digest());out.flush();
+                    }
+                }
+                int result=ackIn.readInt();
+                if(result==1){update("Transfer completed and verified",100);finishTransferSession();return;}
+                throw new IOException("Receiver rejected transfer");
+            }catch(Exception e){
+                if(!transferActive)return;
+                update("Connection interrupted • resuming… (attempt "+attempt+"/8)",0);
+                try{Thread.sleep(Math.min(5000L,500L*attempt));}catch(InterruptedException ie){Thread.currentThread().interrupt();break;}
+            }
+        }
+        if(transferActive)update("Transfer stopped after repeated connection loss",0);
+        finishTransferSession();
+    }
+
+    private void receiveFiles(Socket s){io.execute(()->{
         beginTransferSession();
+        boolean completed=false;
         try(Socket sock=s){
             sock.setTcpNoDelay(true);sock.setReceiveBufferSize(1024*1024);sock.setSoTimeout(60000);
             DataInputStream in=new DataInputStream(new BufferedInputStream(sock.getInputStream(),256*1024));
@@ -643,12 +681,14 @@ public class AemTransferActivity extends Activity {
             for(long o:offsets)control.writeLong(o);control.flush();
             File dir=new File(getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS),"AEM Transfer");
             if(!dir.exists()&&!dir.mkdirs())throw new IOException("Cannot create transfer folder");
-            long doneBytes=0;for(long o:offsets)doneBytes+=o;byte[] b=new byte[1024*1024];SpeedMeter speed=new SpeedMeter();
+            long doneBytes=0;for(long o:offsets)doneBytes+=o;
+            byte[] b=new byte[1024*1024];SpeedMeter speed=new SpeedMeter();
             for(int i=0;i<hs.size();i++){
                 Header h=hs.get(i);if(offsets[i]>=h.size)continue;
                 File part=partFile(id,i);
                 try(OutputStream out=new BufferedOutputStream(new FileOutputStream(part,true),256*1024)){
-                    long left=h.size-offsets[i];int n;while(left>0){n=in.read(b,0,(int)Math.min(b.length,left));if(n<0)throw new IOException("Connection ended");if(n==0)continue;out.write(b,0,n);left-=n;doneBytes+=n;update("Receiving "+h.name+" · "+percent(doneBytes,total)+"% · "+speed.formatRate(doneBytes),percent(doneBytes,total));}
+                    long left=h.size-offsets[i];int n;
+                    while(left>0){n=in.read(b,0,(int)Math.min(b.length,left));if(n<0)throw new IOException("Connection ended");if(n==0)continue;out.write(b,0,n);left-=n;doneBytes+=n;update("Receiving "+h.name+" · "+percent(doneBytes,total)+"% · "+speed.formatRate(doneBytes),percent(doneBytes,total));}
                 }
                 byte[] expected=new byte[32];in.readFully(expected);
                 byte[] actual;try(FileInputStream fin=new FileInputStream(part)){actual=fullSha(fin);}
@@ -660,10 +700,13 @@ public class AemTransferActivity extends Activity {
             control.writeInt(1);control.flush();
             update("Transfer received and verified successfully",100);
             for(int i=0;i<count;i++){partFile(id,i).delete();doneFile(id,i).delete();}
+            completed=true;
         }catch(Exception e){
             try{DataOutputStream ack=new DataOutputStream(new BufferedOutputStream(s.getOutputStream(),64*1024));ack.writeInt(0);ack.flush();}catch(Exception ignored){}
             update("Connection interrupted • partial data saved for resume",0);
-        }finally{finishTransferSession();}
+        }finally{
+            if(completed)finishTransferSession();
+        }
     });}
     private static final class Header{String name;long size;byte[] hash;Header(String n,long s,byte[] h){name=n;size=s;hash=h;}}
     private byte[] sha256(Item x)throws Exception{MessageDigest md=MessageDigest.getInstance("SHA-256");try(InputStream in=getContentResolver().openInputStream(x.uri)){if(in==null)throw new IOException("Cannot read "+x.name);byte[] b=new byte[65536];int n;while((n=in.read(b))!=-1)if(n>0)md.update(b,0,n);}return md.digest();}
