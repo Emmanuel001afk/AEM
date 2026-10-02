@@ -28,7 +28,7 @@ import java.util.concurrent.*;
 
 public class AemTransferActivity extends Activity {
     private static final int PORT=38177, PERM=7001, PICK=7002, FOLDER=7003;
-    private static final int PROTOCOL=2;
+    private static final int PROTOCOL=3;
     private WifiP2pManager manager; private WifiP2pManager.Channel channel; private BroadcastReceiver receiver;
     private final ExecutorService io=Executors.newCachedThreadPool();
     private final ArrayList<Item> selected=new ArrayList<>(); private final ArrayList<WifiP2pDevice> peers=new ArrayList<>();
@@ -53,102 +53,123 @@ public class AemTransferActivity extends Activity {
         if(!hasPermission()) requestPermissions(requiredPermissions(),PERM);
     }
 
+    private int dp(int v){return (int)(v*getResources().getDisplayMetrics().density+0.5f);}
+    private GradientDrawable bg(int color,int radius){GradientDrawable g=new GradientDrawable();g.setColor(color);g.setCornerRadius(dp(radius));return g;}
+    private Button actionButton(String text){Button b=new Button(this);b.setText(text);b.setTextSize(15);b.setAllCaps(false);b.setTextColor(Color.WHITE);b.setMinHeight(dp(52));b.setPadding(dp(12),0,dp(12),0);return b;}
+
     private void buildUi(){
         root=new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
-        root.setPadding(24,20,24,24);
+        root.setPadding(dp(16),dp(14),dp(16),dp(12));
         root.setBackgroundColor(Color.rgb(8,9,12));
 
         LinearLayout top=new LinearLayout(this);
         top.setGravity(Gravity.CENTER_VERTICAL);
         TextView title=new TextView(this);
-        title.setText("AEM Transfer");
-        title.setTextSize(27);
+        title.setText("Transfer");
+        title.setTextSize(26);
         title.setTextColor(Color.WHITE);
         title.setTypeface(null,1);
-        top.addView(title,new LinearLayout.LayoutParams(0,-2,1));
-        Button close=new Button(this);
+        top.addView(title,new LinearLayout.LayoutParams(0,dp(44),1));
+        TextView close=new TextView(this);
         close.setText("×");
-        close.setTextSize(24);
+        close.setTextSize(30);
+        close.setGravity(Gravity.CENTER);
+        close.setTextColor(Color.WHITE);
         close.setOnClickListener(v->finish());
-        top.addView(close,new LinearLayout.LayoutParams(56,56));
+        top.addView(close,new LinearLayout.LayoutParams(dp(44),dp(44)));
         root.addView(top);
 
         TextView sub=new TextView(this);
-        sub.setText("Send files directly between nearby phones. No mobile data, internet, cloud or Store database.");
-        sub.setTextColor(Color.LTGRAY);
-        sub.setPadding(0,4,0,14);
-        root.addView(sub);
+        sub.setText("Direct phone-to-phone transfer • no internet or cloud");
+        sub.setTextSize(13);
+        sub.setTextColor(Color.rgb(170,175,185));
+        root.addView(sub,new LinearLayout.LayoutParams(-1,dp(30)));
 
         LinearLayout modes=new LinearLayout(this);
-        Button send=new Button(this); send.setText("SEND");
-        Button receive=new Button(this); receive.setText("RECEIVE");
-        modes.addView(send,new LinearLayout.LayoutParams(0,58,1));
-        modes.addView(receive,new LinearLayout.LayoutParams(0,58,1));
+        modes.setPadding(0,dp(8),0,dp(8));
+        Button send=actionButton("Send");
+        Button receive=actionButton("Receive");
+        send.setTextSize(16);receive.setTextSize(16);
+        send.setTextColor(Color.WHITE);receive.setTextColor(Color.WHITE);
+        send.setBackground(bg(Color.rgb(50,92,210),14));
+        receive.setBackground(bg(Color.rgb(31,34,41),14));
+        LinearLayout.LayoutParams mp=new LinearLayout.LayoutParams(0,dp(58),1);mp.setMargins(0,0,dp(6),0);modes.addView(send,mp);
+        LinearLayout.LayoutParams rp=new LinearLayout.LayoutParams(0,dp(58),1);rp.setMargins(dp(6),0,0,0);modes.addView(receive,rp);
         root.addView(modes);
 
         categoryTitle=new TextView(this);
         categoryTitle.setText("Apps");
-        categoryTitle.setTextSize(18);
+        categoryTitle.setTextSize(19);
         categoryTitle.setTextColor(Color.WHITE);
         categoryTitle.setTypeface(null,1);
-        categoryTitle.setPadding(0,18,0,8);
-        root.addView(categoryTitle);
+        categoryTitle.setPadding(0,dp(8),0,dp(8));
+        root.addView(categoryTitle,new LinearLayout.LayoutParams(-1,dp(42)));
 
         HorizontalScrollView tabsScroll=new HorizontalScrollView(this);
+        tabsScroll.setHorizontalScrollBarEnabled(false);
         LinearLayout tabs=new LinearLayout(this);
         tabs.setOrientation(LinearLayout.HORIZONTAL);
         String[] categories={"Apps","Photos","Videos","Music","Files"};
         for(String c:categories){
-            Button b=new Button(this); b.setText(c);
-            b.setOnClickListener(v->{activeCategory=c; renderCategory();});
-            tabs.addView(b,new LinearLayout.LayoutParams(-2,52));
+            TextView b=new TextView(this);
+            b.setText(c);b.setTextSize(14);b.setGravity(Gravity.CENTER);b.setTextColor(Color.LTGRAY);
+            b.setPadding(dp(18),0,dp(18),0);
+            b.setBackground(bg(Color.rgb(27,29,35),22));
+            b.setOnClickListener(v->{activeCategory=c;renderCategory();});
+            LinearLayout.LayoutParams tp=new LinearLayout.LayoutParams(-2,dp(42));tp.setMargins(0,0,dp(8),0);tabs.addView(b,tp);
         }
         tabsScroll.addView(tabs);
-        root.addView(tabsScroll);
+        root.addView(tabsScroll,new LinearLayout.LayoutParams(-1,dp(50)));
 
         contentGrid=new LinearLayout(this);
         contentGrid.setOrientation(LinearLayout.VERTICAL);
-        contentGrid.setPadding(0,10,0,6);
+        contentGrid.setPadding(0,dp(8),0,dp(8));
         ScrollView contentScroll=new ScrollView(this);
         contentScroll.setFillViewport(true);
+        contentScroll.setOverScrollMode(View.OVER_SCROLL_IF_CONTENT_SCROLLS);
         contentScroll.addView(contentGrid);
         root.addView(contentScroll,new LinearLayout.LayoutParams(-1,0,1));
 
+        LinearLayout selectedBar=new LinearLayout(this);
+        selectedBar.setGravity(Gravity.CENTER_VERTICAL);
+        selectedBar.setPadding(dp(14),0,dp(14),0);
+        selectedBar.setBackground(bg(Color.rgb(24,26,32),14));
         selectedText=new TextView(this);
-        selectedText.setTextColor(Color.LTGRAY);
-        selectedText.setPadding(0,8,0,8);
-        root.addView(selectedText);
+        selectedText.setTextColor(Color.WHITE);selectedText.setTextSize(13);
+        selectedBar.addView(selectedText,new LinearLayout.LayoutParams(0,dp(48),1));
+        TextView clear=new TextView(this);clear.setText("Clear");clear.setTextColor(Color.rgb(130,170,255));clear.setGravity(Gravity.CENTER);
+        clear.setOnClickListener(v->{selected.clear();exportedApps.clear();refreshSelectedText();});
+        selectedBar.addView(clear,new LinearLayout.LayoutParams(dp(60),dp(48)));
+        root.addView(selectedBar,new LinearLayout.LayoutParams(-1,dp(52)));
 
         status=new TextView(this);
-        status.setTextColor(Color.WHITE);
-        status.setPadding(0,4,0,8);
-        root.addView(status);
+        status.setTextColor(Color.rgb(190,195,205));status.setTextSize(12);
+        status.setPadding(dp(2),dp(6),dp(2),dp(4));
+        root.addView(status,new LinearLayout.LayoutParams(-1,dp(28)));
 
         progress=new ProgressBar(this,null,android.R.attr.progressBarStyleHorizontal);
         progress.setMax(100);
-        root.addView(progress,new LinearLayout.LayoutParams(-1,-2));
+        root.addView(progress,new LinearLayout.LayoutParams(-1,dp(5)));
 
         peerBox=new LinearLayout(this);
         peerBox.setOrientation(LinearLayout.VERTICAL);
-        peerBox.setPadding(0,8,0,0);
+        peerBox.setPadding(0,dp(4),0,0);
         root.addView(peerBox);
 
         LinearLayout bottom=new LinearLayout(this);
-        Button chooseFiles=new Button(this); chooseFiles.setText("ADD FILES");
-        Button chooseFolder=new Button(this); chooseFolder.setText("ADD FOLDER");
-        bottom.addView(chooseFiles,new LinearLayout.LayoutParams(0,54,1));
-        bottom.addView(chooseFolder,new LinearLayout.LayoutParams(0,54,1));
-        root.addView(bottom);
+        Button chooseFiles=actionButton("Add files");
+        Button chooseFolder=actionButton("Add folder");
+        LinearLayout.LayoutParams bp=new LinearLayout.LayoutParams(0,dp(50),1);bp.setMargins(0,dp(6),dp(5),0);bottom.addView(chooseFiles,bp);
+        LinearLayout.LayoutParams fp=new LinearLayout.LayoutParams(0,dp(50),1);fp.setMargins(dp(5),dp(6),0,0);bottom.addView(chooseFolder,fp);
+        root.addView(bottom,new LinearLayout.LayoutParams(-1,dp(56)));
 
-        ScrollView outer=new ScrollView(this);
-        outer.addView(root);
-        setContentView(outer);
+        setContentView(root);
 
         chooseFiles.setOnClickListener(v->pickFiles());
         chooseFolder.setOnClickListener(v->pickFolder());
         receive.setOnClickListener(v->startReceive());
-        send.setOnClickListener(v->{if(selected.isEmpty()){status.setText("Select files, apps or media first.");return;}discover();});
+        send.setOnClickListener(v->{if(selected.isEmpty()){status.setText("Select something to send first.");return;}discover();});
         refreshSelectedText();
         status.setText("Ready");
         renderCategory();
@@ -192,12 +213,12 @@ public class AemTransferActivity extends Activity {
         all.removeIf(a->a.packageName.equals(getPackageName()));
         Collections.sort(all,(a,b)->String.valueOf(pm.getApplicationLabel(a)).compareToIgnoreCase(String.valueOf(pm.getApplicationLabel(b))));
         for(ApplicationInfo app:all){
-            LinearLayout card=new LinearLayout(this);card.setOrientation(LinearLayout.VERTICAL);card.setPadding(12,12,12,12);
+            LinearLayout card=new LinearLayout(this);card.setOrientation(LinearLayout.VERTICAL);card.setPadding(dp(10),dp(10),dp(10),dp(10));
             card.setBackgroundColor(Color.rgb(25,27,32));
             CheckBox box=new CheckBox(this);box.setText("SELECT");box.setTextColor(Color.LTGRAY);box.setTextSize(11);
             ImageView icon=new ImageView(this);Drawable d=null;try{d=pm.getApplicationIcon(app);}catch(Exception ignored){}
             if(d!=null)icon.setImageDrawable(d);
-            card.addView(icon,new LinearLayout.LayoutParams(-1,82));
+            card.addView(icon,new LinearLayout.LayoutParams(-1,dp(78)));
             TextView name=label(String.valueOf(pm.getApplicationLabel(app)),15,Color.WHITE);name.setGravity(Gravity.CENTER);
             card.addView(name,new LinearLayout.LayoutParams(-1,-2));
             TextView pkg=label(app.packageName,10,Color.GRAY);pkg.setGravity(Gravity.CENTER);card.addView(pkg);
@@ -218,7 +239,7 @@ public class AemTransferActivity extends Activity {
             GridLayout.LayoutParams gp=new GridLayout.LayoutParams();
             gp.width=0;gp.height=GridLayout.LayoutParams.WRAP_CONTENT;
             gp.columnSpec=GridLayout.spec(GridLayout.UNDEFINED,1f);
-            gp.setMargins(5,5,5,5);
+            gp.setMargins(dp(4),dp(4),dp(4),dp(4));
             grid.addView(card,gp);
         }
         contentGrid.addView(grid);
@@ -255,8 +276,8 @@ public class AemTransferActivity extends Activity {
         contentGrid.removeAllViews();
         contentGrid.addView(label(items.size()+" "+category.toLowerCase()+" available",14,Color.LTGRAY));
         for(Item x:items){
-            LinearLayout row=new LinearLayout(this);row.setGravity(Gravity.CENTER_VERTICAL);row.setPadding(8,8,8,8);row.setBackgroundColor(Color.rgb(24,26,31));
-            ImageView thumb=new ImageView(this); thumb.setScaleType(ImageView.ScaleType.CENTER_CROP); thumb.setImageResource(android.R.drawable.ic_menu_gallery); row.addView(thumb,new LinearLayout.LayoutParams(70,70)); if(!category.equals("Music"))loadThumbnail(thumb,x.uri);
+            LinearLayout row=new LinearLayout(this);row.setGravity(Gravity.CENTER_VERTICAL);row.setPadding(dp(10),dp(8),dp(10),dp(8));row.setBackgroundColor(Color.rgb(24,26,31));
+            ImageView thumb=new ImageView(this); thumb.setScaleType(ImageView.ScaleType.CENTER_CROP); thumb.setImageResource(android.R.drawable.ic_menu_gallery); row.addView(thumb,new LinearLayout.LayoutParams(dp(70),dp(70))); if(!category.equals("Music"))loadThumbnail(thumb,x.uri);
             LinearLayout textBox=new LinearLayout(this);textBox.setOrientation(LinearLayout.VERTICAL);
             textBox.addView(label(x.name,14,Color.WHITE));textBox.addView(label(format(x.size),11,Color.GRAY));
             row.addView(textBox,new LinearLayout.LayoutParams(0,-2,1));
@@ -352,7 +373,12 @@ public class AemTransferActivity extends Activity {
         manager.discoverPeers(channel,new WifiP2pManager.ActionListener(){public void onSuccess(){status.setText("Nearby phones will appear below.");}public void onFailure(int r){status.setText("Discovery failed: "+r);}});
     }
     private void requestPeers(){if(!hasPermission()||manager==null||channel==null)return;manager.requestPeers(channel,list->{peers.clear();peers.addAll(list.getDeviceList());renderPeers();});}
-    private void renderPeers(){peerBox.removeAllViews();for(WifiP2pDevice d:peers){Button b=new Button(this);b.setText((d.deviceName==null||d.deviceName.isEmpty()?"Nearby phone":d.deviceName)+" · Send");b.setOnClickListener(v->connect(d));peerBox.addView(b);}}
+    private void renderPeers(){peerBox.removeAllViews();for(WifiP2pDevice d:peers){
+        Button b=actionButton((d.deviceName==null||d.deviceName.isEmpty()?"Nearby phone":d.deviceName)+"  •  Send");
+        b.setGravity(Gravity.CENTER);b.setBackground(bg(Color.rgb(34,38,47),12));
+        LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(-1,dp(56));p.setMargins(0,dp(4),0,dp(4));peerBox.addView(b,p);
+        b.setOnClickListener(v->connect(d));
+    }}
     private void connect(WifiP2pDevice d){if(selected.isEmpty()){pickFiles();return;}sending=true;status.setText("Connecting to "+d.deviceName+"...");WifiP2pConfig c=new WifiP2pConfig();c.deviceAddress=d.deviceAddress;c.wps.setup=WpsInfo.PBC;
         manager.connect(channel,c,new WifiP2pManager.ActionListener(){public void onSuccess(){status.setText("Connection requested...");}public void onFailure(int r){sending=false;status.setText("Connection failed: "+r);}});
     }
@@ -362,31 +388,74 @@ public class AemTransferActivity extends Activity {
     private void startServer(){io.execute(()->{try{server=new ServerSocket(PORT);while(!server.isClosed()){Socket s=server.accept();receiveFiles(s);}}catch(Exception ignored){}});}
     
     private void sendFiles(String host){
-        try(Socket s=new Socket()){s.connect(new InetSocketAddress(host,PORT),15000);s.setSoTimeout(30000);
-            DataOutputStream out=new DataOutputStream(new BufferedOutputStream(s.getOutputStream()));out.writeInt(PROTOCOL);out.writeInt(selected.size());
+        try(Socket s=new Socket()){
+            s.setTcpNoDelay(true);
+            s.setSendBufferSize(1024*1024);
+            s.connect(new InetSocketAddress(host,PORT),15000);
+            s.setSoTimeout(60000);
+            DataOutputStream out=new DataOutputStream(new BufferedOutputStream(s.getOutputStream(),256*1024));
+            out.writeInt(PROTOCOL);out.writeInt(selected.size());
             long total=0,done=0;for(Item x:selected)total+=x.size;out.writeLong(total);
-            for(Item x:selected){byte[] nb=x.name.getBytes("UTF-8");out.writeInt(nb.length);out.write(nb);out.writeLong(x.size);
-                byte[] digest=sha256(x);out.writeInt(digest.length);out.write(digest);
-                try(InputStream in=getContentResolver().openInputStream(x.uri)){if(in==null)throw new IOException("Cannot read "+x.name);byte[] b=new byte[65536];long left=x.size;int n;
-                    while(left>0&&(n=in.read(b,0,(int)Math.min(b.length,left)))>0){out.write(b,0,n);left-=n;done+=n;update("Sending "+x.name,percent(done,total));}
+            byte[] b=new byte[256*1024];
+            for(Item x:selected){
+                byte[] nb=x.name.getBytes("UTF-8");out.writeInt(nb.length);out.write(nb);out.writeLong(x.size);
+                MessageDigest md=MessageDigest.getInstance("SHA-256");
+                try(InputStream in=getContentResolver().openInputStream(x.uri)){
+                    if(in==null)throw new IOException("Cannot read "+x.name);
+                    long left=x.size;int n;
+                    while(left>0&&(n=in.read(b,0,(int)Math.min(b.length,left)))>0){
+                        out.write(b,0,n);md.update(b,0,n);left-=n;done+=n;update("Sending "+x.name+" · "+percent(done,total)+"%",percent(done,total));
+                    }
                     if(left!=0)throw new IOException("Source changed while reading "+x.name);
-                }}
-            out.flush();int result=inResult(s);update(result==1?"Transfer completed and verified":"Transfer rejected",result==1?100:0);
+                }
+                out.write(md.digest());
+            }
+            out.flush();
+            int result=inResult(s);
+            update(result==1?"Transfer completed and verified":"Transfer rejected",result==1?100:0);
         }catch(Exception e){update("Transfer failed: "+safe(e),0);}
     }
     private int inResult(Socket s)throws IOException{DataInputStream in=new DataInputStream(new BufferedInputStream(s.getInputStream()));return in.readInt();}
     
-    private void receiveFiles(Socket s){io.execute(()->{try(Socket sock=s){sock.setSoTimeout(30000);DataInputStream in=new DataInputStream(new BufferedInputStream(sock.getInputStream()));
-            int protocol=in.readInt();if(protocol!=PROTOCOL)throw new IOException("Unsupported transfer protocol");int count=in.readInt();if(count<0||count>1000)throw new IOException("Invalid item count");long declaredTotal=in.readLong();if(declaredTotal<0)throw new IOException("Invalid total size");
-            ArrayList<Header> hs=new ArrayList<>();long total=0;for(int i=0;i<count;i++){int nl=in.readInt();if(nl<1||nl>16384)throw new IOException("Invalid file name");byte[] nb=new byte[nl];in.readFully(nb);String name=safePath(new String(nb,"UTF-8"));long size=in.readLong();if(size<0)throw new IOException("Invalid file size");int dl=in.readInt();if(dl!=32)throw new IOException("Invalid checksum");byte[] hash=new byte[dl];in.readFully(hash);hs.add(new Header(name,size,hash));total+=size;if(total<0||total>declaredTotal)throw new IOException("Invalid transfer size");}
-            File dir=new File(getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS),"AEM Transfer");if(!dir.exists()&&!dir.mkdirs())throw new IOException("Cannot create transfer folder");
-            long done=0;for(Header h:hs){File f=unique(new File(dir,h.name));File parent=f.getParentFile();if(parent!=null&&!parent.exists()&&!parent.mkdirs())throw new IOException("Cannot create destination folder");
-                MessageDigest md=MessageDigest.getInstance("SHA-256");try(OutputStream out=new FileOutputStream(f)){byte[] b=new byte[65536];long left=h.size;while(left>0){int n=in.read(b,0,(int)Math.min(b.length,left));if(n<0)throw new IOException("Connection ended");out.write(b,0,n);md.update(b,0,n);left-=n;done+=n;update("Receiving "+h.name,percent(done,total));}}
-                if(!Arrays.equals(h.hash,md.digest())){f.delete();throw new IOException("Integrity check failed for "+h.name);}
+    private void receiveFiles(Socket s){io.execute(()->{
+        try(Socket sock=s){
+            sock.setTcpNoDelay(true);sock.setReceiveBufferSize(1024*1024);sock.setSoTimeout(60000);
+            DataInputStream in=new DataInputStream(new BufferedInputStream(sock.getInputStream(),256*1024));
+            int protocol=in.readInt();if(protocol!=PROTOCOL)throw new IOException("Unsupported transfer protocol");
+            int count=in.readInt();if(count<0||count>1000)throw new IOException("Invalid item count");
+            long declaredTotal=in.readLong();if(declaredTotal<0)throw new IOException("Invalid total size");
+            ArrayList<Header> hs=new ArrayList<>();long total=0;
+            for(int i=0;i<count;i++){
+                int nl=in.readInt();if(nl<1||nl>16384)throw new IOException("Invalid file name");
+                byte[] nb=new byte[nl];in.readFully(nb);String name=safePath(new String(nb,"UTF-8"));
+                long size=in.readLong();if(size<0)throw new IOException("Invalid file size");
+                hs.add(new Header(name,size,null));total+=size;
+                if(total<0||total>declaredTotal)throw new IOException("Invalid transfer size");
             }
-            DataOutputStream ack=new DataOutputStream(new BufferedOutputStream(sock.getOutputStream()));ack.writeInt(1);ack.flush();update("Transfer received and verified successfully",100);
-        }catch(Exception e){try{DataOutputStream ack=new DataOutputStream(new BufferedOutputStream(s.getOutputStream()));ack.writeInt(0);ack.flush();}catch(Exception ignored){}update("Receiving failed: "+safe(e),0);}});
-    }
+            File dir=new File(getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS),"AEM Transfer");
+            if(!dir.exists()&&!dir.mkdirs())throw new IOException("Cannot create transfer folder");
+            long done=0;byte[] b=new byte[256*1024];
+            for(Header h:hs){
+                File f=unique(new File(dir,h.name));File parent=f.getParentFile();
+                if(parent!=null&&!parent.exists()&&!parent.mkdirs())throw new IOException("Cannot create destination folder");
+                MessageDigest md=MessageDigest.getInstance("SHA-256");
+                try(OutputStream out=new BufferedOutputStream(new FileOutputStream(f),256*1024)){
+                    long left=h.size;while(left>0){
+                        int n=in.read(b,0,(int)Math.min(b.length,left));if(n<0)throw new IOException("Connection ended");
+                        out.write(b,0,n);md.update(b,0,n);left-=n;done+=n;
+                        update("Receiving "+h.name+" · "+percent(done,total)+"%",percent(done,total));
+                    }
+                }
+                byte[] expected=new byte[32];in.readFully(expected);
+                if(!Arrays.equals(expected,md.digest())){f.delete();throw new IOException("Integrity check failed for "+h.name);}
+            }
+            DataOutputStream ack=new DataOutputStream(new BufferedOutputStream(sock.getOutputStream(),64*1024));
+            ack.writeInt(1);ack.flush();update("Transfer received and verified successfully",100);
+        }catch(Exception e){
+            try{DataOutputStream ack=new DataOutputStream(new BufferedOutputStream(s.getOutputStream(),64*1024));ack.writeInt(0);ack.flush();}catch(Exception ignored){}
+            update("Receiving failed: "+safe(e),0);
+        }
+    });}
     private static final class Header{String name;long size;byte[] hash;Header(String n,long s,byte[] h){name=n;size=s;hash=h;}}
     private byte[] sha256(Item x)throws Exception{MessageDigest md=MessageDigest.getInstance("SHA-256");try(InputStream in=getContentResolver().openInputStream(x.uri)){if(in==null)throw new IOException("Cannot read "+x.name);byte[] b=new byte[65536];int n;while((n=in.read(b))!=-1)if(n>0)md.update(b,0,n);}return md.digest();}
     private String safePath(String n){n=n.replace('\\','/').replace('\0','_').replaceAll("^[\\/]+","");String[] p=n.split("/");StringBuilder b=new StringBuilder();for(String x:p){x=x.replaceAll("[\\:*?\"<>|]","_").trim();if(x.isEmpty()||x.equals(".")||x.equals(".."))continue;if(b.length()>0)b.append(File.separator);b.append(x);}return b.length()==0?"AEM-file":b.toString();}
