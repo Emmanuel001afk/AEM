@@ -33,7 +33,7 @@ if "NEARBY_WIFI_DEVICES" not in s:
 
 if "AEM Package Installer" not in s:
     s = re.sub(
-        r'(<activity\\b[^>]*android:name="[^"]*MainActivity"[^>]*>)(.*?</activity>)',
+        r'(<activity\b[^>]*android:name="[^"]*MainActivity"[^>]*>)(.*?</activity>)',
         r'\1\2\n            <intent-filter android:label="AEM Package Installer">\n                <action android:name="android.intent.action.VIEW" />\n                <category android:name="android.intent.category.DEFAULT" />\n                <category android:name="android.intent.category.BROWSABLE" />\n                <data android:mimeType="application/vnd.android.package-archive" />\n                <data android:mimeType="application/zip" />\n                <data android:mimeType="application/octet-stream" />\n            </intent-filter>',
         s,
         count=1,
