@@ -827,7 +827,7 @@ public class AemTransferActivity extends Activity {
             b.setOnClickListener(v->connect(d));
         }
     }
-    private void connect(WifiP2pDevice d){if(selected.isEmpty()){status.setText("Select at least one item first.");return;}String token=peerTokens.get(d.deviceAddress);if(token==null||token.trim().isEmpty()){status.setText("Receiver handshake not available yet. Scan again.");return;}sending=true;connectedHost=null;beginTransferSession();status.setText("Connecting to "+d.deviceName+"…");WifiP2pConfig c=new WifiP2pConfig();c.deviceAddress=d.deviceAddress;c.wps.setup=WpsInfo.PBC;
+    private void connect(WifiP2pDevice d){if(selected.isEmpty()){status.setText("Select at least one item first.");return;}String token=peerTokens.get(d.deviceAddress);if(token==null||token.trim().isEmpty()){status.setText("Receiver handshake not available yet. Scan again.");return;}sending=true;connectedHost=null;connectedToken=token;beginTransferSession();status.setText("Connecting to "+d.deviceName+"…");WifiP2pConfig c=new WifiP2pConfig();c.deviceAddress=d.deviceAddress;c.wps.setup=WpsInfo.PBC;
         manager.connect(channel,c,new WifiP2pManager.ActionListener(){public void onSuccess(){status.setText("Connection requested...");}public void onFailure(int r){sending=false;finishTransferSession();status.setText("Connection failed: "+r);}});
     }
     private void requestConnection(){if(!hasPermission()||manager==null||channel==null)return;manager.requestConnectionInfo(channel,info->{
@@ -865,7 +865,7 @@ public class AemTransferActivity extends Activity {
             try(Socket s=new Socket()){
                 s.setTcpNoDelay(true);s.setSendBufferSize(1024*1024);s.connect(new InetSocketAddress(host,PORT),15000);s.setSoTimeout(60000);
                 DataOutputStream out=new DataOutputStream(new BufferedOutputStream(s.getOutputStream(),256*1024));
-                out.writeInt(PROTOCOL);out.writeUTF(transferId);out.writeUTF(peerTokens.getOrDefault(host,""));out.writeInt(selected.size());
+                out.writeInt(PROTOCOL);out.writeUTF(transferId);out.writeUTF(connectedToken==null?"":connectedToken);out.writeInt(selected.size());
                 long total=0;for(Item x:selected)total+=x.size;out.writeLong(total);
                 for(Item x:selected){byte[] nb=x.name.getBytes("UTF-8");out.writeInt(nb.length);out.write(nb);out.writeLong(x.size);}
                 out.flush();
@@ -980,6 +980,7 @@ public class AemTransferActivity extends Activity {
         transferRunning.set(false);
         connectionActive=false;
         connectedHost=null;
+        connectedToken=null;
         transferId=null;
         waitingForWifi=false;
         waitingForLocation=false;
