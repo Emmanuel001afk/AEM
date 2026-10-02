@@ -250,14 +250,28 @@ public class AemTransferActivity extends Activity {
             TextView badge=label(isSystemApp(app)?"SYSTEM APP":"INSTALLED APP",10,isSystemApp(app)?Color.rgb(255,190,80):Color.rgb(110,210,150));
             badge.setGravity(Gravity.CENTER);card.addView(badge);
             box.setOnCheckedChangeListener((button,checked)->{
+                button.setEnabled(false);
                 if(checked){
-                    ArrayList<Item> made=new ArrayList<>();
-                    exportInstalledApp(app,made);
-                    exportedApps.put(app.packageName,made);
+                    status.setText("Preparing "+String.valueOf(pm.getApplicationLabel(app))+"…");
+                    io.execute(()->{
+                        ArrayList<Item> made=new ArrayList<>();
+                        exportInstalledApp(app,made);
+                        runOnUiThread(()->{
+                            exportedApps.put(app.packageName,made);
+                            button.setEnabled(true);
+                            status.setText(made.isEmpty()?"Could not prepare app for transfer":"App ready to send");
+                            refreshSelectedText();
+                        });
+                    });
                 }else{
-                    ArrayList<Item> made=exportedApps.remove(app.packageName);
-                    if(made!=null)selected.removeAll(made);
-                    refreshSelectedText();
+                    io.execute(()->{
+                        ArrayList<Item> made=exportedApps.remove(app.packageName);
+                        runOnUiThread(()->{
+                            if(made!=null)selected.removeAll(made);
+                            button.setEnabled(true);
+                            refreshSelectedText();
+                        });
+                    });
                 }
             });
             card.addView(box);
@@ -402,9 +416,17 @@ public class AemTransferActivity extends Activity {
     }
     private void requestPeers(){if(!hasPermission()||manager==null||channel==null)return;manager.requestPeers(channel,list->{peers.clear();peers.addAll(list.getDeviceList());renderPeers();});}
     private void renderPeers(){peerBox.removeAllViews();for(WifiP2pDevice d:peers){
-        Button b=actionButton((d.deviceName==null||d.deviceName.isEmpty()?"Nearby phone":d.deviceName)+"  •  Send");
-        b.setGravity(Gravity.CENTER);b.setBackground(bg(Color.rgb(34,38,47),12));
-        LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(-1,dp(56));p.setMargins(0,dp(4),0,dp(4));peerBox.addView(b,p);
+        LinearLayout card=new LinearLayout(this);
+        card.setGravity(Gravity.CENTER_VERTICAL);
+        card.setPadding(dp(14),dp(8),dp(8),dp(8));
+        card.setBackground(bg(Color.rgb(25,28,35),14));
+        TextView device=label((d.deviceName==null||d.deviceName.isEmpty()?"Nearby phone":d.deviceName),15,Color.WHITE);
+        device.setTypeface(Typeface.DEFAULT,Typeface.BOLD);
+        card.addView(device,new LinearLayout.LayoutParams(0,dp(50),1));
+        Button b=actionButton("Send");
+        b.setBackground(bg(Color.rgb(50,92,210),12));
+        card.addView(b,new LinearLayout.LayoutParams(dp(100),dp(50)));
+        LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(-1,dp(66));p.setMargins(0,dp(4),0,dp(4));peerBox.addView(card,p);
         b.setOnClickListener(v->connect(d));
     }}
     private void connect(WifiP2pDevice d){if(selected.isEmpty()){status.setText("Select at least one item first.");return;}sending=true;status.setText("Connecting to "+d.deviceName+"...");WifiP2pConfig c=new WifiP2pConfig();c.deviceAddress=d.deviceAddress;c.wps.setup=WpsInfo.PBC;
