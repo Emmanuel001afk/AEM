@@ -36,9 +36,11 @@ public class AemTransferActivity extends Activity {
     private static final int PORT=38177, PERM=7001, PICK=7002, FOLDER=7003;
     private static final int PROTOCOL=4;
     private WifiP2pManager manager; private WifiP2pManager.Channel channel; private BroadcastReceiver receiver;
+    private WifiP2pDnsSdServiceInfo localService; private WifiP2pDnsSdServiceRequest serviceRequest;
+    private final HashMap<String,String> peerNames=new HashMap<>();
     private final ExecutorService io=Executors.newCachedThreadPool();
     private final ArrayList<Item> selected=new ArrayList<>(); private final ArrayList<WifiP2pDevice> peers=new ArrayList<>();
-    private LinearLayout root,peerBox,contentGrid; private TextView status,selectedText,categoryTitle,modeHint; private ProgressBar progress; private ServerSocket server; private Button disconnectButton; private boolean sending=false; private boolean transferActive=false; private boolean waitingForWifi=false; private boolean waitingForLocation=false; private String transferId=null; private String activeCategory="Apps"; private final HashMap<String,ArrayList<Item>> exportedApps=new HashMap<>(); private final ArrayList<TextView> categoryButtons=new ArrayList<>();
+    private LinearLayout root,peerBox,contentGrid; private TextView status,selectedText,categoryTitle,modeHint,deviceNameLabel; private ProgressBar progress; private RadarView radar; private ServerSocket server; private Button disconnectButton; private boolean sending=false; private boolean transferActive=false; private boolean waitingForWifi=false; private boolean waitingForLocation=false; private String transferId=null; private String activeCategory="Apps"; private final HashMap<String,ArrayList<Item>> exportedApps=new HashMap<>(); private final ArrayList<TextView> categoryButtons=new ArrayList<>();
 
     private static final class Item {
         final Uri uri; final String name; final long size;
@@ -109,6 +111,11 @@ public class AemTransferActivity extends Activity {
         sub.setTextSize(13);
         sub.setTextColor(Color.rgb(170,175,185));
         root.addView(sub,new LinearLayout.LayoutParams(-1,dp(30)));
+
+        deviceNameLabel=label("This device: "+transferName()+"  •  Edit",13,Color.rgb(130,170,255));
+        deviceNameLabel.setPadding(2,0,2,4);
+        deviceNameLabel.setOnClickListener(v->showTransferNameDialog());
+        root.addView(deviceNameLabel,new LinearLayout.LayoutParams(-1,dp(34)));
 
         LinearLayout modes=new LinearLayout(this);
         modes.setPadding(0,dp(8),0,dp(8));
@@ -181,6 +188,9 @@ public class AemTransferActivity extends Activity {
         progress.setMax(100);
         root.addView(progress,new LinearLayout.LayoutParams(-1,dp(5)));
 
+        radar=new RadarView(this);
+        root.addView(radar,new LinearLayout.LayoutParams(-1,dp(168)));
+
         peerBox=new LinearLayout(this);
         peerBox.setOrientation(LinearLayout.VERTICAL);
         peerBox.setPadding(0,dp(4),0,0);
@@ -245,6 +255,116 @@ public class AemTransferActivity extends Activity {
 
     private TextView label(String text,int size,int color){
         TextView v=new TextView(this);v.setText(text);v.setTextSize(size);v.setTextColor(color);return v;
+    }
+
+    private String transferName(){
+        String saved=getSharedPreferences("aem_transfer",MODE_PRIVATE).getString("name","");
+        if(saved!=null&&!saved.trim().isEmpty())return saved.trim();
+        String system=null;
+        try{system=android.provider.Settings.Global.getString(getContentResolver(),android.provider.Settings.Global.DEVICE_NAME);}catch(Exception ignored){}
+        if(system!=null&&!system.trim().isEmpty())return system.trim();
+        return Build.MODEL==null?"Android phone":Build.MODEL;
+    }
+
+    private void showTransferNameDialog(){
+        final EditText input=new EditText(this);
+        input.setSingleLine(true); input.setText(transferName()); input.setSelectAllOnFocus(true);
+        AlertDialog dialog=new AlertDialog.Builder(this)
+                .setTitle("Transfer device name")
+                .setMessage("Use your Android device name or choose a custom name. This name is shown to nearby AEM receivers.")
+                .setView(input).setNegativeButton("Cancel",null).setPositiveButton("Save",null).create();
+        dialog.setOnShowListener(v->dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(x->{
+            String name=input.getText().toString().trim();
+            if(name.isEmpty())name=Build.MODEL==null?"Android phone":Build.MODEL;
+            if(name.length()>48)name=name.substring(0,48).trim();
+            getSharedPreferences("aem_transfer",MODE_PRIVATE).edit().putString("name",name).apply();
+            if(deviceNameLabel!=null)deviceNameLabel.setText("This device: "+name+"  •  Edit");
+            if(!sending&&manager!=null&&channel!=null)registerReceiverService();
+            dialog.dismiss();
+        }));
+        dialog.show();
+    }
+
+    private void registerReceiverService(){
+        if(manager==null||channel==null)return;
+        try{
+            if(localService!=null){
+                manager.removeLocalService(channel,localService,new WifiP2pManager.ActionListener(){
+                    public void onSuccess(){addReceiverService();}
+                    public void onFailure(int r){addReceiverService();}
+                });
+            }else addReceiverService();
+        }catch(Exception e){addReceiverService();}
+    }
+
+    private void addReceiverService(){
+        try{
+            HashMap<String,String> record=new HashMap<>();
+            record.put("name",transferName()); record.put("role","receiver");
+            record.put("port",String.valueOf(PORT)); record.put("protocol",String.valueOf(PROTOCOL));
+            String instance=("AEM-"+transferName()).replaceAll("[^A-Za-z0-9_-]","-");
+            if(instance.length()>50)instance=instance.substring(0,50);
+            localService=WifiP2pDnsSdServiceInfo.newInstance(instance,"_aemtransfer._tcp",record);
+            manager.addLocalService(channel,localService,new WifiP2pManager.ActionListener(){
+                public void onSuccess(){}
+                public void onFailure(int r){localService=null;}
+            });
+        }catch(Exception ignored){localService=null;}
+    }
+
+    private void prepareServiceDiscovery(){
+        if(manager==null||channel==null)return;
+        try{
+            manager.setDnsSdResponseListeners(channel,
+                (instanceName,registrationType,device)->{},
+                (fullDomain,record,device)->{
+                    Object role=record.get("role"); Object name=record.get("name");
+                    if("receiver".equals(String.valueOf(role))&&name!=null){
+                        peerNames.put(device.deviceAddress,String.valueOf(name));
+                        runOnUiThread(()->renderPeers());
+                    }
+                });
+            manager.clearServiceRequests(channel,new WifiP2pManager.ActionListener(){
+                public void onSuccess(){addServiceDiscoveryRequest();}
+                public void onFailure(int r){addServiceDiscoveryRequest();}
+            });
+        }catch(Exception ignored){}
+    }
+
+    private void addServiceDiscoveryRequest(){
+        try{
+            serviceRequest=WifiP2pDnsSdServiceRequest.newInstance();
+            manager.addServiceRequest(channel,serviceRequest,new WifiP2pManager.ActionListener(){
+                public void onSuccess(){try{manager.discoverServices(channel,null);}catch(Exception ignored){}}
+                public void onFailure(int r){}
+            });
+        }catch(Exception ignored){}
+    }
+
+    private final class RadarView extends View {
+        private final Paint paint=new Paint(Paint.ANTI_ALIAS_FLAG);
+        RadarView(Context c){super(c);}
+        @Override protected void onDraw(Canvas c){
+            super.onDraw(c);
+            float cx=getWidth()/2f,cy=getHeight()/2f,radius=Math.min(getWidth(),getHeight())*0.34f;
+            paint.setStyle(Paint.Style.STROKE);paint.setStrokeWidth(dp(1));paint.setColor(Color.rgb(42,65,105));
+            for(int i=1;i<=3;i++)c.drawCircle(cx,cy,radius*i/3f,paint);
+            c.drawLine(cx-radius,cy,cx+radius,cy,paint); c.drawLine(cx,cy-radius,cx,cy+radius,paint);
+            paint.setStyle(Paint.Style.FILL);paint.setColor(Color.rgb(70,120,220));c.drawCircle(cx,cy,dp(5),paint);
+            double sweep=(System.currentTimeMillis()%2600L)/2600.0*Math.PI*2;
+            paint.setStyle(Paint.Style.STROKE);paint.setStrokeWidth(dp(2));paint.setColor(Color.rgb(80,150,255));
+            c.drawArc(cx-radius,cy-radius,cx+radius,cy+radius,(float)Math.toDegrees(sweep),55,false,paint);
+            for(int i=0;i<peers.size();i++){
+                WifiP2pDevice d=peers.get(i);
+                float angle=(float)((Math.abs(d.deviceAddress.hashCode())%360)*Math.PI/180.0);
+                float rr=radius*(0.42f+0.45f*((i%3)/2f));
+                paint.setStyle(Paint.Style.FILL);paint.setColor(Color.rgb(110,210,150));
+                c.drawCircle(cx+(float)Math.cos(angle)*rr,cy+(float)Math.sin(angle)*rr,dp(5),paint);
+            }
+            paint.setColor(Color.LTGRAY);paint.setTextSize(dp(12));paint.setTextAlign(Paint.Align.CENTER);
+            int count=peers.size(); c.drawText(count+" nearby "+(count==1?"device":"devices"),cx,getHeight()-dp(8),paint);
+            postInvalidateDelayed(100);
+        }
     }
 
     private void updateCategoryButtons(){
@@ -483,9 +603,14 @@ public class AemTransferActivity extends Activity {
         peerBox.removeAllViews();
         peerBox.addView(label(title,16,Color.WHITE));
         TextView body=label(message,13,Color.LTGRAY);body.setPadding(0,dp(8),0,dp(12));peerBox.addView(body);
-        Button open=actionButton(wifi?"OPEN WI-FI SETTINGS":"OPEN LOCATION SETTINGS");
+        Button open=actionButton(wifi?"OPEN WI-FI PANEL":"OPEN LOCATION SETTINGS");
         open.setBackground(bg(Color.rgb(50,92,210),12));
-        open.setOnClickListener(v->{try{startActivity(new Intent(wifi?android.provider.Settings.ACTION_WIFI_SETTINGS:android.provider.Settings.ACTION_LOCATION_SOURCE_SETTINGS));}catch(Exception ignored){startActivity(new Intent(android.provider.Settings.ACTION_SETTINGS));}});
+        open.setOnClickListener(v->{try{
+            Intent target;
+            if(wifi&&Build.VERSION.SDK_INT>=29)target=new Intent(android.provider.Settings.Panel.ACTION_WIFI);
+            else target=new Intent(wifi?android.provider.Settings.ACTION_WIFI_SETTINGS:android.provider.Settings.ACTION_LOCATION_SOURCE_SETTINGS);
+            startActivity(target);
+        }catch(Exception ignored){try{startActivity(new Intent(android.provider.Settings.ACTION_SETTINGS));}catch(Exception ignored2){}}});
         peerBox.addView(open,new LinearLayout.LayoutParams(-1,dp(48)));
     }
 
@@ -532,6 +657,7 @@ public class AemTransferActivity extends Activity {
         manager.createGroup(channel,new WifiP2pManager.ActionListener(){
             public void onSuccess(){
                 status.setText("Receiver ready • waiting for sender…");
+                registerReceiverService();
                 startServer();
                 showConnectionGuide(false);
             }
@@ -555,6 +681,8 @@ public class AemTransferActivity extends Activity {
         }catch(Exception e){beginDiscovery();}
     }
     private void beginDiscovery(){
+        peerNames.clear();
+        prepareServiceDiscovery();
         manager.discoverPeers(channel,new WifiP2pManager.ActionListener(){
             public void onSuccess(){status.setText("Scanning… keep both phones on this screen.");}
             public void onFailure(int r){
@@ -593,7 +721,9 @@ public class AemTransferActivity extends Activity {
         card.setGravity(Gravity.CENTER_VERTICAL);
         card.setPadding(dp(14),dp(8),dp(8),dp(8));
         card.setBackground(bg(Color.rgb(25,28,35),14));
-        TextView device=label((d.deviceName==null||d.deviceName.isEmpty()?"Nearby phone":d.deviceName),15,Color.WHITE);
+        String displayName=peerNames.get(d.deviceAddress);
+        if(displayName==null||displayName.trim().isEmpty())displayName=(d.deviceName==null||d.deviceName.isEmpty()?"Nearby phone":d.deviceName);
+        TextView device=label(displayName,15,Color.WHITE);
         device.setTypeface(Typeface.DEFAULT,Typeface.BOLD);
         card.addView(device,new LinearLayout.LayoutParams(0,dp(50),1));
         Button b=actionButton("Send");
