@@ -6,6 +6,14 @@ p = Path(sys.argv[1])
 s = p.read_text()
 manifest_open = r"(<manifest\b[^>]*>)"
 
+if "INTERNET" not in s:
+    s = re.sub(
+        manifest_open,
+        r'\1\n    <uses-permission android:name="android.permission.INTERNET" />',
+        s,
+        count=1,
+    )
+
 if "NEARBY_WIFI_DEVICES" not in s:
     s = re.sub(
         manifest_open,
