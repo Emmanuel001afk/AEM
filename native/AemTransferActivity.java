@@ -38,7 +38,7 @@ public class AemTransferActivity extends Activity {
     private WifiP2pManager manager; private WifiP2pManager.Channel channel; private BroadcastReceiver receiver;
     private final ExecutorService io=Executors.newCachedThreadPool();
     private final ArrayList<Item> selected=new ArrayList<>(); private final ArrayList<WifiP2pDevice> peers=new ArrayList<>();
-    private LinearLayout root,peerBox,contentGrid; private TextView status,selectedText,categoryTitle,modeHint; private ProgressBar progress; private ServerSocket server; private Button disconnectButton; private boolean sending=false; private boolean transferActive=false; private String transferId=null; private String activeCategory="Apps"; private final HashMap<String,ArrayList<Item>> exportedApps=new HashMap<>(); private final ArrayList<TextView> categoryButtons=new ArrayList<>();
+    private LinearLayout root,peerBox,contentGrid; private TextView status,selectedText,categoryTitle,modeHint; private ProgressBar progress; private ServerSocket server; private Button disconnectButton; private boolean sending=false; private boolean transferActive=false; private boolean waitingForWifi=false; private boolean waitingForLocation=false; private String transferId=null; private String activeCategory="Apps"; private final HashMap<String,ArrayList<Item>> exportedApps=new HashMap<>(); private final ArrayList<TextView> categoryButtons=new ArrayList<>();
 
     private static final class Item {
         final Uri uri; final String name; final long size;
@@ -298,19 +298,22 @@ public class AemTransferActivity extends Activity {
                 button.setEnabled(false);
                 final String packageName=app.packageName;
                 if(checked){
-                    status.setText("Preparing "+String.valueOf(pm.getApplicationLabel(app))+"…");
+                    String appLabel=String.valueOf(pm.getApplicationLabel(app));
+                    status.setText("Preparing "+appLabel+"…");
                     io.execute(()->{
                         ArrayList<Item> made=new ArrayList<>();
-                        exportInstalledApp(app,made);
+                        boolean ok=exportInstalledApp(app,made)>0;
                         runOnUiThread(()->{
-                            if(button.isChecked())exportedApps.put(packageName,made);
-                            else{selected.removeAll(made);made.clear();}
+                            if(button.isChecked()&&ok){
+                                exportedApps.put(packageName,made);
+                                for(Item x:made){selected.removeIf(oldItem->oldItem.name.equals(x.name));selected.add(x);}
+                            }
                             button.setEnabled(true);
-                            status.setText(made.isEmpty()?"Could not prepare app for transfer":"App ready to send");
+                            status.setText(ok?"Ready • "+appLabel+" can be sent":"Could not prepare "+appLabel);
                             refreshSelectedText();
                         });
                     });
-                }else{
+                }                }else{
                     io.execute(()->{
                         ArrayList<Item> made=exportedApps.remove(packageName);
                         runOnUiThread(()->{
@@ -404,39 +407,29 @@ public class AemTransferActivity extends Activity {
             if(app.sourceDir!=null)paths.add(app.sourceDir);
             if(app.splitSourceDirs!=null)Collections.addAll(paths,app.splitSourceDirs);
             if(paths.isEmpty())throw new IOException("No readable APK components found");
-
-            // Treat one installed application as ONE logical transfer item.
-            // If Android exposes split APKs, bundle them into one .apks archive.
             String label=String.valueOf(getPackageManager().getApplicationLabel(app));
             File out=new File(dir,app.packageName+".apks");
-            try(ZipOutputStream zip=new ZipOutputStream(new BufferedOutputStream(new FileOutputStream(out),256*1024))){
-                byte[] b=new byte[256*1024];
-                int component=0;
-                for(String path:paths){
-                    File src=new File(path);
-                    if(!src.isFile()||!src.canRead())continue;
-                    String entry=component++==0?"base.apk":"split-"+component+".apk";
-                    zip.putNextEntry(new ZipEntry(entry));
-                    try(InputStream in=new BufferedInputStream(new FileInputStream(src),256*1024)){
-                        int n;while((n=in.read(b))!=-1)if(n>0)zip.write(b,0,n);
-                    }
-                    zip.closeEntry();
-                }
+            File meta=new File(dir,app.packageName+".meta");
+            StringBuilder fingerprint=new StringBuilder();
+            for(String path:paths){File src=new File(path);if(!src.isFile()||!src.canRead())continue;fingerprint.append(path).append("|").append(src.length()).append("|").append(src.lastModified()).append("\n");}
+            String fp=fingerprint.toString();
+            if(out.isFile()&&out.length()>0&&meta.isFile()){
+                String cached=new String(java.nio.file.Files.readAllBytes(meta.toPath()),java.nio.charset.StandardCharsets.UTF_8);
+                if(cached.equals(fp)){made.add(new Item(FileProvider.getUriForFile(this,getPackageName()+".fileprovider",out),label+" ("+app.packageName+").apks",out.length()));return 1;}
+            }
+            File temp=new File(dir,app.packageName+".apks.tmp");
+            try(ZipOutputStream zip=new ZipOutputStream(new BufferedOutputStream(new FileOutputStream(temp),1024*1024))){
+                byte[] b=new byte[1024*1024];int component=0;
+                for(String path:paths){File src=new File(path);if(!src.isFile()||!src.canRead())continue;String entry=component++==0?"base.apk":"split-"+component+".apk";zip.putNextEntry(new ZipEntry(entry));try(InputStream in=new BufferedInputStream(new FileInputStream(src),1024*1024)){int n;while((n=in.read(b))!=-1)if(n>0)zip.write(b,0,n);}zip.closeEntry();}
                 if(component==0)throw new IOException("No readable APK components found");
             }
-            Item item=new Item(FileProvider.getUriForFile(this,getPackageName()+".fileprovider",out),
-                    label+" ("+app.packageName+").apks",out.length());
-            selected.removeIf(x->x.name.equals(item.name));
-            selected.add(item);made.add(item);
-            refreshSelectedText();
-            status.setText(label+" ready • 1 app package");
+            if(out.exists())out.delete();
+            if(!temp.renameTo(out))throw new IOException("Could not finalize cached package");
+            try(FileOutputStream m=new FileOutputStream(meta)){m.write(fp.getBytes(java.nio.charset.StandardCharsets.UTF_8));}
+            made.add(new Item(FileProvider.getUriForFile(this,getPackageName()+".fileprovider",out),label+" ("+app.packageName+").apks",out.length()));
             return 1;
-        }catch(Exception e){
-            update("Could not prepare "+app.packageName+": "+(e.getMessage()==null?"access denied":e.getMessage()),0);
-            return 0;
-        }
+        }catch(Exception e){update("Could not prepare "+app.packageName+": "+(e.getMessage()==null?"access denied":e.getMessage()),0);return 0;}
     }
-
     private void pickFiles(){Intent i=new Intent(Intent.ACTION_OPEN_DOCUMENT);i.addCategory(Intent.CATEGORY_OPENABLE);i.setType("*/*");i.putExtra(Intent.EXTRA_ALLOW_MULTIPLE,true);startActivityForResult(i,PICK);}
     private void pickFolder(){Intent i=new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE);i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION|Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);startActivityForResult(i,FOLDER);}
     @Override protected void onActivityResult(int r,int code,Intent data){
@@ -513,7 +506,7 @@ public class AemTransferActivity extends Activity {
 
     private void startReceive(){
         if(!hasPermission()){requestPermissions(requiredPermissions(),PERM);return;}
-        if(!wifiEnabled()){status.setText("Wi-Fi is off. Turn it on to receive directly.");showSystemRequirement("Wi-Fi is required","AEM Transfer uses Wi-Fi Direct for the local phone-to-phone connection.",true);return;}
+        if(!wifiEnabled()){waitingForWifi=true;status.setText("Wi-Fi is off • turn it on, then return to AEM. Receiver setup will resume automatically.");showSystemRequirement("Wi-Fi is required","AEM Transfer uses Wi-Fi Direct for the local phone-to-phone connection.",true);return;}
         sending=false;
         modeHint.setText("Receive mode: keep this screen open. The sender will appear when nearby.");
         if(manager==null||channel==null){status.setText("Wi-Fi Direct is unavailable on this phone.");return;}
@@ -544,8 +537,8 @@ public class AemTransferActivity extends Activity {
     }
     private void discover(){
         if(!hasPermission()){requestPermissions(requiredPermissions(),PERM);return;}
-        if(!wifiEnabled()){status.setText("Wi-Fi is off. Turn it on to scan for nearby receivers.");showSystemRequirement("Turn on Wi-Fi","AEM uses Wi-Fi Direct locally; mobile data and Internet are not used for the transfer.",true);return;}
-        if(!locationEnabled()){status.setText("Location services are off. Android requires them for Wi-Fi Direct discovery.");showSystemRequirement("Turn on Location services","Android requires Location Mode enabled for Wi-Fi Direct peer discovery on supported versions. AEM does not use your location for the transfer.",false);return;}
+        if(!wifiEnabled()){waitingForWifi=true;status.setText("Wi-Fi is off • turn it on, then return to AEM. Scanning will resume automatically.");showSystemRequirement("Turn on Wi-Fi","AEM uses Wi-Fi Direct locally; mobile data and Internet are not used for the transfer.",true);return;}
+        if(!locationEnabled()){waitingForLocation=true;status.setText("Location services are off • turn them on, then return to AEM. Scanning will resume automatically.");showSystemRequirement("Turn on Location services","Android requires Location Mode enabled for Wi-Fi Direct peer discovery on supported versions. AEM does not use your location for the transfer.",false);return;}
         modeHint.setText("Send mode: AEM is scanning for nearby receivers.");
         if(manager==null||channel==null){status.setText("Wi-Fi Direct is unavailable on this phone.");return;}
         peerBox.removeAllViews();
