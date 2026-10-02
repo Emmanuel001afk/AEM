@@ -14,6 +14,8 @@ import android.os.*;
 import android.provider.DocumentsContract;
 import android.provider.MediaStore;
 import android.graphics.drawable.Drawable;
+import android.graphics.Bitmap;
+import android.util.Size;
 import android.provider.OpenableColumns;
 import android.view.*;
 import android.widget.*;
@@ -254,7 +256,7 @@ public class AemTransferActivity extends Activity {
         contentGrid.addView(label(items.size()+" "+category.toLowerCase()+" available",14,Color.LTGRAY));
         for(Item x:items){
             LinearLayout row=new LinearLayout(this);row.setGravity(Gravity.CENTER_VERTICAL);row.setPadding(8,8,8,8);row.setBackgroundColor(Color.rgb(24,26,31));
-            TextView glyph=label(category.equals("Videos")?"▶":category.equals("Photos")?"▣":"♫",28,Color.WHITE);row.addView(glyph,new LinearLayout.LayoutParams(58,58));
+            ImageView thumb=new ImageView(this); thumb.setScaleType(ImageView.ScaleType.CENTER_CROP); thumb.setImageResource(android.R.drawable.ic_menu_gallery); row.addView(thumb,new LinearLayout.LayoutParams(70,70)); if(!category.equals("Music"))loadThumbnail(thumb,x.uri);
             LinearLayout textBox=new LinearLayout(this);textBox.setOrientation(LinearLayout.VERTICAL);
             textBox.addView(label(x.name,14,Color.WHITE));textBox.addView(label(format(x.size),11,Color.GRAY));
             row.addView(textBox,new LinearLayout.LayoutParams(0,-2,1));
@@ -268,6 +270,16 @@ public class AemTransferActivity extends Activity {
 
     private boolean containsItem(Item x){for(Item y:selected)if(String.valueOf(y.uri).equals(String.valueOf(x.uri)))return true;return false;}
     private void removeItem(Item x){Iterator<Item> it=selected.iterator();while(it.hasNext())if(String.valueOf(it.next().uri).equals(String.valueOf(x.uri)))it.remove();}
+
+    private void loadThumbnail(ImageView view,Uri uri){
+        if(Build.VERSION.SDK_INT<29)return;
+        io.execute(()->{
+            try{
+                Bitmap b=getContentResolver().loadThumbnail(uri,new Size(120,120),null);
+                runOnUiThread(()->view.setImageBitmap(b));
+            }catch(Exception ignored){}
+        });
+    }
 
     private void renderFiles(){
         contentGrid.addView(label("Files",17,Color.WHITE));
