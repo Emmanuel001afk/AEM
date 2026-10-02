@@ -30,15 +30,23 @@ if "NEARBY_WIFI_DEVICES" not in s:
         count=1,
     )
 
-
 if "AEM Package Installer" not in s:
-    s = re.sub(
-        r'(<activity\b[^>]*android:name="[^"]*MainActivity"[^>]*>)(.*?</activity>)',
-        r'\1\2\n            <intent-filter android:label="AEM Package Installer">\n                <action android:name="android.intent.action.VIEW" />\n                <category android:name="android.intent.category.DEFAULT" />\n                <category android:name="android.intent.category.BROWSABLE" />\n                <data android:mimeType="application/vnd.android.package-archive" />\n                <data android:mimeType="application/zip" />\n                <data android:mimeType="application/octet-stream" />\n            </intent-filter>',
-        s,
-        count=1,
-        flags=re.DOTALL,
-    )
+    activity_pattern = r'(<activity\b[^>]*android:name="[^"]*MainActivity"[^>]*>)(.*?)(</activity>)'
+    activity_match = re.search(activity_pattern, s, flags=re.DOTALL)
+    if activity_match:
+        activity_body = activity_match.group(2)
+        installer_filter = '''\n            <intent-filter android:label="AEM Package Installer">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:mimeType="application/vnd.android.package-archive" />
+                <data android:mimeType="application/zip" />
+                <data android:mimeType="application/octet-stream" />
+            </intent-filter>'''
+        replacement = activity_match.group(1) + activity_body + installer_filter + "\n        " + activity_match.group(3)
+        s = s[:activity_match.start()] + replacement + s[activity_match.end():]
+    else:
+        raise SystemExit("MainActivity not found while adding AEM Package Installer intent-filter")
 
 if "AemTransferActivity" not in s:
     s = s.replace(
