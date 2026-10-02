@@ -370,8 +370,8 @@ public class AemTransferActivity extends Activity {
             c.drawArc(cx-radius,cy-radius,cx+radius,cy+radius,(float)Math.toDegrees(sweep),55,false,paint);
             for(int i=0;i<peers.size();i++){
                 WifiP2pDevice d=peers.get(i);
-                float angle=(float)((Math.abs(d.deviceAddress.hashCode())%360)*Math.PI/180.0);
-                float rr=radius*(0.42f+0.45f*((i%3)/2f));
+                float angle=(float)((i%Math.max(1,peers.size()))*Math.PI*2.0/Math.max(1,peers.size()));
+                float rr=radius*(0.35f+0.5f*((i%3)/2f));
                 paint.setStyle(Paint.Style.FILL);paint.setColor(Color.rgb(110,210,150));
                 c.drawCircle(cx+(float)Math.cos(angle)*rr,cy+(float)Math.sin(angle)*rr,dp(5),paint);
             }
