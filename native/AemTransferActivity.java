@@ -2,12 +2,14 @@ package com.aem.store;
 
 import android.Manifest;
 import android.app.Activity;
+import android.app.AlertDialog;
 import android.content.*;
 import android.content.pm.*;
 import android.database.Cursor;
 import android.graphics.Color;
 import android.net.Uri;
 import android.net.wifi.p2p.*;
+import android.net.wifi.WpsInfo;
 import android.os.*;
 import android.provider.DocumentsContract;
 import android.provider.OpenableColumns;
