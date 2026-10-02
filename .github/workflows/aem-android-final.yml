@@ -3,20 +3,6 @@ name: AEM Store Android APK Final
 on:
   push:
     branches: [main]
-    paths:
-      - "src/**"
-      - "src/services/catalog/supabase.ts"
-      - "native/**"
-      - "public/**"
-      - "package.json"
-      - "package-lock.json"
-      - "vite.config.*"
-      - "vite.mobile.config.*"
-      - "capacitor.config.*"
-      - "index.html"
-      - "mobile-index.html"
-      - ".github/workflows/aem-android-final.yml"
-      - ".github/workflows/aem-store-self-publish-v2.yml"
   workflow_dispatch:
 
 concurrency:
