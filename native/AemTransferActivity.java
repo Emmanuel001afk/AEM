@@ -829,6 +829,10 @@ public class AemTransferActivity extends Activity {
             for(int i=0;i<count;i++){
                 File done=doneFile(id,i),part=partFile(id,i);
                 if(done.exists()){offsets[i]=hs.get(i).size;continue;}
+                File expectedTarget=new File(new File(getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS),"AEM Transfer"),hs.get(i).name);
+                if(!part.exists() && expectedTarget.isFile() && expectedTarget.length()==hs.get(i).size){
+                    if(done.createNewFile() || done.exists()){offsets[i]=hs.get(i).size;continue;}
+                }
                 long len=part.exists()?part.length():0;
                 if(len>hs.get(i).size){part.delete();len=0;}
                 offsets[i]=len;
