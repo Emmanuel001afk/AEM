@@ -7,6 +7,8 @@ import android.content.*;
 import android.content.pm.*;
 import android.database.Cursor;
 import android.graphics.Color;
+import android.graphics.Canvas;
+import android.graphics.Paint;
 import android.graphics.Typeface;
 import android.net.Uri;
 import android.net.wifi.p2p.*;
