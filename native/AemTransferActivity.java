@@ -12,6 +12,8 @@ import android.net.wifi.p2p.*;
 import android.net.wifi.WpsInfo;
 import android.os.*;
 import android.provider.DocumentsContract;
+import android.provider.MediaStore;
+import android.graphics.drawable.Drawable;
 import android.provider.OpenableColumns;
 import android.view.*;
 import android.widget.*;
@@ -28,7 +30,7 @@ public class AemTransferActivity extends Activity {
     private WifiP2pManager manager; private WifiP2pManager.Channel channel; private BroadcastReceiver receiver;
     private final ExecutorService io=Executors.newCachedThreadPool();
     private final ArrayList<Item> selected=new ArrayList<>(); private final ArrayList<WifiP2pDevice> peers=new ArrayList<>();
-    private LinearLayout root,peerBox; private TextView status,selectedText; private ProgressBar progress; private ServerSocket server; private boolean sending=false;
+    private LinearLayout root,peerBox,contentGrid; private TextView status,selectedText,categoryTitle; private ProgressBar progress; private ServerSocket server; private boolean sending=false; private String activeCategory="Apps"; private final HashMap<String,ArrayList<Item>> exportedApps=new HashMap<>();
 
     private static final class Item {
         final Uri uri; final String name; final long size;
@@ -50,26 +52,250 @@ public class AemTransferActivity extends Activity {
     }
 
     private void buildUi(){
-        root=new LinearLayout(this); root.setOrientation(LinearLayout.VERTICAL); root.setPadding(28,24,28,24); root.setBackgroundColor(Color.rgb(9,9,12));
-        TextView title=new TextView(this); title.setText("Transfer"); title.setTextSize(28); title.setTextColor(Color.WHITE); title.setTypeface(null,1); root.addView(title,new LinearLayout.LayoutParams(-1,-2));
-        TextView sub=new TextView(this); sub.setText("Direct device-to-device transfer. No mobile data, internet, cloud or database."); sub.setTextColor(Color.LTGRAY); sub.setPadding(0,8,0,20); root.addView(sub);
-        LinearLayout modes=new LinearLayout(this); Button send=new Button(this); send.setText("Send"); Button receive=new Button(this); receive.setText("Receive");
-        modes.addView(send,new LinearLayout.LayoutParams(0,-2,1)); modes.addView(receive,new LinearLayout.LayoutParams(0,-2,1)); root.addView(modes);
-        Button choose=new Button(this); choose.setText("Choose files"); root.addView(choose);
-        Button folder=new Button(this); folder.setText("Choose folder"); root.addView(folder);
-        Button apps=new Button(this); apps.setText("Choose installed apps (including system apps)"); root.addView(apps);
-        selectedText=new TextView(this); selectedText.setTextColor(Color.LTGRAY); selectedText.setPadding(0,12,0,12); root.addView(selectedText);
-        status=new TextView(this); status.setTextColor(Color.WHITE); status.setPadding(0,8,0,12); root.addView(status);
-        progress=new ProgressBar(this,null,android.R.attr.progressBarStyleHorizontal); progress.setMax(100); root.addView(progress,new LinearLayout.LayoutParams(-1,-2));
-        peerBox=new LinearLayout(this); peerBox.setOrientation(LinearLayout.VERTICAL); root.addView(peerBox);
-        ScrollView scroll=new ScrollView(this); scroll.addView(root); setContentView(scroll); refreshSelectedText(); status.setText("Ready");
-        choose.setOnClickListener(v->pickFiles()); folder.setOnClickListener(v->pickFolder()); apps.setOnClickListener(v->pickInstalledApps());
-        receive.setOnClickListener(v->startReceive()); send.setOnClickListener(v->{if(selected.isEmpty())pickFiles();else discover();});
+        root=new LinearLayout(this);
+        root.setOrientation(LinearLayout.VERTICAL);
+        root.setPadding(24,20,24,24);
+        root.setBackgroundColor(Color.rgb(8,9,12));
+
+        LinearLayout top=new LinearLayout(this);
+        top.setGravity(Gravity.CENTER_VERTICAL);
+        TextView title=new TextView(this);
+        title.setText("AEM Transfer");
+        title.setTextSize(27);
+        title.setTextColor(Color.WHITE);
+        title.setTypeface(null,1);
+        top.addView(title,new LinearLayout.LayoutParams(0,-2,1));
+        Button close=new Button(this);
+        close.setText("×");
+        close.setTextSize(24);
+        close.setOnClickListener(v->finish());
+        top.addView(close,new LinearLayout.LayoutParams(56,56));
+        root.addView(top);
+
+        TextView sub=new TextView(this);
+        sub.setText("Send files directly between nearby phones. No mobile data, internet, cloud or Store database.");
+        sub.setTextColor(Color.LTGRAY);
+        sub.setPadding(0,4,0,14);
+        root.addView(sub);
+
+        LinearLayout modes=new LinearLayout(this);
+        Button send=new Button(this); send.setText("SEND");
+        Button receive=new Button(this); receive.setText("RECEIVE");
+        modes.addView(send,new LinearLayout.LayoutParams(0,58,1));
+        modes.addView(receive,new LinearLayout.LayoutParams(0,58,1));
+        root.addView(modes);
+
+        categoryTitle=new TextView(this);
+        categoryTitle.setText("Apps");
+        categoryTitle.setTextSize(18);
+        categoryTitle.setTextColor(Color.WHITE);
+        categoryTitle.setTypeface(null,1);
+        categoryTitle.setPadding(0,18,0,8);
+        root.addView(categoryTitle);
+
+        HorizontalScrollView tabsScroll=new HorizontalScrollView(this);
+        LinearLayout tabs=new LinearLayout(this);
+        tabs.setOrientation(LinearLayout.HORIZONTAL);
+        String[] categories={"Apps","Photos","Videos","Music","Files"};
+        for(String c:categories){
+            Button b=new Button(this); b.setText(c);
+            b.setOnClickListener(v->{activeCategory=c; renderCategory();});
+            tabs.addView(b,new LinearLayout.LayoutParams(-2,52));
+        }
+        tabsScroll.addView(tabs);
+        root.addView(tabsScroll);
+
+        contentGrid=new LinearLayout(this);
+        contentGrid.setOrientation(LinearLayout.VERTICAL);
+        contentGrid.setPadding(0,10,0,6);
+        ScrollView contentScroll=new ScrollView(this);
+        contentScroll.setFillViewport(true);
+        contentScroll.addView(contentGrid);
+        root.addView(contentScroll,new LinearLayout.LayoutParams(-1,0,1));
+
+        selectedText=new TextView(this);
+        selectedText.setTextColor(Color.LTGRAY);
+        selectedText.setPadding(0,8,0,8);
+        root.addView(selectedText);
+
+        status=new TextView(this);
+        status.setTextColor(Color.WHITE);
+        status.setPadding(0,4,0,8);
+        root.addView(status);
+
+        progress=new ProgressBar(this,null,android.R.attr.progressBarStyleHorizontal);
+        progress.setMax(100);
+        root.addView(progress,new LinearLayout.LayoutParams(-1,-2));
+
+        peerBox=new LinearLayout(this);
+        peerBox.setOrientation(LinearLayout.VERTICAL);
+        peerBox.setPadding(0,8,0,0);
+        root.addView(peerBox);
+
+        LinearLayout bottom=new LinearLayout(this);
+        Button chooseFiles=new Button(this); chooseFiles.setText("ADD FILES");
+        Button chooseFolder=new Button(this); chooseFolder.setText("ADD FOLDER");
+        bottom.addView(chooseFiles,new LinearLayout.LayoutParams(0,54,1));
+        bottom.addView(chooseFolder,new LinearLayout.LayoutParams(0,54,1));
+        root.addView(bottom);
+
+        ScrollView outer=new ScrollView(this);
+        outer.addView(root);
+        setContentView(outer);
+
+        chooseFiles.setOnClickListener(v->pickFiles());
+        chooseFolder.setOnClickListener(v->pickFolder());
+        receive.setOnClickListener(v->startReceive());
+        send.setOnClickListener(v->{if(selected.isEmpty()){status.setText("Select files, apps or media first.");return;}discover();});
+        refreshSelectedText();
+        status.setText("Ready");
+        renderCategory();
+    }
+    private boolean hasPermission(){
+        return Build.VERSION.SDK_INT>=33?checkSelfPermission(Manifest.permission.NEARBY_WIFI_DEVICES)==PackageManager.PERMISSION_GRANTED:checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION)==PackageManager.PERMISSION_GRANTED;
+    }
+    private String[] requiredPermissions(){
+        ArrayList<String> p=new ArrayList<>();
+        p.add(Build.VERSION.SDK_INT>=33?Manifest.permission.NEARBY_WIFI_DEVICES:Manifest.permission.ACCESS_FINE_LOCATION);
+        if(Build.VERSION.SDK_INT>=33){
+            p.add(Manifest.permission.READ_MEDIA_IMAGES);
+            p.add(Manifest.permission.READ_MEDIA_VIDEO);
+            p.add(Manifest.permission.READ_MEDIA_AUDIO);
+        }else if(Build.VERSION.SDK_INT>=23){
+            p.add(Manifest.permission.READ_EXTERNAL_STORAGE);
+        }
+        return p.toArray(new String[0]);
+    }
+    @Override public void onRequestPermissionsResult(int r,String[] p,int[] g){super.onRequestPermissionsResult(r,p,g);if(r==PERM){status.setText(hasPermission()?"Permission granted. Ready.":"Required permission was not granted.");renderCategory();}}
+
+    private void renderCategory(){
+        if(contentGrid==null)return;
+        contentGrid.removeAllViews();
+        categoryTitle.setText(activeCategory);
+        if("Apps".equals(activeCategory)){renderApps();return;}
+        if("Files".equals(activeCategory)){renderFiles();return;}
+        renderMedia(activeCategory);
     }
 
-    private boolean hasPermission(){return Build.VERSION.SDK_INT>=33?checkSelfPermission(Manifest.permission.NEARBY_WIFI_DEVICES)==PackageManager.PERMISSION_GRANTED:checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION)==PackageManager.PERMISSION_GRANTED;}
-    private String[] requiredPermissions(){return Build.VERSION.SDK_INT>=33?new String[]{Manifest.permission.NEARBY_WIFI_DEVICES}:new String[]{Manifest.permission.ACCESS_FINE_LOCATION};}
-    @Override public void onRequestPermissionsResult(int r,String[] p,int[] g){super.onRequestPermissionsResult(r,p,g);if(r==PERM)status.setText(hasPermission()?"Permission granted. Ready.":"Nearby Wi-Fi permission is required.");}
+    private TextView label(String text,int size,int color){
+        TextView v=new TextView(this);v.setText(text);v.setTextSize(size);v.setTextColor(color);return v;
+    }
+
+    private void renderApps(){
+        TextView hint=label("Installed apps",14,Color.LTGRAY);
+        hint.setPadding(0,0,0,8);contentGrid.addView(hint);
+        GridLayout grid=new GridLayout(this);grid.setColumnCount(2);
+        PackageManager pm=getPackageManager();
+        List<ApplicationInfo> all=new ArrayList<>(pm.getInstalledApplications(PackageManager.GET_META_DATA));
+        all.removeIf(a->a.packageName.equals(getPackageName()));
+        Collections.sort(all,(a,b)->String.valueOf(pm.getApplicationLabel(a)).compareToIgnoreCase(String.valueOf(pm.getApplicationLabel(b))));
+        for(ApplicationInfo app:all){
+            LinearLayout card=new LinearLayout(this);card.setOrientation(LinearLayout.VERTICAL);card.setPadding(12,12,12,12);
+            card.setBackgroundColor(Color.rgb(25,27,32));
+            CheckBox box=new CheckBox(this);box.setText("SELECT");box.setTextColor(Color.LTGRAY);box.setTextSize(11);
+            ImageView icon=new ImageView(this);Drawable d=null;try{d=pm.getApplicationIcon(app);}catch(Exception ignored){}
+            if(d!=null)icon.setImageDrawable(d);
+            card.addView(icon,new LinearLayout.LayoutParams(-1,82));
+            TextView name=label(String.valueOf(pm.getApplicationLabel(app)),15,Color.WHITE);name.setGravity(Gravity.CENTER);
+            card.addView(name,new LinearLayout.LayoutParams(-1,-2));
+            TextView pkg=label(app.packageName,10,Color.GRAY);pkg.setGravity(Gravity.CENTER);card.addView(pkg);
+            TextView badge=label(isSystemApp(app)?"SYSTEM APP":"INSTALLED APP",10,isSystemApp(app)?Color.rgb(255,190,80):Color.rgb(110,210,150));
+            badge.setGravity(Gravity.CENTER);card.addView(badge);
+            box.setOnCheckedChangeListener((button,checked)->{
+                if(checked){
+                    ArrayList<Item> made=new ArrayList<>();
+                    exportInstalledApp(app,made);
+                    exportedApps.put(app.packageName,made);
+                }else{
+                    ArrayList<Item> made=exportedApps.remove(app.packageName);
+                    if(made!=null)selected.removeAll(made);
+                    refreshSelectedText();
+                }
+            });
+            card.addView(box);
+            GridLayout.LayoutParams gp=new GridLayout.LayoutParams();
+            gp.width=0;gp.height=GridLayout.LayoutParams.WRAP_CONTENT;
+            gp.columnSpec=GridLayout.spec(GridLayout.UNDEFINED,1f);
+            gp.setMargins(5,5,5,5);
+            grid.addView(card,gp);
+        }
+        contentGrid.addView(grid);
+    }
+
+    private void renderMedia(String category){
+        String permission=category.equals("Photos")?Manifest.permission.READ_MEDIA_IMAGES:category.equals("Videos")?Manifest.permission.READ_MEDIA_VIDEO:Manifest.permission.READ_MEDIA_AUDIO;
+        if(Build.VERSION.SDK_INT>=33 && checkSelfPermission(permission)!=PackageManager.PERMISSION_GRANTED){
+            Button allow=new Button(this);allow.setText("ALLOW "+category.toUpperCase()+" ACCESS");
+            allow.setOnClickListener(v->requestPermissions(new String[]{permission},PERM));
+            contentGrid.addView(label("AEM needs permission to show "+category.toLowerCase()+" directly in the transfer picker.",14,Color.LTGRAY));
+            contentGrid.addView(allow);return;
+        }
+        io.execute(()->{
+            ArrayList<Item> items=new ArrayList<>();
+            Uri base=category.equals("Photos")?MediaStore.Images.Media.EXTERNAL_CONTENT_URI:category.equals("Videos")?MediaStore.Video.Media.EXTERNAL_CONTENT_URI:MediaStore.Audio.Media.EXTERNAL_CONTENT_URI;
+            String[] proj={MediaStore.MediaColumns._ID,MediaStore.MediaColumns.DISPLAY_NAME,MediaStore.MediaColumns.SIZE};
+            Cursor c=null;try{
+                c=getContentResolver().query(base,proj,null,null,MediaStore.MediaColumns.DATE_ADDED+" DESC");
+                if(c!=null){
+                    int id=c.getColumnIndexOrThrow(MediaStore.MediaColumns._ID),name=c.getColumnIndexOrThrow(MediaStore.MediaColumns.DISPLAY_NAME),size=c.getColumnIndexOrThrow(MediaStore.MediaColumns.SIZE);
+                    int count=0;
+                    while(c.moveToNext()&&count++<100){
+                        long row=c.getLong(id);String n=c.getString(name);long z=c.isNull(size)?0:c.getLong(size);
+                        items.add(new Item(ContentUris.withAppendedId(base,row),n,z));
+                    }
+                }
+            }catch(Exception e){runOnUiThread(()->status.setText("Could not load "+category+": "+safe(e)));}finally{if(c!=null)c.close();}
+            runOnUiThread(()->showMediaItems(category,items));
+        });
+    }
+
+    private void showMediaItems(String category,ArrayList<Item> items){
+        contentGrid.removeAllViews();
+        contentGrid.addView(label(items.size()+" "+category.toLowerCase()+" available",14,Color.LTGRAY));
+        for(Item x:items){
+            LinearLayout row=new LinearLayout(this);row.setGravity(Gravity.CENTER_VERTICAL);row.setPadding(8,8,8,8);row.setBackgroundColor(Color.rgb(24,26,31));
+            TextView glyph=label(category.equals("Videos")?"▶":category.equals("Photos")?"▣":"♫",28,Color.WHITE);row.addView(glyph,new LinearLayout.LayoutParams(58,58));
+            LinearLayout textBox=new LinearLayout(this);textBox.setOrientation(LinearLayout.VERTICAL);
+            textBox.addView(label(x.name,14,Color.WHITE));textBox.addView(label(format(x.size),11,Color.GRAY));
+            row.addView(textBox,new LinearLayout.LayoutParams(0,-2,1));
+            CheckBox box=new CheckBox(this);box.setText("SELECT");box.setTextColor(Color.LTGRAY);
+            box.setOnCheckedChangeListener((b,checked)->{if(checked){if(!containsItem(x))selected.add(x);}else removeItem(x);refreshSelectedText();});
+            row.addView(box);
+            contentGrid.addView(row,new LinearLayout.LayoutParams(-1,-2));
+        }
+        if(items.isEmpty())contentGrid.addView(label("No "+category.toLowerCase()+" found on this device.",14,Color.GRAY));
+    }
+
+    private boolean containsItem(Item x){for(Item y:selected)if(String.valueOf(y.uri).equals(String.valueOf(x.uri)))return true;return false;}
+    private void removeItem(Item x){Iterator<Item> it=selected.iterator();while(it.hasNext())if(String.valueOf(it.next().uri).equals(String.valueOf(x.uri)))it.remove();}
+
+    private void renderFiles(){
+        contentGrid.addView(label("Files",17,Color.WHITE));
+        contentGrid.addView(label("Pick any document, ZIP, APK or folder. Files are transferred as files; AEM does not open or play them.",13,Color.LTGRAY));
+        Button b=new Button(this);b.setText("BROWSE FILES");b.setOnClickListener(v->pickFiles());contentGrid.addView(b);
+        Button f=new Button(this);f.setText("BROWSE FOLDER");f.setOnClickListener(v->pickFolder());contentGrid.addView(f);
+        contentGrid.addView(label("Selected files stay in the transfer list below.",12,Color.GRAY));
+    }
+
+    private int exportInstalledApp(ApplicationInfo app,ArrayList<Item> made){
+        int added=0;try{
+            File dir=new File(getCacheDir(),"aem-downloads");
+            if(!dir.exists()&&!dir.mkdirs())throw new IOException("Cannot create transfer cache");
+            ArrayList<String> paths=new ArrayList<>();
+            if(app.sourceDir!=null)paths.add(app.sourceDir);
+            if(app.splitSourceDirs!=null)Collections.addAll(paths,app.splitSourceDirs);
+            for(int i=0;i<paths.size();i++){
+                File src=new File(paths.get(i));if(!src.isFile()||!src.canRead())continue;
+                File out=new File(dir,app.packageName+(i==0?".apk":"-split"+i+".apk"));
+                try(InputStream in=new FileInputStream(src);OutputStream o=new FileOutputStream(out)){
+                    byte[] b=new byte[65536];int n;while((n=in.read(b))!=-1)if(n>0)o.write(b,0,n);
+                }
+                Item item=new Item(FileProvider.getUriForFile(this,getPackageName()+".fileprovider",out),out.getName(),out.length());
+                selected.add(item);made.add(item);added++;
+            }
+        }catch(Exception e){update("Could not prepare "+app.packageName+": "+(e.getMessage()==null?"access denied":e.getMessage()),0);}
+        refreshSelectedText();return added;
+    }
 
     private void pickFiles(){Intent i=new Intent(Intent.ACTION_OPEN_DOCUMENT);i.addCategory(Intent.CATEGORY_OPENABLE);i.setType("*/*");i.putExtra(Intent.EXTRA_ALLOW_MULTIPLE,true);startActivityForResult(i,PICK);}
     private void pickFolder(){Intent i=new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE);i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION|Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);startActivityForResult(i,FOLDER);}
@@ -105,14 +331,7 @@ public class AemTransferActivity extends Activity {
             int added=0;for(int i=0;i<all.size();i++)if(checked[i])added+=exportInstalledApp(all.get(i));selectedText.setText(added+" APK component"+(added==1?"":"s")+" prepared for transfer");}).show();
     }
     private boolean isSystemApp(ApplicationInfo a){return (a.flags&(ApplicationInfo.FLAG_SYSTEM|ApplicationInfo.FLAG_UPDATED_SYSTEM_APP))!=0;}
-    private int exportInstalledApp(ApplicationInfo app){
-        int added=0;try{File dir=new File(getCacheDir(),"aem-downloads");if(!dir.exists()&&!dir.mkdirs())throw new IOException("Cannot create transfer cache");
-            ArrayList<String> paths=new ArrayList<>();if(app.sourceDir!=null)paths.add(app.sourceDir);if(app.splitSourceDirs!=null)Collections.addAll(paths,app.splitSourceDirs);
-            for(int i=0;i<paths.size();i++){File src=new File(paths.get(i));if(!src.isFile()||!src.canRead())continue;File out=new File(dir,app.packageName+(i==0?".apk":"-split"+i+".apk"));
-                try(InputStream in=new FileInputStream(src);OutputStream o=new FileOutputStream(out)){byte[] b=new byte[65536];int n;while((n=in.read(b))!=-1)if(n>0)o.write(b,0,n);}
-                selected.add(new Item(FileProvider.getUriForFile(this,getPackageName()+".fileprovider",out),out.getName(),out.length()));added++;}
-        }catch(Exception e){update("Could not prepare "+app.packageName+": "+(e.getMessage()==null?"access denied":e.getMessage()),0);}return added;
-    }
+    private int exportInstalledApp(ApplicationInfo app){ArrayList<Item> made=new ArrayList<>();return exportInstalledApp(app,made);}
 
     private void startReceive(){if(!hasPermission()){requestPermissions(requiredPermissions(),PERM);return;}if(manager==null||channel==null){status.setText("Wi-Fi Direct is unavailable.");return;}
         status.setText("Creating private transfer connection...");manager.createGroup(channel,new WifiP2pManager.ActionListener(){public void onSuccess(){status.setText("Waiting for another AEM phone...");startServer();}public void onFailure(int r){status.setText("Could not create transfer connection: "+r);}});
