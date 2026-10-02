@@ -753,22 +753,51 @@ public class AemTransferActivity extends Activity {
         }
     }
     private void requestPeers(){if(!hasPermission()||manager==null||channel==null)return;manager.requestPeers(channel,list->{peers.clear();peers.addAll(list.getDeviceList());renderPeers();});}
-    private void renderPeers(){\n        peerBox.removeAllViews();\n        radar=new RadarView(this);\n        peerBox.addView(radar,new LinearLayout.LayoutParams(-1,dp(168)));\n        radar=new RadarView(this);\n        peerBox.addView(radar,new LinearLayout.LayoutParams(-1,dp(168)));if(peers.isEmpty()){TextView empty=label(sending?"Scanning for nearby receivers…":"No receiver found yet",15,Color.WHITE);empty.setTypeface(Typeface.DEFAULT,Typeface.BOLD);peerBox.addView(empty);if(sending){ProgressBar scan=new ProgressBar(this);scan.setIndeterminate(true);peerBox.addView(scan,new LinearLayout.LayoutParams(-1,dp(4)));peerBox.addView(label("Keep the receiver on AEM → Transfer → Receive. AEM will update this list when a compatible phone is found.",13,Color.LTGRAY));}else peerBox.addView(label("Keep the other phone on AEM → Transfer → Receive, then scan again.",13,Color.LTGRAY));if(sending){Button retry=actionButton("SCAN AGAIN");retry.setBackground(bg(Color.rgb(50,92,210),12));retry.setOnClickListener(v->discover());peerBox.addView(retry,new LinearLayout.LayoutParams(-1,dp(46)));}return;}TextView heading=label(peers.size()+" nearby device"+(peers.size()==1?"":"s"),13,Color.rgb(170,175,185));heading.setPadding(0,dp(2),0,dp(6));peerBox.addView(heading);for(WifiP2pDevice d:peers){
-        LinearLayout card=new LinearLayout(this);
-        card.setGravity(Gravity.CENTER_VERTICAL);
-        card.setPadding(dp(14),dp(8),dp(8),dp(8));
-        card.setBackground(bg(Color.rgb(25,28,35),14));
-        String displayName=peerNames.get(d.deviceAddress);
-        if(displayName==null||displayName.trim().isEmpty())displayName=(d.deviceName==null||d.deviceName.isEmpty()?"Nearby phone":d.deviceName);
-        TextView device=label(displayName,15,Color.WHITE);
-        device.setTypeface(Typeface.DEFAULT,Typeface.BOLD);
-        card.addView(device,new LinearLayout.LayoutParams(0,dp(50),1));
-        Button b=actionButton("Send");
-        b.setBackground(bg(Color.rgb(50,92,210),12));
-        card.addView(b,new LinearLayout.LayoutParams(dp(100),dp(50)));
-        LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(-1,dp(66));p.setMargins(0,dp(4),0,dp(4));peerBox.addView(card,p);
-        b.setOnClickListener(v->connect(d));
-    }}
+    private void renderPeers(){
+        peerBox.removeAllViews();
+        radar=new RadarView(this);
+        peerBox.addView(radar,new LinearLayout.LayoutParams(-1,dp(168)));
+        if(peers.isEmpty()){
+            TextView empty=label(sending?"Scanning for nearby receivers…":"No receiver found yet",15,Color.WHITE);
+            empty.setTypeface(Typeface.DEFAULT,Typeface.BOLD);
+            peerBox.addView(empty);
+            if(sending){
+                ProgressBar scan=new ProgressBar(this);
+                scan.setIndeterminate(true);
+                peerBox.addView(scan,new LinearLayout.LayoutParams(-1,dp(4)));
+                peerBox.addView(label("Keep the receiver on AEM → Transfer → Receive. AEM will update this list when a compatible phone is found.",13,Color.LTGRAY));
+                Button retry=actionButton("SCAN AGAIN");
+                retry.setBackground(bg(Color.rgb(50,92,210),12));
+                retry.setOnClickListener(v->discover());
+                peerBox.addView(retry,new LinearLayout.LayoutParams(-1,dp(46)));
+            }else{
+                peerBox.addView(label("Keep the other phone on AEM → Transfer → Receive, then scan again.",13,Color.LTGRAY));
+            }
+            return;
+        }
+        TextView heading=label(peers.size()+" nearby device"+(peers.size()==1?"":"s"),13,Color.rgb(170,175,185));
+        heading.setPadding(0,dp(2),0,dp(6));
+        peerBox.addView(heading);
+        for(WifiP2pDevice d:peers){
+            LinearLayout card=new LinearLayout(this);
+            card.setGravity(Gravity.CENTER_VERTICAL);
+            card.setPadding(dp(14),dp(8),dp(8),dp(8));
+            card.setBackground(bg(Color.rgb(25,28,35),14));
+            String displayName=peerNames.get(d.deviceAddress);
+            if(displayName==null||displayName.trim().isEmpty())
+                displayName=(d.deviceName==null||d.deviceName.isEmpty()?"Nearby phone":d.deviceName);
+            TextView device=label(displayName,15,Color.WHITE);
+            device.setTypeface(Typeface.DEFAULT,Typeface.BOLD);
+            card.addView(device,new LinearLayout.LayoutParams(0,dp(50),1));
+            Button b=actionButton("Send");
+            b.setBackground(bg(Color.rgb(50,92,210),12));
+            card.addView(b,new LinearLayout.LayoutParams(dp(100),dp(50)));
+            LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(-1,dp(66));
+            p.setMargins(0,dp(4),0,dp(4));
+            peerBox.addView(card,p);
+            b.setOnClickListener(v->connect(d));
+        }
+    }
     private void connect(WifiP2pDevice d){if(selected.isEmpty()){status.setText("Select at least one item first.");return;}sending=true;connectedHost=null;beginTransferSession();status.setText("Connecting to "+d.deviceName+"…");WifiP2pConfig c=new WifiP2pConfig();c.deviceAddress=d.deviceAddress;c.wps.setup=WpsInfo.PBC;
         manager.connect(channel,c,new WifiP2pManager.ActionListener(){public void onSuccess(){status.setText("Connection requested...");}public void onFailure(int r){sending=false;finishTransferSession();status.setText("Connection failed: "+r);}});
     }
