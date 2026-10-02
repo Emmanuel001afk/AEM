@@ -7,6 +7,7 @@ import android.content.*;
 import android.content.pm.*;
 import android.database.Cursor;
 import android.graphics.Color;
+import android.graphics.Typeface;
 import android.net.Uri;
 import android.net.wifi.p2p.*;
 import android.net.wifi.WpsInfo;
@@ -32,7 +33,7 @@ public class AemTransferActivity extends Activity {
     private WifiP2pManager manager; private WifiP2pManager.Channel channel; private BroadcastReceiver receiver;
     private final ExecutorService io=Executors.newCachedThreadPool();
     private final ArrayList<Item> selected=new ArrayList<>(); private final ArrayList<WifiP2pDevice> peers=new ArrayList<>();
-    private LinearLayout root,peerBox,contentGrid; private TextView status,selectedText,categoryTitle; private ProgressBar progress; private ServerSocket server; private boolean sending=false; private String activeCategory="Apps"; private final HashMap<String,ArrayList<Item>> exportedApps=new HashMap<>();
+    private LinearLayout root,peerBox,contentGrid; private TextView status,selectedText,categoryTitle,modeHint; private ProgressBar progress; private ServerSocket server; private boolean sending=false; private String activeCategory="Apps"; private final HashMap<String,ArrayList<Item>> exportedApps=new HashMap<>(); private final ArrayList<TextView> categoryButtons=new ArrayList<>();
 
     private static final class Item {
         final Uri uri; final String name; final long size;
@@ -69,7 +70,7 @@ public class AemTransferActivity extends Activity {
         title.setText("Transfer");
         title.setTextSize(26);
         title.setTextColor(Color.WHITE);
-        title.setTypeface(null,1);
+        title.setTypeface(Typeface.DEFAULT,Typeface.BOLD);
         top.addView(title,new LinearLayout.LayoutParams(0,dp(44),1));
         TextView close=new TextView(this);
         close.setText("×");
@@ -98,6 +99,10 @@ public class AemTransferActivity extends Activity {
         LinearLayout.LayoutParams rp=new LinearLayout.LayoutParams(0,dp(58),1);rp.setMargins(dp(6),0,0,0);modes.addView(receive,rp);
         root.addView(modes);
 
+        modeHint=label("Choose what to send, then select a nearby phone.",13,Color.rgb(170,175,185));
+        modeHint.setPadding(2,2,2,8);
+        root.addView(modeHint,new LinearLayout.LayoutParams(-1,dp(30)));
+
         categoryTitle=new TextView(this);
         categoryTitle.setText("Apps");
         categoryTitle.setTextSize(19);
@@ -113,6 +118,7 @@ public class AemTransferActivity extends Activity {
         String[] categories={"Apps","Photos","Videos","Music","Files"};
         for(String c:categories){
             TextView b=new TextView(this);
+            categoryButtons.add(b);
             b.setText(c);b.setTextSize(14);b.setGravity(Gravity.CENTER);b.setTextColor(Color.LTGRAY);
             b.setPadding(dp(18),0,dp(18),0);
             b.setBackground(bg(Color.rgb(27,29,35),22));
@@ -172,6 +178,7 @@ public class AemTransferActivity extends Activity {
         send.setOnClickListener(v->{if(selected.isEmpty()){status.setText("Select something to send first.");return;}discover();});
         refreshSelectedText();
         status.setText("Ready");
+        updateCategoryButtons();
         renderCategory();
     }
     private boolean hasPermission(){
@@ -195,6 +202,7 @@ public class AemTransferActivity extends Activity {
         if(contentGrid==null)return;
         contentGrid.removeAllViews();
         categoryTitle.setText(activeCategory);
+        updateCategoryButtons();
         if("Apps".equals(activeCategory)){renderApps();return;}
         if("Files".equals(activeCategory)){renderFiles();return;}
         renderMedia(activeCategory);
@@ -204,8 +212,24 @@ public class AemTransferActivity extends Activity {
         TextView v=new TextView(this);v.setText(text);v.setTextSize(size);v.setTextColor(color);return v;
     }
 
+    private void updateCategoryButtons(){
+        for(TextView b:categoryButtons){
+            boolean active=b.getText().toString().equals(activeCategory);
+            b.setTextColor(active?Color.WHITE:Color.LTGRAY);
+            b.setTypeface(Typeface.DEFAULT,active?Typeface.BOLD:Typeface.NORMAL);
+            b.setBackground(bg(active?Color.rgb(50,92,210):Color.rgb(27,29,35),22));
+        }
+    }
+
+    private TextView section(String text){
+        TextView v=label(text,14,Color.rgb(170,175,185));
+        v.setTypeface(Typeface.DEFAULT,Typeface.BOLD);
+        v.setPadding(0,dp(10),0,dp(8));
+        return v;
+    }
+
     private void renderApps(){
-        TextView hint=label("Installed apps",14,Color.LTGRAY);
+        TextView hint=section("INSTALLED APPLICATIONS");
         hint.setPadding(0,0,0,8);contentGrid.addView(hint);
         GridLayout grid=new GridLayout(this);grid.setColumnCount(2);
         PackageManager pm=getPackageManager();
@@ -214,12 +238,13 @@ public class AemTransferActivity extends Activity {
         Collections.sort(all,(a,b)->String.valueOf(pm.getApplicationLabel(a)).compareToIgnoreCase(String.valueOf(pm.getApplicationLabel(b))));
         for(ApplicationInfo app:all){
             LinearLayout card=new LinearLayout(this);card.setOrientation(LinearLayout.VERTICAL);card.setPadding(dp(10),dp(10),dp(10),dp(10));
-            card.setBackgroundColor(Color.rgb(25,27,32));
+            card.setBackground(bg(Color.rgb(25,27,32),16));
             CheckBox box=new CheckBox(this);box.setText("SELECT");box.setTextColor(Color.LTGRAY);box.setTextSize(11);
             ImageView icon=new ImageView(this);Drawable d=null;try{d=pm.getApplicationIcon(app);}catch(Exception ignored){}
             if(d!=null)icon.setImageDrawable(d);
             card.addView(icon,new LinearLayout.LayoutParams(-1,dp(78)));
-            TextView name=label(String.valueOf(pm.getApplicationLabel(app)),15,Color.WHITE);name.setGravity(Gravity.CENTER);
+            TextView name=label(String.valueOf(pm.getApplicationLabel(app)),15,Color.WHITE);
+            name.setTypeface(Typeface.DEFAULT,Typeface.BOLD);name.setGravity(Gravity.CENTER);
             card.addView(name,new LinearLayout.LayoutParams(-1,-2));
             TextView pkg=label(app.packageName,10,Color.GRAY);pkg.setGravity(Gravity.CENTER);card.addView(pkg);
             TextView badge=label(isSystemApp(app)?"SYSTEM APP":"INSTALLED APP",10,isSystemApp(app)?Color.rgb(255,190,80):Color.rgb(110,210,150));
@@ -274,9 +299,9 @@ public class AemTransferActivity extends Activity {
 
     private void showMediaItems(String category,ArrayList<Item> items){
         contentGrid.removeAllViews();
-        contentGrid.addView(label(items.size()+" "+category.toLowerCase()+" available",14,Color.LTGRAY));
+        contentGrid.addView(section(items.size()+" "+category.toUpperCase()+" AVAILABLE"));
         for(Item x:items){
-            LinearLayout row=new LinearLayout(this);row.setGravity(Gravity.CENTER_VERTICAL);row.setPadding(dp(10),dp(8),dp(10),dp(8));row.setBackgroundColor(Color.rgb(24,26,31));
+            LinearLayout row=new LinearLayout(this);row.setGravity(Gravity.CENTER_VERTICAL);row.setPadding(dp(10),dp(8),dp(10),dp(8));row.setBackground(bg(Color.rgb(24,26,31),14));
             ImageView thumb=new ImageView(this); thumb.setScaleType(ImageView.ScaleType.CENTER_CROP); thumb.setImageResource(android.R.drawable.ic_menu_gallery); row.addView(thumb,new LinearLayout.LayoutParams(dp(70),dp(70))); if(!category.equals("Music"))loadThumbnail(thumb,x.uri);
             LinearLayout textBox=new LinearLayout(this);textBox.setOrientation(LinearLayout.VERTICAL);
             textBox.addView(label(x.name,14,Color.WHITE));textBox.addView(label(format(x.size),11,Color.GRAY));
@@ -303,8 +328,8 @@ public class AemTransferActivity extends Activity {
     }
 
     private void renderFiles(){
-        contentGrid.addView(label("Files",17,Color.WHITE));
-        contentGrid.addView(label("Pick any document, ZIP, APK or folder. Files are transferred as files; AEM does not open or play them.",13,Color.LTGRAY));
+        contentGrid.addView(section("FILES & DOCUMENTS"));
+        contentGrid.addView(label("Documents, ZIPs, APKs and folders are transferred directly. AEM does not open or play them.",13,Color.LTGRAY));
         Button b=new Button(this);b.setText("BROWSE FILES");b.setOnClickListener(v->pickFiles());contentGrid.addView(b);
         Button f=new Button(this);f.setText("BROWSE FOLDER");f.setOnClickListener(v->pickFolder());contentGrid.addView(f);
         contentGrid.addView(label("Selected files stay in the transfer list below.",12,Color.GRAY));
@@ -366,10 +391,13 @@ public class AemTransferActivity extends Activity {
     private boolean isSystemApp(ApplicationInfo a){return (a.flags&(ApplicationInfo.FLAG_SYSTEM|ApplicationInfo.FLAG_UPDATED_SYSTEM_APP))!=0;}
     private int exportInstalledApp(ApplicationInfo app){ArrayList<Item> made=new ArrayList<>();return exportInstalledApp(app,made);}
 
-    private void startReceive(){if(!hasPermission()){requestPermissions(requiredPermissions(),PERM);return;}if(manager==null||channel==null){status.setText("Wi-Fi Direct is unavailable.");return;}
+    private void startReceive(){if(!hasPermission()){requestPermissions(requiredPermissions(),PERM);return;}
+        sending=false;
+        modeHint.setText("Receive mode: keep this screen open while the sender connects.");if(manager==null||channel==null){status.setText("Wi-Fi Direct is unavailable.");return;}
         status.setText("Creating private transfer connection...");manager.createGroup(channel,new WifiP2pManager.ActionListener(){public void onSuccess(){status.setText("Waiting for another AEM phone...");startServer();}public void onFailure(int r){status.setText("Could not create transfer connection: "+r);}});
     }
-    private void discover(){if(!hasPermission()){requestPermissions(requiredPermissions(),PERM);return;}if(manager==null||channel==null)return;peerBox.removeAllViews();status.setText("Looking for nearby phones...");
+    private void discover(){if(!hasPermission()){requestPermissions(requiredPermissions(),PERM);return;}
+        modeHint.setText("Send mode: select a nearby phone below to begin.");if(manager==null||channel==null)return;peerBox.removeAllViews();status.setText("Looking for nearby phones...");
         manager.discoverPeers(channel,new WifiP2pManager.ActionListener(){public void onSuccess(){status.setText("Nearby phones will appear below.");}public void onFailure(int r){status.setText("Discovery failed: "+r);}});
     }
     private void requestPeers(){if(!hasPermission()||manager==null||channel==null)return;manager.requestPeers(channel,list->{peers.clear();peers.addAll(list.getDeviceList());renderPeers();});}
@@ -379,7 +407,7 @@ public class AemTransferActivity extends Activity {
         LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(-1,dp(56));p.setMargins(0,dp(4),0,dp(4));peerBox.addView(b,p);
         b.setOnClickListener(v->connect(d));
     }}
-    private void connect(WifiP2pDevice d){if(selected.isEmpty()){pickFiles();return;}sending=true;status.setText("Connecting to "+d.deviceName+"...");WifiP2pConfig c=new WifiP2pConfig();c.deviceAddress=d.deviceAddress;c.wps.setup=WpsInfo.PBC;
+    private void connect(WifiP2pDevice d){if(selected.isEmpty()){status.setText("Select at least one item first.");return;}sending=true;status.setText("Connecting to "+d.deviceName+"...");WifiP2pConfig c=new WifiP2pConfig();c.deviceAddress=d.deviceAddress;c.wps.setup=WpsInfo.PBC;
         manager.connect(channel,c,new WifiP2pManager.ActionListener(){public void onSuccess(){status.setText("Connection requested...");}public void onFailure(int r){sending=false;status.setText("Connection failed: "+r);}});
     }
     private void requestConnection(){if(!hasPermission()||manager==null||channel==null)return;manager.requestConnectionInfo(channel,info->{if(info.groupFormed&&sending&&!info.isGroupOwner&&info.groupOwnerAddress!=null){
