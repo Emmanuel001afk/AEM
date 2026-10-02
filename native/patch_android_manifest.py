@@ -6,6 +6,21 @@ p = Path(sys.argv[1])
 s = p.read_text()
 manifest_open = r"(<manifest\b[^>]*>)"
 
+if "NEARBY_WIFI_DEVICES" not in s:
+    s = re.sub(
+        manifest_open,
+        r'\1\n    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />\n    <uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />\n    <uses-permission android:name="android.permission.NEARBY_WIFI_DEVICES" android:usesPermissionFlags="neverForLocation" />\n    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" android:maxSdkVersion="32" />',
+        s,
+        count=1,
+    )
+
+if "AemTransferActivity" not in s:
+    s = s.replace(
+        "</application>",
+        '    <activity android:name=".AemTransferActivity" android:exported="false" />\n</application>',
+        1,
+    )
+
 if "QUERY_ALL_PACKAGES" not in s:
     s = re.sub(
         manifest_open,
