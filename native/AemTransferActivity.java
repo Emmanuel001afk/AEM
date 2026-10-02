@@ -34,6 +34,7 @@ import java.net.*;
 import java.security.MessageDigest;
 import java.util.*;
 import java.util.concurrent.*;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 public class AemTransferActivity extends Activity {
     private static final int PORT=38177, PERM=7001, PICK=7002, FOLDER=7003;
@@ -41,9 +42,11 @@ public class AemTransferActivity extends Activity {
     private WifiP2pManager manager; private WifiP2pManager.Channel channel; private BroadcastReceiver receiver;
     private WifiP2pDnsSdServiceInfo localService; private WifiP2pDnsSdServiceRequest serviceRequest;
     private final HashMap<String,String> peerNames=new HashMap<>();
+    private final HashMap<String,String> peerTokens=new HashMap<>();
     private final ExecutorService io=Executors.newCachedThreadPool();
+    private final AtomicBoolean transferRunning=new AtomicBoolean(false);
     private final ArrayList<Item> selected=new ArrayList<>(); private final ArrayList<WifiP2pDevice> peers=new ArrayList<>();
-    private LinearLayout root,peerBox,contentGrid; private TextView status,selectedText,categoryTitle,modeHint,deviceNameLabel; private ProgressBar progress; private RadarView radar; private ServerSocket server; private Button disconnectButton; private boolean sending=false; private boolean transferActive=false; private boolean connectionActive=false; private String connectedHost=null; private boolean waitingForWifi=false; private boolean waitingForLocation=false; private String pendingAction=null; private String transferId=null; private String activeCategory="Apps"; private final HashMap<String,ArrayList<Item>> exportedApps=new HashMap<>(); private final ArrayList<TextView> categoryButtons=new ArrayList<>();
+    private LinearLayout root,peerBox,contentGrid; private TextView status,selectedText,categoryTitle,modeHint,deviceNameLabel; private ProgressBar progress; private RadarView radar; private ServerSocket server; private Button disconnectButton; private volatile boolean sending=false; private volatile boolean transferActive=false; private volatile boolean connectionActive=false; private volatile String connectedHost=null; private boolean waitingForWifi=false; private boolean waitingForLocation=false; private String pendingAction=null; private volatile String transferId=null; private boolean transferFlowOpen=false; private boolean receiverMode=false; private boolean wifiWasOff=false; private boolean locationWasOff=false; private String receiverToken=null; private String activeCategory="Apps"; private final HashMap<String,ArrayList<Item>> exportedApps=new HashMap<>(); private final ArrayList<TextView> categoryButtons=new ArrayList<>();
 
     private static final class Item {
         final Uri uri; final String name; final long size;
@@ -311,7 +314,8 @@ public class AemTransferActivity extends Activity {
     private void addReceiverService(){
         try{
             HashMap<String,String> record=new HashMap<>();
-            record.put("name",transferName()); record.put("role","receiver");
+            if(receiverToken==null)receiverToken=UUID.randomUUID().toString().replace("-","");
+            record.put("name",transferName()); record.put("role","receiver"); record.put("token",receiverToken);
             record.put("port",String.valueOf(PORT)); record.put("protocol",String.valueOf(PROTOCOL));
             String instance=("AEM-"+transferName()).replaceAll("[^A-Za-z0-9_-]","-");
             if(instance.length()>50)instance=instance.substring(0,50);
@@ -329,9 +333,10 @@ public class AemTransferActivity extends Activity {
             manager.setDnsSdResponseListeners(channel,
                 (instanceName,registrationType,device)->{},
                 (fullDomain,record,device)->{
-                    Object role=record.get("role"); Object name=record.get("name");
+                    Object role=record.get("role"); Object name=record.get("name"); Object token=record.get("token");
                     if("receiver".equals(String.valueOf(role))&&name!=null){
                         peerNames.put(device.deviceAddress,String.valueOf(name));
+                        if(token!=null)peerTokens.put(device.deviceAddress,String.valueOf(token));
                         runOnUiThread(()->renderPeers());
                     }
                 });
@@ -637,11 +642,13 @@ public class AemTransferActivity extends Activity {
     private void beginTransferSession(){
         transferId=UUID.randomUUID().toString();
         transferActive=true;
+        transferRunning.set(true);
         startTransferService();
         if(disconnectButton!=null)disconnectButton.setEnabled(true);
     }
     private void finishTransferSession(){
         transferActive=false;
+        transferRunning.set(false);
         stopTransferService();
         if(connectionActive) runOnUiThread(()->{
             disconnectButton.setEnabled(true);
@@ -673,8 +680,9 @@ public class AemTransferActivity extends Activity {
     }
 
     private void startReceive(){
+        receiverMode=true; transferFlowOpen=true;
         if(!hasPermission()){pendingAction="receive";requestPermissions(requiredPermissions(),PERM);return;}
-        if(!wifiEnabled()){waitingForWifi=true;status.setText("Wi-Fi is off • turn it on, then return to AEM. Receiver setup will resume automatically.");showSystemRequirement("Wi-Fi is required","AEM Transfer uses Wi-Fi Direct for the local phone-to-phone connection.",true);return;}
+        if(!wifiEnabled()){wifiWasOff=true;waitingForWifi=true;status.setText("Wi-Fi is off • turn it on, then return to AEM. Receiver setup will resume automatically.");showSystemRequirement("Wi-Fi is required","AEM Transfer uses Wi-Fi Direct for the local phone-to-phone connection.",true);return;}
         sending=false;
         modeHint.setText("Receive mode: keep this screen open. The sender will appear when nearby.");
         if(manager==null||channel==null){status.setText("Wi-Fi Direct is unavailable on this phone.");return;}
@@ -691,12 +699,15 @@ public class AemTransferActivity extends Activity {
         }catch(Exception e){createReceiverGroup();}
     }
     private void createReceiverGroup(){
+        transferFlowOpen=true; receiverMode=true;
         manager.createGroup(channel,new WifiP2pManager.ActionListener(){
             public void onSuccess(){
                 status.setText("Receiver ready • waiting for sender…");
+                receiverToken=UUID.randomUUID().toString().replace("-","");
                 registerReceiverService();
                 startServer();
                 showConnectionGuide(false);
+                refreshReceiverConnectionView();
             }
             public void onFailure(int r){
                 status.setText("Receiver setup failed ("+r+"). Tap Receive again to retry.");
@@ -705,9 +716,10 @@ public class AemTransferActivity extends Activity {
         });
     }
     private void discover(){
+        receiverMode=false; transferFlowOpen=true;
         if(!hasPermission()){pendingAction="send";requestPermissions(requiredPermissions(),PERM);return;}
-        if(!wifiEnabled()){waitingForWifi=true;status.setText("Wi-Fi is off • turn it on, then return to AEM. Scanning will resume automatically.");showSystemRequirement("Turn on Wi-Fi","AEM uses Wi-Fi Direct locally; mobile data and Internet are not used for the transfer.",true);return;}
-        if(!locationEnabled()){waitingForLocation=true;status.setText("Location services are off • turn them on, then return to AEM. Scanning will resume automatically.");showSystemRequirement("Turn on Location services","Android requires Location Mode enabled for Wi-Fi Direct peer discovery on supported versions. AEM does not use your location for the transfer.",false);return;}
+        if(!wifiEnabled()){wifiWasOff=true;waitingForWifi=true;status.setText("Wi-Fi is off • turn it on, then return to AEM. Scanning will resume automatically.");showSystemRequirement("Turn on Wi-Fi","AEM uses Wi-Fi Direct locally; mobile data and Internet are not used for the transfer.",true);return;}
+        if(!locationEnabled()){waitingForLocation=true;locationWasOff=true;status.setText("Location services are off • turn them on, then return to AEM. Scanning will resume automatically.");showSystemRequirement("Turn on Location services","Android requires Location Mode enabled for Wi-Fi Direct peer discovery on supported versions. AEM does not use your location for the transfer.",false);return;}
         modeHint.setText("Send mode: AEM is scanning for nearby receivers.");
         if(manager==null||channel==null){status.setText("Wi-Fi Direct is unavailable on this phone.");return;}
         showRadar();
@@ -728,6 +740,23 @@ public class AemTransferActivity extends Activity {
                 showConnectionGuide(true);
             }
         });
+    }
+    private void refreshReceiverConnectionView(){
+        if(manager==null||channel==null||!receiverMode)return;
+        try{manager.requestGroupInfo(channel,group->{
+            if(group==null)return;
+            ArrayList<WifiP2pDevice> connected=new ArrayList<>(group.getClientList());
+            if(!connected.isEmpty()){
+                runOnUiThread(()->{
+                    peerBox.removeAllViews();
+                    radar=new RadarView(this);
+                    peerBox.addView(radar,new LinearLayout.LayoutParams(-1,dp(168)));
+                    TextView h=label("Connected device",15,Color.WHITE);h.setTypeface(Typeface.DEFAULT,Typeface.BOLD);peerBox.addView(h);
+                    for(WifiP2pDevice d:connected)peerBox.addView(label((d.deviceName==null||d.deviceName.isEmpty()?"Nearby phone":d.deviceName)+" • connected",14,Color.LTGRAY));
+                    TextView ready=label("Waiting for transfer…",13,Color.rgb(110,210,150));ready.setPadding(0,dp(8),0,dp(4));peerBox.addView(ready);
+                });
+            }
+        });}catch(Exception ignored){}
     }
     private void showConnectionGuide(boolean sender){
         if(radar==null){radar=new RadarView(this);peerBox.addView(radar,new LinearLayout.LayoutParams(-1,dp(168)));}
@@ -798,12 +827,14 @@ public class AemTransferActivity extends Activity {
             b.setOnClickListener(v->connect(d));
         }
     }
-    private void connect(WifiP2pDevice d){if(selected.isEmpty()){status.setText("Select at least one item first.");return;}sending=true;connectedHost=null;beginTransferSession();status.setText("Connecting to "+d.deviceName+"…");WifiP2pConfig c=new WifiP2pConfig();c.deviceAddress=d.deviceAddress;c.wps.setup=WpsInfo.PBC;
+    private void connect(WifiP2pDevice d){if(selected.isEmpty()){status.setText("Select at least one item first.");return;}String token=peerTokens.get(d.deviceAddress);if(token==null||token.trim().isEmpty()){status.setText("Receiver handshake not available yet. Scan again.");return;}sending=true;connectedHost=null;beginTransferSession();status.setText("Connecting to "+d.deviceName+"…");WifiP2pConfig c=new WifiP2pConfig();c.deviceAddress=d.deviceAddress;c.wps.setup=WpsInfo.PBC;
         manager.connect(channel,c,new WifiP2pManager.ActionListener(){public void onSuccess(){status.setText("Connection requested...");}public void onFailure(int r){sending=false;finishTransferSession();status.setText("Connection failed: "+r);}});
     }
     private void requestConnection(){if(!hasPermission()||manager==null||channel==null)return;manager.requestConnectionInfo(channel,info->{
         if(info.groupFormed){
             connectionActive=true;
+            transferFlowOpen=true;
+            runOnUiThread(()->{if(status!=null)status.setText("Connected • ready to transfer.");});
             disconnectButton.setEnabled(true);
             if(!info.isGroupOwner&&info.groupOwnerAddress!=null&&sending){
                 sending=false;
@@ -834,7 +865,7 @@ public class AemTransferActivity extends Activity {
             try(Socket s=new Socket()){
                 s.setTcpNoDelay(true);s.setSendBufferSize(1024*1024);s.connect(new InetSocketAddress(host,PORT),15000);s.setSoTimeout(60000);
                 DataOutputStream out=new DataOutputStream(new BufferedOutputStream(s.getOutputStream(),256*1024));
-                out.writeInt(PROTOCOL);out.writeUTF(transferId);out.writeInt(selected.size());
+                out.writeInt(PROTOCOL);out.writeUTF(transferId);out.writeUTF(peerTokens.getOrDefault(host,""));out.writeInt(selected.size());
                 long total=0;for(Item x:selected)total+=x.size;out.writeLong(total);
                 for(Item x:selected){byte[] nb=x.name.getBytes("UTF-8");out.writeInt(nb.length);out.write(nb);out.writeLong(x.size);}
                 out.flush();
@@ -885,7 +916,9 @@ public class AemTransferActivity extends Activity {
             sock.setTcpNoDelay(true);sock.setReceiveBufferSize(1024*1024);sock.setSoTimeout(60000);
             DataInputStream in=new DataInputStream(new BufferedInputStream(sock.getInputStream(),256*1024));
             int protocol=in.readInt();if(protocol!=PROTOCOL)throw new IOException("Unsupported transfer protocol");
-            String id=in.readUTF();if(!id.matches("[A-Za-z0-9-]{8,64}"))throw new IOException("Invalid transfer id");
+            String id=in.readUTF();
+            String handshake=in.readUTF();
+            if(receiverToken==null||!receiverToken.equals(handshake))throw new IOException("Receiver handshake rejected");if(!id.matches("[A-Za-z0-9-]{8,64}"))throw new IOException("Invalid transfer id");
             int count=in.readInt();if(count<0||count>1000)throw new IOException("Invalid item count");
             long declaredTotal=in.readLong();if(declaredTotal<0)throw new IOException("Invalid total size");
             ArrayList<Header> hs=new ArrayList<>();long total=0;
@@ -944,9 +977,17 @@ public class AemTransferActivity extends Activity {
     private void disconnectTransfer(){
         sending=false;
         transferActive=false;
+        transferRunning.set(false);
         connectionActive=false;
         connectedHost=null;
         transferId=null;
+        waitingForWifi=false;
+        waitingForLocation=false;
+        receiverToken=null;
+        peerTokens.clear();
+        peerNames.clear();
+        try{if(manager!=null&&channel!=null)manager.stopPeerDiscovery(channel,new WifiP2pManager.ActionListener(){public void onSuccess(){}public void onFailure(int r){}});}catch(Exception ignored){}
+        try{if(manager!=null&&channel!=null&&serviceRequest!=null)manager.removeServiceRequest(channel,serviceRequest,new WifiP2pManager.ActionListener(){public void onSuccess(){}public void onFailure(int r){}});}catch(Exception ignored){}
         stopTransferService();
         try{if(server!=null)server.close();}catch(Exception ignored){}
         try{
@@ -958,10 +999,44 @@ public class AemTransferActivity extends Activity {
             }else status.setText("Disconnected.");
         }catch(Exception e){status.setText("Disconnected.");}
         if(disconnectButton!=null)disconnectButton.setEnabled(false);
+        transferFlowOpen=false; receiverMode=false;
+        peerBox.removeAllViews();
+        radar=null;
+        status.setText("Disconnected. Select items to send again.");
+        modeHint.setText("Choose what to send, then select a nearby phone.");
+        renderCategory();
+    }
+
+    private void returnToItems(){
+        transferFlowOpen=false;
+        peerBox.removeAllViews();
+        radar=null;
+        if(connectionActive){
+            modeHint.setText("Connected transfer session: choose another item and press Send.");
+            status.setText("Connection active • select another item, then press Send.");
+            disconnectButton.setEnabled(true);
+        }else{
+            modeHint.setText("Choose what to send, then select a nearby phone.");
+            status.setText("Ready");
+            disconnectButton.setEnabled(false);
+        }
+        renderCategory();
+    }
+    @Override public void onBackPressed(){
+        if(transferFlowOpen){returnToItems();return;}
+        super.onBackPressed();
     }
 
     private int percent(long d,long t){return t>0?(int)Math.max(0,Math.min(100,d*100/t)):0;}
     private String safe(Exception e){String m=e.getMessage();return m==null?"connection interrupted":m;}
     private void update(String text,int pct){runOnUiThread(()->{status.setText(text);progress.setProgress(pct);});}
-    @Override protected void onDestroy(){try{unregisterReceiver(receiver);}catch(Exception ignored){}if(!transferActive){try{if(server!=null)server.close();}catch(Exception ignored){}try{if(manager!=null&&channel!=null)manager.removeGroup(channel,new WifiP2pManager.ActionListener(){public void onSuccess(){}public void onFailure(int r){}});}catch(Exception ignored){}io.shutdownNow();}super.onDestroy();}
+    @Override protected void onDestroy(){
+        try{unregisterReceiver(receiver);}catch(Exception ignored){}
+        transferActive=false; transferRunning.set(false);
+        try{if(server!=null)server.close();}catch(Exception ignored){}
+        try{if(manager!=null&&channel!=null)manager.stopPeerDiscovery(channel,new WifiP2pManager.ActionListener(){public void onSuccess(){}public void onFailure(int r){}});}catch(Exception ignored){}
+        try{if(manager!=null&&channel!=null)manager.removeGroup(channel,new WifiP2pManager.ActionListener(){public void onSuccess(){}public void onFailure(int r){}});}catch(Exception ignored){}
+        io.shutdownNow();
+        super.onDestroy();
+    }
 }
