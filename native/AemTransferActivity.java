@@ -32,11 +32,11 @@ import java.util.concurrent.*;
 
 public class AemTransferActivity extends Activity {
     private static final int PORT=38177, PERM=7001, PICK=7002, FOLDER=7003;
-    private static final int PROTOCOL=3;
+    private static final int PROTOCOL=4;
     private WifiP2pManager manager; private WifiP2pManager.Channel channel; private BroadcastReceiver receiver;
     private final ExecutorService io=Executors.newCachedThreadPool();
     private final ArrayList<Item> selected=new ArrayList<>(); private final ArrayList<WifiP2pDevice> peers=new ArrayList<>();
-    private LinearLayout root,peerBox,contentGrid; private TextView status,selectedText,categoryTitle,modeHint; private ProgressBar progress; private ServerSocket server; private Button disconnectButton; private boolean sending=false; private boolean transferActive=false; private String activeCategory="Apps"; private final HashMap<String,ArrayList<Item>> exportedApps=new HashMap<>(); private final ArrayList<TextView> categoryButtons=new ArrayList<>();
+    private LinearLayout root,peerBox,contentGrid; private TextView status,selectedText,categoryTitle,modeHint; private ProgressBar progress; private ServerSocket server; private Button disconnectButton; private boolean sending=false; private boolean transferActive=false; private String transferId=null; private String activeCategory="Apps"; private final HashMap<String,ArrayList<Item>> exportedApps=new HashMap<>(); private final ArrayList<TextView> categoryButtons=new ArrayList<>();
 
     private static final class Item {
         final Uri uri; final String name; final long size;
@@ -444,7 +444,7 @@ public class AemTransferActivity extends Activity {
         else if(r==FOLDER){Uri u=data.getData();if(u!=null){try{getContentResolver().takePersistableUriPermission(u,Intent.FLAG_GRANT_READ_URI_PERMISSION);}catch(Exception ignored){};addTree(u);}}
         refreshSelectedText();
     }
-    private void addUri(Uri u,String forcedName){String n=forcedName==null?displayName(u):forcedName;long s=size(u);if(s<0)s=0;selected.add(new Item(u,n,s));}
+    private void addUri(Uri u,String forcedName){try{getContentResolver().takePersistableUriPermission(u,Intent.FLAG_GRANT_READ_URI_PERMISSION);}catch(Exception ignored){}String n=forcedName==null?displayName(u):forcedName;long s=size(u);if(s<0)s=0;selected.add(new Item(u,n,s));}
     private void addTree(Uri tree){addTree(tree,"");}
     private void addTree(Uri tree,String relative){
         Cursor c=null;try{String doc=DocumentsContract.getTreeDocumentId(tree);Uri children=DocumentsContract.buildChildDocumentsUriUsingTree(tree,doc);
@@ -470,6 +470,27 @@ public class AemTransferActivity extends Activity {
     }
     private boolean isSystemApp(ApplicationInfo a){return (a.flags&(ApplicationInfo.FLAG_SYSTEM|ApplicationInfo.FLAG_UPDATED_SYSTEM_APP))!=0;}
     private int exportInstalledApp(ApplicationInfo app){ArrayList<Item> made=new ArrayList<>();return exportInstalledApp(app,made);}
+
+    private void startTransferService(){
+        try{
+            Intent i=new Intent(this,AemTransferService.class);
+            if(Build.VERSION.SDK_INT>=26)startForegroundService(i);else startService(i);
+        }catch(Exception ignored){}
+    }
+    private void stopTransferService(){
+        try{stopService(new Intent(this,AemTransferService.class));}catch(Exception ignored){}
+    }
+    private void beginTransferSession(){
+        if(transferId==null||transferId.isEmpty())transferId=UUID.randomUUID().toString();
+        transferActive=true;
+        startTransferService();
+        if(disconnectButton!=null)disconnectButton.setEnabled(true);
+    }
+    private void finishTransferSession(){
+        transferActive=false;
+        stopTransferService();
+        if(disconnectButton!=null)runOnUiThread(()->disconnectButton.setEnabled(false));
+    }
 
     private void startReceive(){
         if(!hasPermission()){requestPermissions(requiredPermissions(),PERM);return;}
@@ -524,15 +545,25 @@ public class AemTransferActivity extends Activity {
     }
     private void showConnectionGuide(boolean sender){
         peerBox.removeAllViews();
-        TextView h=label(sender?"1. On the receiving phone, tap Receive.":"1. On the sending phone, tap Send.",15,Color.WHITE);
+        TextView h=label(sender?"Nearby receivers":"Waiting for a sender",15,Color.WHITE);
         h.setTypeface(Typeface.DEFAULT,Typeface.BOLD);peerBox.addView(h);
-        peerBox.addView(label(sender?"2. Keep Wi-Fi on and allow Nearby devices.":"2. Keep this screen open while waiting.",13,Color.LTGRAY));
-        peerBox.addView(label(sender?"3. Keep both phones close. A receiver will appear here automatically.":"3. The sender will connect to this phone automatically.",13,Color.LTGRAY));
+        peerBox.addView(label(sender
+            ?"1. On the other phone, open AEM → Transfer → Receive."
+            :"1. On the sending phone, open AEM → Transfer → Send.",13,Color.LTGRAY));
+        peerBox.addView(label(sender
+            ?"2. Keep Wi-Fi on and allow Nearby devices. AEM will list compatible nearby phones."
+            :"2. Keep this screen open while AEM waits for the sender.",13,Color.LTGRAY));
+        peerBox.addView(label(sender
+            ?"3. Tap Send beside the receiver you want. Connection and transfer start automatically."
+            :"3. When the sender connects, the transfer begins automatically.",13,Color.LTGRAY));
         if(sender){
             Button retry=actionButton("SCAN AGAIN");
             retry.setBackground(bg(Color.rgb(50,92,210),12));
             retry.setOnClickListener(v->discover());
-            peerBox.addView(retry,new LinearLayout.LayoutParams(-1,dp(48)));
+            peerBox.addView(retry,new LinearLayout.LayoutParams(-1,dp(46)));
+        }else{
+            TextView ready=label("Receiver is ready • waiting nearby",12,Color.rgb(110,210,150));
+            ready.setPadding(0,dp(8),0,dp(4));peerBox.addView(ready);
         }
     }
     private void requestPeers(){if(!hasPermission()||manager==null||channel==null)return;manager.requestPeers(channel,list->{peers.clear();peers.addAll(list.getDeviceList());renderPeers();});}
@@ -550,88 +581,89 @@ public class AemTransferActivity extends Activity {
         LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(-1,dp(66));p.setMargins(0,dp(4),0,dp(4));peerBox.addView(card,p);
         b.setOnClickListener(v->connect(d));
     }}
-    private void connect(WifiP2pDevice d){if(selected.isEmpty()){status.setText("Select at least one item first.");return;}sending=true;transferActive=true;if(disconnectButton!=null)disconnectButton.setEnabled(true);status.setText("Connecting to "+d.deviceName+"...");WifiP2pConfig c=new WifiP2pConfig();c.deviceAddress=d.deviceAddress;c.wps.setup=WpsInfo.PBC;
+    private void connect(WifiP2pDevice d){if(selected.isEmpty()){status.setText("Select at least one item first.");return;}sending=true;beginTransferSession();status.setText("Connecting to "+d.deviceName+"…");WifiP2pConfig c=new WifiP2pConfig();c.deviceAddress=d.deviceAddress;c.wps.setup=WpsInfo.PBC;
         manager.connect(channel,c,new WifiP2pManager.ActionListener(){public void onSuccess(){status.setText("Connection requested...");}public void onFailure(int r){sending=false;status.setText("Connection failed: "+r);}});
     }
-    private void requestConnection(){if(!hasPermission()||manager==null||channel==null)return;manager.requestConnectionInfo(channel,info->{if(info.groupFormed&&sending&&!info.isGroupOwner&&info.groupOwnerAddress!=null){
-            sending=false;io.execute(()->sendFiles(info.groupOwnerAddress.getHostAddress()));}});
+    private void requestConnection(){if(!hasPermission()||manager==null||channel==null)return;manager.requestConnectionInfo(channel,info->{if(info.groupFormed&&!info.isGroupOwner&&info.groupOwnerAddress!=null&&sending){
+            sending=false;final String host=info.groupOwnerAddress.getHostAddress();io.execute(()->sendFiles(host));
+        }});}
+    private void startServer(){if(server!=null&&!server.isClosed())return;io.execute(()->{try{server=new ServerSocket(PORT);while(!server.isClosed()){Socket s=server.accept();receiveFiles(s);}}catch(Exception ignored){}});}
+
+    private long skipFully(InputStream in,long offset)throws IOException{
+        long left=offset;
+        while(left>0){long n=in.skip(left);if(n<=0){if(in.read()==-1)throw new EOFException("Cannot seek source");n=1;}left-=n;}
+        return offset-left;
     }
-    private void startServer(){io.execute(()->{try{server=new ServerSocket(PORT);while(!server.isClosed()){Socket s=server.accept();receiveFiles(s);}}catch(Exception ignored){}});}
-    
+    private byte[] fullSha(InputStream in)throws Exception{
+        MessageDigest md=MessageDigest.getInstance("SHA-256");byte[] b=new byte[1024*1024];int n;
+        while((n=in.read(b))!=-1)if(n>0)md.update(b,0,n);
+        return md.digest();
+    }
+    private File partFile(String id,int index){File dir=new File(getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS),"AEM Transfer/.resume");if(!dir.exists())dir.mkdirs();return new File(dir,id+"-"+index+".part");}
+    private File doneFile(String id,int index){File dir=new File(getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS),"AEM Transfer/.resume");if(!dir.exists())dir.mkdirs();return new File(dir,id+"-"+index+".done");}
+
     private void sendFiles(String host){
-        try(Socket s=new Socket()){
-            transferActive=true;
-            if(disconnectButton!=null)runOnUiThread(()->disconnectButton.setEnabled(true));
-            s.setTcpNoDelay(true);
-            s.setSendBufferSize(1024*1024);
-            s.connect(new InetSocketAddress(host,PORT),15000);
-            s.setSoTimeout(60000);
-            DataOutputStream out=new DataOutputStream(new BufferedOutputStream(s.getOutputStream(),256*1024));
-            out.writeInt(PROTOCOL);out.writeInt(selected.size());
-            long total=0,done=0;for(Item x:selected)total+=x.size;out.writeLong(total);
-            byte[] b=new byte[1024*1024];
-            SpeedMeter speed=new SpeedMeter();
-            for(Item x:selected){
-                byte[] nb=x.name.getBytes("UTF-8");out.writeInt(nb.length);out.write(nb);out.writeLong(x.size);
-                MessageDigest md=MessageDigest.getInstance("SHA-256");
-                try(InputStream in=getContentResolver().openInputStream(x.uri)){
-                    if(in==null)throw new IOException("Cannot read "+x.name);
-                    long left=x.size;int n;
-                    while(left>0&&(n=in.read(b,0,(int)Math.min(b.length,left)))>0){
-                        out.write(b,0,n);md.update(b,0,n);left-=n;done+=n;update("Sending "+x.name+" · "+percent(done,total)+"% · "+speed.formatRate(done),percent(done,total));
-                    }
-                    if(left!=0)throw new IOException("Source changed while reading "+x.name);
-                }
-                out.write(md.digest());
-            }
-            out.flush();
-            int result=inResult(s);
-            update(result==1?"Transfer completed and verified":"Transfer rejected",result==1?100:0);
-        }catch(Exception e){update("Transfer failed: "+safe(e),0);}
-        finally{transferActive=false;if(disconnectButton!=null)runOnUiThread(()->disconnectButton.setEnabled(false));}
-    }
-    private int inResult(Socket s)throws IOException{DataInputStream in=new DataInputStream(new BufferedInputStream(s.getInputStream()));return in.readInt();}
-    
-    private void receiveFiles(Socket s){io.execute(()->{
-        transferActive=true;
-        if(disconnectButton!=null)runOnUiThread(()->disconnectButton.setEnabled(true));
+        if(transferId==null)transferId=UUID.randomUUID().toString();
+        int attempt=0;
+        while(transferActive&&attempt++<8){
+            try(Socket s=new Socket()){
+                s.setTcpNoDelay(true);s.setSendBufferSize(1024*1024);s.connect(new InetSocketAddress(host,PORT),15000);s.setSoTimeout(60000);
+                DataOutputStream out=new DataOutputStream(new BufferedOutputStream(s.getOutputStream(),256*1024));
+                out.writeInt(PROTOCOL);out.writeUTF(transferId);out.writeInt(selected.size());
+                long total=0;for(Item x:selected)total+=x.size;out.writeLong(total);
+                for(Item x:selected){byte[] nb=x.name.getBytes("UTF-8");out.writeInt(nb.length);out.write(nb);out.writeLong(x.size);}
+                out.flush();
+                DataInputStream ackIn=new DataInputStream(new BufferedInputStream(s.getInputStream(),64*1024));
+                long[] offsets=new long[selected.size()];for(int i=0;i<offsets.length;i++)offsets[i]=ackIn.readLong();
+                long done=0;for(long o:offsets)done+=Math.min(o,total);
+                SpeedMeter speed    private void receiveFiles(Socket s){io.execute(()->{
+        beginTransferSession();
         try(Socket sock=s){
             sock.setTcpNoDelay(true);sock.setReceiveBufferSize(1024*1024);sock.setSoTimeout(60000);
             DataInputStream in=new DataInputStream(new BufferedInputStream(sock.getInputStream(),256*1024));
             int protocol=in.readInt();if(protocol!=PROTOCOL)throw new IOException("Unsupported transfer protocol");
+            String id=in.readUTF();if(!id.matches("[A-Za-z0-9-]{8,64}"))throw new IOException("Invalid transfer id");
             int count=in.readInt();if(count<0||count>1000)throw new IOException("Invalid item count");
             long declaredTotal=in.readLong();if(declaredTotal<0)throw new IOException("Invalid total size");
             ArrayList<Header> hs=new ArrayList<>();long total=0;
             for(int i=0;i<count;i++){
                 int nl=in.readInt();if(nl<1||nl>16384)throw new IOException("Invalid file name");
-                byte[] nb=new byte[nl];in.readFully(nb);String name=safePath(new String(nb,"UTF-8"));
-                long size=in.readLong();if(size<0)throw new IOException("Invalid file size");
-                hs.add(new Header(name,size,null));total+=size;
-                if(total<0||total>declaredTotal)throw new IOException("Invalid transfer size");
+                byte[] nb=new byte[nl];in.readFully(nb);String name=safePath(new String(nb,"UTF-8"));long size=in.readLong();if(size<0)throw new IOException("Invalid file size");
+                hs.add(new Header(name,size,null));total+=size;if(total<0||total>declaredTotal)throw new IOException("Invalid transfer size");
             }
+            long[] offsets=new long[count];
+            for(int i=0;i<count;i++){
+                File done=doneFile(id,i),part=partFile(id,i);
+                if(done.exists()){offsets[i]=hs.get(i).size;continue;}
+                long len=part.exists()?part.length():0;
+                if(len>hs.get(i).size){part.delete();len=0;}
+                offsets[i]=len;
+            }
+            DataOutputStream control=new DataOutputStream(new BufferedOutputStream(sock.getOutputStream(),64*1024));
+            for(long o:offsets)control.writeLong(o);control.flush();
             File dir=new File(getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS),"AEM Transfer");
             if(!dir.exists()&&!dir.mkdirs())throw new IOException("Cannot create transfer folder");
-            long done=0;byte[] b=new byte[1024*1024];SpeedMeter speed=new SpeedMeter();
-            for(Header h:hs){
-                File f=unique(new File(dir,h.name));File parent=f.getParentFile();
-                if(parent!=null&&!parent.exists()&&!parent.mkdirs())throw new IOException("Cannot create destination folder");
-                MessageDigest md=MessageDigest.getInstance("SHA-256");
-                try(OutputStream out=new BufferedOutputStream(new FileOutputStream(f),256*1024)){
-                    long left=h.size;while(left>0){
-                        int n=in.read(b,0,(int)Math.min(b.length,left));if(n<0)throw new IOException("Connection ended");
-                        out.write(b,0,n);md.update(b,0,n);left-=n;done+=n;
-                        update("Receiving "+h.name+" · "+percent(done,total)+"% · "+speed.formatRate(done),percent(done,total));
-                    }
+            long doneBytes=0;for(long o:offsets)doneBytes+=o;byte[] b=new byte[1024*1024];SpeedMeter speed=new SpeedMeter();
+            for(int i=0;i<hs.size();i++){
+                Header h=hs.get(i);if(offsets[i]>=h.size)continue;
+                File part=partFile(id,i);
+                try(OutputStream out=new BufferedOutputStream(new FileOutputStream(part,true),256*1024)){
+                    long left=h.size-offsets[i];int n;while(left>0){n=in.read(b,0,(int)Math.min(b.length,left));if(n<0)throw new IOException("Connection ended");if(n==0)continue;out.write(b,0,n);left-=n;doneBytes+=n;update("Receiving "+h.name+" · "+percent(doneBytes,total)+"% · "+speed.formatRate(doneBytes),percent(doneBytes,total));}
                 }
                 byte[] expected=new byte[32];in.readFully(expected);
-                if(!Arrays.equals(expected,md.digest())){f.delete();throw new IOException("Integrity check failed for "+h.name);}
+                byte[] actual;try(FileInputStream fin=new FileInputStream(part)){actual=fullSha(fin);}
+                if(!Arrays.equals(expected,actual))throw new IOException("Integrity check failed for "+h.name);
+                File target=unique(new File(dir,h.name));File parent=target.getParentFile();if(parent!=null&&!parent.exists()&&!parent.mkdirs())throw new IOException("Cannot create destination folder");
+                if(!part.renameTo(target))throw new IOException("Cannot finalize "+h.name);
+                File done=doneFile(id,i);if(!done.createNewFile()&&!done.exists())throw new IOException("Cannot persist resume state");
             }
-            DataOutputStream ack=new DataOutputStream(new BufferedOutputStream(sock.getOutputStream(),64*1024));
-            ack.writeInt(1);ack.flush();update("Transfer received and verified successfully",100);
+            control.writeInt(1);control.flush();
+            update("Transfer received and verified successfully",100);
+            for(int i=0;i<count;i++){partFile(id,i).delete();doneFile(id,i).delete();}
         }catch(Exception e){
             try{DataOutputStream ack=new DataOutputStream(new BufferedOutputStream(s.getOutputStream(),64*1024));ack.writeInt(0);ack.flush();}catch(Exception ignored){}
-            update("Receiving failed: "+safe(e),0);
-        }finally{transferActive=false;if(disconnectButton!=null)runOnUiThread(()->disconnectButton.setEnabled(false));}
+            update("Connection interrupted • partial data saved for resume",0);
+        }finally{finishTransferSession();}
     });}
     private static final class Header{String name;long size;byte[] hash;Header(String n,long s,byte[] h){name=n;size=s;hash=h;}}
     private byte[] sha256(Item x)throws Exception{MessageDigest md=MessageDigest.getInstance("SHA-256");try(InputStream in=getContentResolver().openInputStream(x.uri)){if(in==null)throw new IOException("Cannot read "+x.name);byte[] b=new byte[65536];int n;while((n=in.read(b))!=-1)if(n>0)md.update(b,0,n);}return md.digest();}
@@ -640,6 +672,7 @@ public class AemTransferActivity extends Activity {
     private void disconnectTransfer(){
         sending=false;
         transferActive=false;
+        stopTransferService();
         try{if(server!=null)server.close();}catch(Exception ignored){}
         try{
             if(manager!=null&&channel!=null){
@@ -655,5 +688,5 @@ public class AemTransferActivity extends Activity {
     private int percent(long d,long t){return t>0?(int)Math.max(0,Math.min(100,d*100/t)):0;}
     private String safe(Exception e){String m=e.getMessage();return m==null?"connection interrupted":m;}
     private void update(String text,int pct){runOnUiThread(()->{status.setText(text);progress.setProgress(pct);});}
-    @Override protected void onDestroy(){try{if(transferActive)disconnectTransfer();}catch(Exception ignored){}try{unregisterReceiver(receiver);}catch(Exception ignored){}try{if(server!=null)server.close();}catch(Exception ignored){}try{if(manager!=null&&channel!=null)manager.removeGroup(channel,new WifiP2pManager.ActionListener(){public void onSuccess(){}public void onFailure(int r){}});}catch(Exception ignored){}io.shutdownNow();super.onDestroy();}
+    @Override protected void onDestroy(){try{unregisterReceiver(receiver);}catch(Exception ignored){}if(!transferActive){try{if(server!=null)server.close();}catch(Exception ignored){}try{if(manager!=null&&channel!=null)manager.removeGroup(channel,new WifiP2pManager.ActionListener(){public void onSuccess(){}public void onFailure(int r){}});}catch(Exception ignored){}io.shutdownNow();}super.onDestroy();}
 }
