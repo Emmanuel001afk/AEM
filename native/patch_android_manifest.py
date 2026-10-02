@@ -14,6 +14,14 @@ if "INTERNET" not in s:
         count=1,
     )
 
+if "READ_MEDIA_VIDEO" not in s:
+    s = re.sub(
+        manifest_open,
+        r'\1\n    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />\n    <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />\n    <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />\n    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />',
+        s,
+        count=1,
+    )
+
 if "NEARBY_WIFI_DEVICES" not in s:
     s = re.sub(
         manifest_open,
