@@ -20,6 +20,7 @@ import java.net.URL
 import java.security.MessageDigest
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.FileProvider
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -143,6 +144,8 @@ class MainActivity: ComponentActivity() {
     private var pendingDownload:Long = -1L
     private var lastDownloadedName:String = "AEM.apk"
     private var downloadManager:DownloadManager? = null
+    private lateinit var transferManager: AemTransferManager
+    private var transferState by mutableStateOf(AemTransferState())
 
     private val downloadReceiver = object: BroadcastReceiver() {
         override fun onReceive(context:Context,intent:Intent) {
@@ -161,14 +164,26 @@ class MainActivity: ComponentActivity() {
 
     override fun onCreate(savedInstanceState:Bundle?) {
         super.onCreate(savedInstanceState)
+        transferManager = AemTransferManager(this)
+        transferManager.bind { transferState = it }
+        handleIncomingInstall(intent)
         downloadManager=getSystemService(DownloadManager::class.java)
         if(Build.VERSION.SDK_INT >= 33) registerReceiver(downloadReceiver,IntentFilter(DownloadManager.ACTION_DOWNLOAD_COMPLETE),Context.RECEIVER_NOT_EXPORTED) else registerReceiver(downloadReceiver,IntentFilter(DownloadManager.ACTION_DOWNLOAD_COMPLETE))
-        setContent { AemApp(::downloadApk,::openInstalledApp) }
+        setContent { AemApp(::downloadApk,::openInstalledApp,transferManager,transferState) }
     }
 
-    override fun onDestroy() { unregisterReceiver(downloadReceiver); super.onDestroy() }
+    override fun onDestroy() { transferManager.close(); unregisterReceiver(downloadReceiver); super.onDestroy() }
+
+    override fun onNewIntent(intent:Intent) { super.onNewIntent(intent); setIntent(intent); handleIncomingInstall(intent) }
 
     override fun onResume() { super.onResume() }
+
+    private fun handleIncomingInstall(intent:Intent?) {
+        if (intent?.action == Intent.ACTION_VIEW && intent.data != null && intent.type == "application/vnd.android.package-archive") {
+            intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            AemApkInstaller.installUri(this, intent.data!!)
+        }
+    }
 
     private fun openInstalledApp(app:StoreApp) { app.packageName?.let { try { startActivity(packageManager.getLaunchIntentForPackage(it)) } catch(_:Exception) {} } }
 
@@ -205,7 +220,7 @@ class MainActivity: ComponentActivity() {
 
 @Composable
 @OptIn(ExperimentalMaterial3Api::class)
-private fun AemApp(onDownload:(StoreApp)->Unit,onOpen:(StoreApp)->Unit) {
+private fun AemApp(onDownload:(StoreApp)->Unit,onOpen:(StoreApp)->Unit,transfer:AemTransferManager,transferState:AemTransferState) {
     var selected by remember { mutableIntStateOf(0) }
     var dark by remember { mutableStateOf(true) }
     var query by remember { mutableStateOf("") }
@@ -224,8 +239,8 @@ private fun AemApp(onDownload:(StoreApp)->Unit,onOpen:(StoreApp)->Unit) {
                 IconButton(onClick={}){Icon(Icons.Default.Notifications,"Notifications")}
             })},
             bottomBar={NavigationBar{
-                val labels=listOf("Home","Apps","Updates","Downloads","Settings")
-                val icons=listOf(Icons.Default.Home,Icons.Default.Apps,Icons.Default.SystemUpdate,Icons.Default.Download,Icons.Default.Settings)
+                val labels=listOf("Home","Apps","Updates","Transfer","Settings")
+                val icons=listOf(Icons.Default.Home,Icons.Default.Apps,Icons.Default.SystemUpdate,Icons.Default.SwapHoriz,Icons.Default.Settings)
                 labels.forEachIndexed{i,label->NavigationBarItem(selected=selected==i,onClick={selected=i},icon={Icon(icons[i],label)},label={Text(label)})}
             }},
             containerColor=MaterialTheme.colorScheme.background
@@ -234,7 +249,7 @@ private fun AemApp(onDownload:(StoreApp)->Unit,onOpen:(StoreApp)->Unit) {
             when(selected){
                 0,1->{item{Surface(shape=RoundedCornerShape(24.dp),tonalElevation=3.dp){Column(Modifier.padding(22.dp)){Text("Software you control",fontSize=25.sp,fontWeight=FontWeight.Bold);Spacer(Modifier.height(7.dp));Text("Your projects publish releases. AEM discovers, distributes and updates them.",color=MaterialTheme.colorScheme.onSurfaceVariant);Spacer(Modifier.height(15.dp));Row(horizontalArrangement=Arrangement.spacedBy(8.dp)){AssistChip(onClick={selected=1},label={Text("Browse apps")});AssistChip(onClick={selected=2},label={Text("Check updates")})}}}};item{Text(if(selected==0)"Your apps" else "All apps",fontSize=21.sp,fontWeight=FontWeight.Bold)};items(visible){app->AppCard(LocalContext.current,app,{selectedApp=app},{onDownload(app)},{onOpen(app)})}}
                 2->{item{SectionTitle("Updates")};val updates=apps.filter{installedState(context,it)=="UPDATE"};if(updates.isEmpty()) item{EmptyState("You're up to date","AEM will place compatible newer releases here.")} else items(updates){app->AppCard(context,app,{selectedApp=app},{onDownload(app)},{onOpen(app)})}}
-                3->{item{SectionTitle("Downloads")};if(downloadRows.isEmpty()) item{EmptyState("No downloads","AEM downloads will appear here with live progress.")} else items(downloadRows){d->Surface(shape=RoundedCornerShape(18.dp),tonalElevation=2.dp){Column(Modifier.fillMaxWidth().padding(16.dp)){Text(d.title,fontWeight=FontWeight.Bold);Text(d.status,color=MaterialTheme.colorScheme.onSurfaceVariant);LinearProgressIndicator(progress={d.progress/100f},modifier=Modifier.fillMaxWidth().padding(vertical=8.dp));Text("${d.progress}% · ${d.bytes} / ${if(d.total>0)d.total else "?"} bytes",fontSize=12.sp)}}}}
+                3->{TransferPanel(context,transfer,transferState,downloadRows)}
                 else->{item{SectionTitle("Settings")};item{SettingRow("Appearance",if(dark)"Dark mode" else "Light mode"){dark=!dark}};item{SettingRow("Notifications","Release and update notifications"){} };item{SettingRow("Release channels","Stable · Beta · Development"){} };item{SettingRow("Source providers","GitHub now · more providers later"){} };item{SettingRow("Installer","Android package installation and security checks"){} }}
             }
         }}
@@ -242,6 +257,60 @@ private fun AemApp(onDownload:(StoreApp)->Unit,onOpen:(StoreApp)->Unit) {
     }
 }
 
+@Composable
+private fun TransferPanel(context:Context,transfer:AemTransferManager,state:AemTransferState,downloads:List<DownloadRow>) {
+    var mode by remember { mutableIntStateOf(0) }
+    var filePicker by remember { mutableStateOf(false) }
+    val launcher=androidx.activity.compose.rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
+        if (uris.isNotEmpty()) transfer.chooseFiles(uris)
+    }
+    Column(verticalArrangement=Arrangement.spacedBy(12.dp)) {
+        SectionTitle("Transfer")
+        Row(horizontalArrangement=Arrangement.spacedBy(8.dp)) {
+            FilterChip(selected=mode==0,onClick={mode=0},label={Text("Send")})
+            FilterChip(selected=mode==1,onClick={mode=1},label={Text("Receive")})
+            FilterChip(selected=mode==2,onClick={mode=2},label={Text("Downloads")})
+        }
+        if (mode==0) {
+            Text("Send files directly to another AEM phone.",color=MaterialTheme.colorScheme.onSurfaceVariant)
+            Button(onClick={
+                if (!transfer.hasPermission()) {
+                    if (Build.VERSION.SDK_INT >= 33) (context as? Activity)?.requestPermissions(transfer.requiredPermissions(), 701)
+                    else (context as? Activity)?.requestPermissions(transfer.requiredPermissions(), 701)
+                } else launcher.launch(arrayOf("*/*"))
+            }) { Text("Choose files") }
+            if (state.status.contains("selected",true)) {
+                Text(state.status,fontWeight=FontWeight.Bold)
+                Button(onClick={transfer.discover()}) { Text("Find nearby AEM") }
+            }
+            state.peers.forEach { peer ->
+                Surface(shape=RoundedCornerShape(18.dp),tonalElevation=2.dp,modifier=Modifier.fillMaxWidth()) {
+                    Row(Modifier.fillMaxWidth().padding(16.dp),verticalAlignment=Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)){Text(peer.name,fontWeight=FontWeight.Bold);Text("AEM transfer device",color=MaterialTheme.colorScheme.onSurfaceVariant,fontSize=12.sp)}
+                        FilledTonalButton(onClick={transfer.connectAndSend(peer)}){Text("Send")}
+                    }
+                }
+            }
+        } else if (mode==1) {
+            Text("Receive directly from another AEM phone. No cloud or database is used.",color=MaterialTheme.colorScheme.onSurfaceVariant)
+            Button(onClick={transfer.startReceiving()}) { Text("Ready to receive") }
+        } else {
+            if (downloads.isEmpty()) EmptyState("No downloads","AEM downloads will appear here with live progress.")
+            else downloads.forEach { d ->
+                Surface(shape=RoundedCornerShape(18.dp),tonalElevation=2.dp) {
+                    Column(Modifier.fillMaxWidth().padding(16.dp)) {
+                        Text(d.title,fontWeight=FontWeight.Bold)
+                        Text(d.status,color=MaterialTheme.colorScheme.onSurfaceVariant)
+                        LinearProgressIndicator(progress={d.progress/100f},modifier=Modifier.fillMaxWidth().padding(vertical=8.dp))
+                        Text(d.progress.toString()+"% · "+d.bytes+" / "+if(d.total>0)d.total.toString() else "?",fontSize=12.sp)
+                    }
+                }
+            }
+        }
+        if (state.status != "Ready") Text(state.status,color=MaterialTheme.colorScheme.onSurfaceVariant)
+        if (state.totalBytes > 0) LinearProgressIndicator(progress={state.progress/100f},modifier=Modifier.fillMaxWidth())
+    }
+}
 @Composable private fun AppCard(context:Context,app:StoreApp,onDetails:()->Unit,onInstall:()->Unit,onOpen:()->Unit){
     Surface(shape=RoundedCornerShape(22.dp),tonalElevation=2.dp){Column(Modifier.fillMaxWidth().padding(17.dp)){
         Row(verticalAlignment=Alignment.CenterVertically){Box(Modifier.size(58.dp).background(MaterialTheme.colorScheme.primary,RoundedCornerShape(17.dp)),contentAlignment=Alignment.Center){Text(app.name.take(1),color=Color.White,fontWeight=FontWeight.Black,fontSize=22.sp)};Spacer(Modifier.width(14.dp));Column(Modifier.weight(1f)){Text(app.name,fontSize=18.sp,fontWeight=FontWeight.Bold);Text(app.category,color=MaterialTheme.colorScheme.onSurfaceVariant)};val state=remember(app.name,app.versionCode,app.downloadUrl){installedState(context,app)}
