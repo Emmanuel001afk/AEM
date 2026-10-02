@@ -4,6 +4,9 @@ import android.Manifest;
 import android.app.Activity;
 import android.content.*;
 import android.content.pm.PackageManager;
+import android.content.pm.ApplicationInfo;
+import android.content.pm.PackageInfo;
+import androidx.core.content.FileProvider;
 import android.net.Uri;
 import android.net.wifi.p2p.*;
 import android.os.*;
@@ -59,12 +62,14 @@ public class AemTransferActivity extends Activity {
         Button send=new Button(this); send.setText("Send"); Button receive=new Button(this); receive.setText("Receive");
         modes.addView(send,new LinearLayout.LayoutParams(0,-2,1)); modes.addView(receive,new LinearLayout.LayoutParams(0,-2,1)); root.addView(modes);
         Button choose=new Button(this); choose.setText("Choose files"); root.addView(choose);
+        Button apps=new Button(this); apps.setText("Choose installed apps (including system apps)"); root.addView(apps);
         selectedText=new TextView(this); selectedText.setTextColor(Color.LTGRAY); selectedText.setText("No files selected"); selectedText.setPadding(0,12,0,12); root.addView(selectedText);
         status=new TextView(this); status.setTextColor(Color.WHITE); status.setText("Ready"); status.setPadding(0,8,0,12); root.addView(status);
         progress=new ProgressBar(this,null,android.R.attr.progressBarStyleHorizontal); progress.setMax(100); root.addView(progress,new LinearLayout.LayoutParams(-1,-2));
         peerBox=new LinearLayout(this); peerBox.setOrientation(LinearLayout.VERTICAL); root.addView(peerBox);
         ScrollView scroll=new ScrollView(this); scroll.addView(root); setContentView(scroll);
         choose.setOnClickListener(v->pickFiles());
+        apps.setOnClickListener(v->pickInstalledApps());
         receive.setOnClickListener(v->startReceive());
         send.setOnClickListener(v->{ if(selected.isEmpty()) pickFiles(); else discover(); });
     }
@@ -91,6 +96,57 @@ public class AemTransferActivity extends Activity {
         if(data.getClipData()!=null) for(int i=0;i<data.getClipData().getItemCount();i++) selected.add(data.getClipData().getItemAt(i).getUri());
         else if(data.getData()!=null) selected.add(data.getData());
         selectedText.setText(selected.size()+" file"+(selected.size()==1?"":"s")+" selected");
+    }
+
+    private void pickInstalledApps(){
+        PackageManager pm=getPackageManager();
+        List<ApplicationInfo> all=pm.getInstalledApplications(PackageManager.GET_META_DATA);
+        all.removeIf(a->a.packageName.equals(getPackageName()));
+        Collections.sort(all,(a,b)->String.valueOf(pm.getApplicationLabel(a)).compareToIgnoreCase(String.valueOf(pm.getApplicationLabel(b))));
+        String[] labels=new String[all.size()];
+        boolean[] checked=new boolean[all.size()];
+        for(int i=0;i<all.size();i++){
+            ApplicationInfo a=all.get(i);
+            String label=String.valueOf(pm.getApplicationLabel(a));
+            labels[i]=label+"  ·  "+a.packageName+(isSystemApp(a)?"  [system]":"");
+        }
+        new AlertDialog.Builder(this).setTitle("Select apps").setMultiChoiceItems(labels,checked,(d,which,isChecked)->checked[which]=isChecked)
+            .setNegativeButton("Cancel",null)
+            .setPositiveButton("Add to transfer", (d,w)->{
+                int added=0;
+                for(int i=0;i<all.size();i++) if(checked[i]) added+=exportInstalledApp(all.get(i));
+                selectedText.setText(added+" APK file"+(added==1?"":"s")+" prepared for transfer");
+            }).show();
+    }
+
+    private boolean isSystemApp(ApplicationInfo a){
+        return (a.flags & ApplicationInfo.FLAG_SYSTEM)!=0 || (a.flags & ApplicationInfo.FLAG_UPDATED_SYSTEM_APP)!=0;
+    }
+
+    private int exportInstalledApp(ApplicationInfo app){
+        int added=0;
+        try{
+            File dir=new File(getCacheDir(),"aem-downloads");
+            if(!dir.exists()&&!dir.mkdirs()) throw new IOException("Cannot create transfer cache");
+            ArrayList<String> paths=new ArrayList<>();
+            if(app.sourceDir!=null) paths.add(app.sourceDir);
+            if(app.splitSourceDirs!=null) Collections.addAll(paths,app.splitSourceDirs);
+            for(int i=0;i<paths.size();i++){
+                File src=new File(paths.get(i));
+                if(!src.isFile()||!src.canRead()) continue;
+                String suffix=i==0?".apk":("-split"+i+".apk");
+                File out=new File(dir,app.packageName+suffix);
+                try(InputStream in=new FileInputStream(src);OutputStream o=new FileOutputStream(out)){
+                    byte[] buf=new byte[65536]; int n;
+                    while((n=in.read(buf))>=0) if(n>0) o.write(buf,0,n);
+                }
+                selected.add(FileProvider.getUriForFile(this,getPackageName()+".fileprovider",out));
+                added++;
+            }
+        }catch(Exception e){
+            update("Could not prepare "+app.packageName+": "+(e.getMessage()==null?"access denied":e.getMessage()),0);
+        }
+        return added;
     }
 
     private void startReceive(){
