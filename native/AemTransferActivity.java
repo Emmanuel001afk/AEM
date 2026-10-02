@@ -47,11 +47,15 @@ public class AemTransferActivity extends Activity {
         channel=manager==null?null:manager.initialize(this,getMainLooper(),null);
         receiver=new BroadcastReceiver(){@Override public void onReceive(Context c,Intent i){
             String a=i.getAction();
+            if(WifiP2pManager.WIFI_P2P_STATE_CHANGED_ACTION.equals(a)){
+                int state=i.getIntExtra(WifiP2pManager.EXTRA_WIFI_STATE,-1);
+                if(state==WifiP2pManager.WIFI_P2P_STATE_DISABLED) status.setText("Wi-Fi Direct is off. Turn on Wi-Fi, then try again.");
+            }
             if(WifiP2pManager.WIFI_P2P_PEERS_CHANGED_ACTION.equals(a)) requestPeers();
             if(WifiP2pManager.WIFI_P2P_CONNECTION_CHANGED_ACTION.equals(a)) requestConnection();
         }};
-        IntentFilter f=new IntentFilter(); f.addAction(WifiP2pManager.WIFI_P2P_PEERS_CHANGED_ACTION); f.addAction(WifiP2pManager.WIFI_P2P_CONNECTION_CHANGED_ACTION);
-        if(Build.VERSION.SDK_INT>=33) registerReceiver(receiver,f,Context.RECEIVER_NOT_EXPORTED); else registerReceiver(receiver,f);
+        IntentFilter f=new IntentFilter(); f.addAction(WifiP2pManager.WIFI_P2P_STATE_CHANGED_ACTION); f.addAction(WifiP2pManager.WIFI_P2P_PEERS_CHANGED_ACTION); f.addAction(WifiP2pManager.WIFI_P2P_CONNECTION_CHANGED_ACTION);
+        if(Build.VERSION.SDK_INT>=33) registerReceiver(receiver,f,Context.RECEIVER_EXPORTED); else registerReceiver(receiver,f);
         if(!hasPermission()) requestPermissions(requiredPermissions(),PERM);
     }
 
