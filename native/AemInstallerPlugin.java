@@ -94,8 +94,8 @@ public class AemInstallerPlugin extends Plugin {
     private static final class DownloadSpec {
         final String url, filename, mode, sha256, packageIdentity, signingCert, downloadId;
         final long versionCode;
-        final boolean wifiOnly;
-        DownloadSpec(String url, String filename, String mode, String sha256, String packageIdentity, String signingCert, long versionCode, String downloadId, boolean wifiOnly) {
+        final boolean wifiOnly, allowDowngrade;
+        DownloadSpec(String url, String filename, String mode, String sha256, String packageIdentity, String signingCert, long versionCode, String downloadId, boolean wifiOnly, boolean allowDowngrade) {
             this.url=url; this.filename=filename; this.mode=mode; this.sha256=sha256; this.packageIdentity=packageIdentity; this.signingCert=signingCert;
             this.versionCode=versionCode; this.downloadId=downloadId; this.wifiOnly=wifiOnly; this.allowDowngrade=allowDowngrade;
         }
