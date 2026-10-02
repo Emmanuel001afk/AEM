@@ -190,9 +190,6 @@ public class AemTransferActivity extends Activity {
         progress.setMax(100);
         root.addView(progress,new LinearLayout.LayoutParams(-1,dp(5)));
 
-        radar=new RadarView(this);
-        root.addView(radar,new LinearLayout.LayoutParams(-1,dp(168)));
-
         peerBox=new LinearLayout(this);
         peerBox.setOrientation(LinearLayout.VERTICAL);
         peerBox.setPadding(0,dp(4),0,0);
