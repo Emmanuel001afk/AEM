@@ -216,7 +216,15 @@ public class AemTransferActivity extends Activity {
         chooseFiles.setOnClickListener(v->pickFiles());
         chooseFolder.setOnClickListener(v->pickFolder());
         receive.setOnClickListener(v->startReceive());
-        send.setOnClickListener(v->{if(selected.isEmpty()){status.setText("Select something to send first.");return;}discover();});
+        send.setOnClickListener(v->{
+            if(selected.isEmpty()){status.setText("Select something to send first.");return;}
+            if(connectionActive&&connectedHost!=null){
+                sending=false;
+                beginTransferSession();
+                status.setText("Sending another selection over the active connection…");
+                io.execute(()->sendFiles(connectedHost));
+            }else discover();
+        });
         refreshSelectedText();
         status.setText("Ready");
         updateCategoryButtons();
