@@ -15,6 +15,7 @@ import android.os.*;
 import android.provider.DocumentsContract;
 import android.provider.MediaStore;
 import android.graphics.drawable.Drawable;
+import android.graphics.drawable.GradientDrawable;
 import android.graphics.Bitmap;
 import android.util.Size;
 import android.provider.OpenableColumns;
@@ -251,13 +252,19 @@ public class AemTransferActivity extends Activity {
             badge.setGravity(Gravity.CENTER);card.addView(badge);
             box.setOnCheckedChangeListener((button,checked)->{
                 button.setEnabled(false);
+                final String packageName=app.packageName;
                 if(checked){
                     status.setText("Preparing "+String.valueOf(pm.getApplicationLabel(app))+"…");
                     io.execute(()->{
                         ArrayList<Item> made=new ArrayList<>();
                         exportInstalledApp(app,made);
                         runOnUiThread(()->{
-                            exportedApps.put(app.packageName,made);
+                            if(button.isChecked()){
+                                exportedApps.put(packageName,made);
+                            }else{
+                                selected.removeAll(made);
+                                made.clear();
+                            }
                             button.setEnabled(true);
                             status.setText(made.isEmpty()?"Could not prepare app for transfer":"App ready to send");
                             refreshSelectedText();
@@ -265,7 +272,7 @@ public class AemTransferActivity extends Activity {
                     });
                 }else{
                     io.execute(()->{
-                        ArrayList<Item> made=exportedApps.remove(app.packageName);
+                        ArrayList<Item> made=exportedApps.remove(packageName);
                         runOnUiThread(()->{
                             if(made!=null)selected.removeAll(made);
                             button.setEnabled(true);
