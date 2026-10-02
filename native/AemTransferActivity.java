@@ -220,6 +220,18 @@ public class AemTransferActivity extends Activity {
         return p.toArray(new String[0]);
     }
     @Override public void onRequestPermissionsResult(int r,String[] p,int[] g){super.onRequestPermissionsResult(r,p,g);if(r==PERM){status.setText(hasPermission()?"Permission granted. Ready.":"Required permission was not granted.");renderCategory();}}
+    @Override protected void onResume(){
+        super.onResume();
+        if(waitingForWifi && wifiEnabled()){
+            waitingForWifi=false;
+            status.setText("Wi-Fi is on • resuming nearby-device scan…");
+            if(sending) discover(); else if(modeHint!=null&&modeHint.getText().toString().startsWith("Receive mode:")) startReceive();
+        }else if(waitingForLocation && locationEnabled()){
+            waitingForLocation=false;
+            status.setText("Location services are on • resuming nearby-device scan…");
+            if(sending) discover();
+        }
+    }
 
     private void renderCategory(){
         if(contentGrid==null)return;
@@ -307,7 +319,7 @@ public class AemTransferActivity extends Activity {
                             refreshSelectedText();
                         });
                     });
-                }                }else{
+                }else{
                     io.execute(()->{
                         ArrayList<Item> made=exportedApps.remove(packageName);
                         runOnUiThread(()->{
