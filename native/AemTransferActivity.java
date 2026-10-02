@@ -23,6 +23,8 @@ import android.view.*;
 import android.widget.*;
 import androidx.core.content.FileProvider;
 import java.io.*;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipOutputStream;
 import java.net.*;
 import java.security.MessageDigest;
 import java.util.*;
@@ -34,11 +36,25 @@ public class AemTransferActivity extends Activity {
     private WifiP2pManager manager; private WifiP2pManager.Channel channel; private BroadcastReceiver receiver;
     private final ExecutorService io=Executors.newCachedThreadPool();
     private final ArrayList<Item> selected=new ArrayList<>(); private final ArrayList<WifiP2pDevice> peers=new ArrayList<>();
-    private LinearLayout root,peerBox,contentGrid; private TextView status,selectedText,categoryTitle,modeHint; private ProgressBar progress; private ServerSocket server; private boolean sending=false; private String activeCategory="Apps"; private final HashMap<String,ArrayList<Item>> exportedApps=new HashMap<>(); private final ArrayList<TextView> categoryButtons=new ArrayList<>();
+    private LinearLayout root,peerBox,contentGrid; private TextView status,selectedText,categoryTitle,modeHint; private ProgressBar progress; private ServerSocket server; private Button disconnectButton; private boolean sending=false; private boolean transferActive=false; private String activeCategory="Apps"; private final HashMap<String,ArrayList<Item>> exportedApps=new HashMap<>(); private final ArrayList<TextView> categoryButtons=new ArrayList<>();
 
     private static final class Item {
         final Uri uri; final String name; final long size;
         Item(Uri u,String n,long s){uri=u;name=n;size=Math.max(0,s);}
+    }
+
+    private static final class SpeedMeter {
+        final long startNanos=System.nanoTime();
+        long lastBytes;
+        long lastNanos=startNanos;
+        String formatRate(long bytes){
+            long now=System.nanoTime();
+            long elapsed=Math.max(1,now-lastNanos);
+            long delta=bytes-lastBytes;
+            double mbps=(delta*1_000_000_000.0/elapsed)/1048576.0;
+            if(elapsed>250_000_000L){lastBytes=bytes;lastNanos=now;}
+            return mbps<0.1?"0.0 MB/s":String.format(Locale.US,"%.1f MB/s",mbps);
+        }
     }
 
     @Override public void onCreate(Bundle b){
@@ -174,6 +190,12 @@ public class AemTransferActivity extends Activity {
         LinearLayout.LayoutParams bp=new LinearLayout.LayoutParams(0,dp(50),1);bp.setMargins(0,dp(6),dp(5),0);bottom.addView(chooseFiles,bp);
         LinearLayout.LayoutParams fp=new LinearLayout.LayoutParams(0,dp(50),1);fp.setMargins(dp(5),dp(6),0,0);bottom.addView(chooseFolder,fp);
         root.addView(bottom,new LinearLayout.LayoutParams(-1,dp(56)));
+
+        disconnectButton=actionButton("Disconnect");
+        disconnectButton.setBackground(bg(Color.rgb(60,62,70),12));
+        disconnectButton.setEnabled(false);
+        disconnectButton.setOnClickListener(v->disconnectTransfer());
+        root.addView(disconnectButton,new LinearLayout.LayoutParams(-1,dp(46)));
 
         setContentView(root);
 
@@ -373,23 +395,44 @@ public class AemTransferActivity extends Activity {
     }
 
     private int exportInstalledApp(ApplicationInfo app,ArrayList<Item> made){
-        int added=0;try{
+        try{
             File dir=new File(getCacheDir(),"aem-downloads");
             if(!dir.exists()&&!dir.mkdirs())throw new IOException("Cannot create transfer cache");
             ArrayList<String> paths=new ArrayList<>();
             if(app.sourceDir!=null)paths.add(app.sourceDir);
             if(app.splitSourceDirs!=null)Collections.addAll(paths,app.splitSourceDirs);
-            for(int i=0;i<paths.size();i++){
-                File src=new File(paths.get(i));if(!src.isFile()||!src.canRead())continue;
-                File out=new File(dir,app.packageName+(i==0?".apk":"-split"+i+".apk"));
-                try(InputStream in=new FileInputStream(src);OutputStream o=new FileOutputStream(out)){
-                    byte[] b=new byte[65536];int n;while((n=in.read(b))!=-1)if(n>0)o.write(b,0,n);
+            if(paths.isEmpty())throw new IOException("No readable APK components found");
+
+            // Treat one installed application as ONE logical transfer item.
+            // If Android exposes split APKs, bundle them into one .apks archive.
+            String label=String.valueOf(getPackageManager().getApplicationLabel(app));
+            File out=new File(dir,app.packageName+".apks");
+            try(ZipOutputStream zip=new ZipOutputStream(new BufferedOutputStream(new FileOutputStream(out),256*1024))){
+                byte[] b=new byte[256*1024];
+                int component=0;
+                for(String path:paths){
+                    File src=new File(path);
+                    if(!src.isFile()||!src.canRead())continue;
+                    String entry=component++==0?"base.apk":"split-"+component+".apk";
+                    zip.putNextEntry(new ZipEntry(entry));
+                    try(InputStream in=new BufferedInputStream(new FileInputStream(src),256*1024)){
+                        int n;while((n=in.read(b))!=-1)if(n>0)zip.write(b,0,n);
+                    }
+                    zip.closeEntry();
                 }
-                Item item=new Item(FileProvider.getUriForFile(this,getPackageName()+".fileprovider",out),out.getName(),out.length());
-                selected.add(item);made.add(item);added++;
+                if(component==0)throw new IOException("No readable APK components found");
             }
-        }catch(Exception e){update("Could not prepare "+app.packageName+": "+(e.getMessage()==null?"access denied":e.getMessage()),0);}
-        refreshSelectedText();return added;
+            Item item=new Item(FileProvider.getUriForFile(this,getPackageName()+".fileprovider",out),
+                    label+" ("+app.packageName+").apks",out.length());
+            selected.removeIf(x->x.name.equals(item.name));
+            selected.add(item);made.add(item);
+            refreshSelectedText();
+            status.setText(label+" ready • 1 app package");
+            return 1;
+        }catch(Exception e){
+            update("Could not prepare "+app.packageName+": "+(e.getMessage()==null?"access denied":e.getMessage()),0);
+            return 0;
+        }
     }
 
     private void pickFiles(){Intent i=new Intent(Intent.ACTION_OPEN_DOCUMENT);i.addCategory(Intent.CATEGORY_OPENABLE);i.setType("*/*");i.putExtra(Intent.EXTRA_ALLOW_MULTIPLE,true);startActivityForResult(i,PICK);}
@@ -423,7 +466,7 @@ public class AemTransferActivity extends Activity {
         String[] labels=new String[all.size()];boolean[] checked=new boolean[all.size()];
         for(int i=0;i<all.size();i++){ApplicationInfo a=all.get(i);labels[i]=String.valueOf(pm.getApplicationLabel(a))+" · "+a.packageName+(isSystemApp(a)?" [system]":"");}
         new AlertDialog.Builder(this).setTitle("Select apps").setMultiChoiceItems(labels,checked,(d,w,c)->checked[w]=c).setNegativeButton("Cancel",null).setPositiveButton("Add to transfer",(d,w)->{
-            int added=0;for(int i=0;i<all.size();i++)if(checked[i])added+=exportInstalledApp(all.get(i));selectedText.setText(added+" APK component"+(added==1?"":"s")+" prepared for transfer");}).show();
+            int added=0;for(int i=0;i<all.size();i++)if(checked[i])added+=exportInstalledApp(all.get(i));selectedText.setText(added+" app"+(added==1?"":"s")+" prepared for transfer");}).show();
     }
     private boolean isSystemApp(ApplicationInfo a){return (a.flags&(ApplicationInfo.FLAG_SYSTEM|ApplicationInfo.FLAG_UPDATED_SYSTEM_APP))!=0;}
     private int exportInstalledApp(ApplicationInfo app){ArrayList<Item> made=new ArrayList<>();return exportInstalledApp(app,made);}
@@ -507,7 +550,7 @@ public class AemTransferActivity extends Activity {
         LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(-1,dp(66));p.setMargins(0,dp(4),0,dp(4));peerBox.addView(card,p);
         b.setOnClickListener(v->connect(d));
     }}
-    private void connect(WifiP2pDevice d){if(selected.isEmpty()){status.setText("Select at least one item first.");return;}sending=true;status.setText("Connecting to "+d.deviceName+"...");WifiP2pConfig c=new WifiP2pConfig();c.deviceAddress=d.deviceAddress;c.wps.setup=WpsInfo.PBC;
+    private void connect(WifiP2pDevice d){if(selected.isEmpty()){status.setText("Select at least one item first.");return;}sending=true;transferActive=true;if(disconnectButton!=null)disconnectButton.setEnabled(true);status.setText("Connecting to "+d.deviceName+"...");WifiP2pConfig c=new WifiP2pConfig();c.deviceAddress=d.deviceAddress;c.wps.setup=WpsInfo.PBC;
         manager.connect(channel,c,new WifiP2pManager.ActionListener(){public void onSuccess(){status.setText("Connection requested...");}public void onFailure(int r){sending=false;status.setText("Connection failed: "+r);}});
     }
     private void requestConnection(){if(!hasPermission()||manager==null||channel==null)return;manager.requestConnectionInfo(channel,info->{if(info.groupFormed&&sending&&!info.isGroupOwner&&info.groupOwnerAddress!=null){
@@ -517,6 +560,8 @@ public class AemTransferActivity extends Activity {
     
     private void sendFiles(String host){
         try(Socket s=new Socket()){
+            transferActive=true;
+            if(disconnectButton!=null)runOnUiThread(()->disconnectButton.setEnabled(true));
             s.setTcpNoDelay(true);
             s.setSendBufferSize(1024*1024);
             s.connect(new InetSocketAddress(host,PORT),15000);
@@ -524,7 +569,8 @@ public class AemTransferActivity extends Activity {
             DataOutputStream out=new DataOutputStream(new BufferedOutputStream(s.getOutputStream(),256*1024));
             out.writeInt(PROTOCOL);out.writeInt(selected.size());
             long total=0,done=0;for(Item x:selected)total+=x.size;out.writeLong(total);
-            byte[] b=new byte[256*1024];
+            byte[] b=new byte[1024*1024];
+            SpeedMeter speed=new SpeedMeter();
             for(Item x:selected){
                 byte[] nb=x.name.getBytes("UTF-8");out.writeInt(nb.length);out.write(nb);out.writeLong(x.size);
                 MessageDigest md=MessageDigest.getInstance("SHA-256");
@@ -532,7 +578,7 @@ public class AemTransferActivity extends Activity {
                     if(in==null)throw new IOException("Cannot read "+x.name);
                     long left=x.size;int n;
                     while(left>0&&(n=in.read(b,0,(int)Math.min(b.length,left)))>0){
-                        out.write(b,0,n);md.update(b,0,n);left-=n;done+=n;update("Sending "+x.name+" · "+percent(done,total)+"%",percent(done,total));
+                        out.write(b,0,n);md.update(b,0,n);left-=n;done+=n;update("Sending "+x.name+" · "+percent(done,total)+"% · "+speed.formatRate(done),percent(done,total));
                     }
                     if(left!=0)throw new IOException("Source changed while reading "+x.name);
                 }
@@ -542,10 +588,13 @@ public class AemTransferActivity extends Activity {
             int result=inResult(s);
             update(result==1?"Transfer completed and verified":"Transfer rejected",result==1?100:0);
         }catch(Exception e){update("Transfer failed: "+safe(e),0);}
+        finally{transferActive=false;if(disconnectButton!=null)runOnUiThread(()->disconnectButton.setEnabled(false));}
     }
     private int inResult(Socket s)throws IOException{DataInputStream in=new DataInputStream(new BufferedInputStream(s.getInputStream()));return in.readInt();}
     
     private void receiveFiles(Socket s){io.execute(()->{
+        transferActive=true;
+        if(disconnectButton!=null)runOnUiThread(()->disconnectButton.setEnabled(true));
         try(Socket sock=s){
             sock.setTcpNoDelay(true);sock.setReceiveBufferSize(1024*1024);sock.setSoTimeout(60000);
             DataInputStream in=new DataInputStream(new BufferedInputStream(sock.getInputStream(),256*1024));
@@ -562,7 +611,7 @@ public class AemTransferActivity extends Activity {
             }
             File dir=new File(getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS),"AEM Transfer");
             if(!dir.exists()&&!dir.mkdirs())throw new IOException("Cannot create transfer folder");
-            long done=0;byte[] b=new byte[256*1024];
+            long done=0;byte[] b=new byte[1024*1024];SpeedMeter speed=new SpeedMeter();
             for(Header h:hs){
                 File f=unique(new File(dir,h.name));File parent=f.getParentFile();
                 if(parent!=null&&!parent.exists()&&!parent.mkdirs())throw new IOException("Cannot create destination folder");
@@ -571,7 +620,7 @@ public class AemTransferActivity extends Activity {
                     long left=h.size;while(left>0){
                         int n=in.read(b,0,(int)Math.min(b.length,left));if(n<0)throw new IOException("Connection ended");
                         out.write(b,0,n);md.update(b,0,n);left-=n;done+=n;
-                        update("Receiving "+h.name+" · "+percent(done,total)+"%",percent(done,total));
+                        update("Receiving "+h.name+" · "+percent(done,total)+"% · "+speed.formatRate(done),percent(done,total));
                     }
                 }
                 byte[] expected=new byte[32];in.readFully(expected);
@@ -582,14 +631,29 @@ public class AemTransferActivity extends Activity {
         }catch(Exception e){
             try{DataOutputStream ack=new DataOutputStream(new BufferedOutputStream(s.getOutputStream(),64*1024));ack.writeInt(0);ack.flush();}catch(Exception ignored){}
             update("Receiving failed: "+safe(e),0);
-        }
+        }finally{transferActive=false;if(disconnectButton!=null)runOnUiThread(()->disconnectButton.setEnabled(false));}
     });}
     private static final class Header{String name;long size;byte[] hash;Header(String n,long s,byte[] h){name=n;size=s;hash=h;}}
     private byte[] sha256(Item x)throws Exception{MessageDigest md=MessageDigest.getInstance("SHA-256");try(InputStream in=getContentResolver().openInputStream(x.uri)){if(in==null)throw new IOException("Cannot read "+x.name);byte[] b=new byte[65536];int n;while((n=in.read(b))!=-1)if(n>0)md.update(b,0,n);}return md.digest();}
     private String safePath(String n){n=n.replace('\\','/').replace('\0','_').replaceAll("^[\\/]+","");String[] p=n.split("/");StringBuilder b=new StringBuilder();for(String x:p){x=x.replaceAll("[\\:*?\"<>|]","_").trim();if(x.isEmpty()||x.equals(".")||x.equals(".."))continue;if(b.length()>0)b.append(File.separator);b.append(x);}return b.length()==0?"AEM-file":b.toString();}
     private File unique(File f){if(!f.exists())return f;String n=f.getName();int dot=n.lastIndexOf('.');String b=dot>0?n.substring(0,dot):n,e=dot>0?n.substring(dot):"";int i=1;File x;do{x=new File(f.getParentFile(),b+" ("+(i++)+")"+e);}while(x.exists());return x;}
+    private void disconnectTransfer(){
+        sending=false;
+        transferActive=false;
+        try{if(server!=null)server.close();}catch(Exception ignored){}
+        try{
+            if(manager!=null&&channel!=null){
+                manager.removeGroup(channel,new WifiP2pManager.ActionListener(){
+                    public void onSuccess(){status.setText("Disconnected. Wi-Fi remains available.");}
+                    public void onFailure(int r){status.setText("Disconnected.");}
+                });
+            }else status.setText("Disconnected.");
+        }catch(Exception e){status.setText("Disconnected.");}
+        if(disconnectButton!=null)disconnectButton.setEnabled(false);
+    }
+
     private int percent(long d,long t){return t>0?(int)Math.max(0,Math.min(100,d*100/t)):0;}
     private String safe(Exception e){String m=e.getMessage();return m==null?"connection interrupted":m;}
     private void update(String text,int pct){runOnUiThread(()->{status.setText(text);progress.setProgress(pct);});}
-    @Override protected void onDestroy(){try{unregisterReceiver(receiver);}catch(Exception ignored){}try{if(server!=null)server.close();}catch(Exception ignored){}try{if(manager!=null&&channel!=null)manager.removeGroup(channel,new WifiP2pManager.ActionListener(){public void onSuccess(){}public void onFailure(int r){}});}catch(Exception ignored){}io.shutdownNow();super.onDestroy();}
+    @Override protected void onDestroy(){try{if(transferActive)disconnectTransfer();}catch(Exception ignored){}try{unregisterReceiver(receiver);}catch(Exception ignored){}try{if(server!=null)server.close();}catch(Exception ignored){}try{if(manager!=null&&channel!=null)manager.removeGroup(channel,new WifiP2pManager.ActionListener(){public void onSuccess(){}public void onFailure(int r){}});}catch(Exception ignored){}io.shutdownNow();super.onDestroy();}
 }
