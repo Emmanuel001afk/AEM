@@ -226,7 +226,11 @@ public class AemTransferActivity extends Activity {
     }
     private String[] requiredPermissions(){
         ArrayList<String> p=new ArrayList<>();
-        p.add(Build.VERSION.SDK_INT>=33?Manifest.permission.NEARBY_WIFI_DEVICES:Manifest.permission.ACCESS_FINE_LOCATION);
+        if(Build.VERSION.SDK_INT>=33) p.add(Manifest.permission.NEARBY_WIFI_DEVICES);
+        else if(Build.VERSION.SDK_INT>=23){
+            p.add(Manifest.permission.ACCESS_FINE_LOCATION);
+            p.add(Manifest.permission.ACCESS_COARSE_LOCATION);
+        }
         if(Build.VERSION.SDK_INT<33 && Build.VERSION.SDK_INT>=23){p.add(Manifest.permission.READ_EXTERNAL_STORAGE);}
         return p.toArray(new String[0]);
     }
