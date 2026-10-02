@@ -436,68 +436,58 @@ public class AemTransferActivity extends Activity {
 
     private void showInstalledApps(ArrayList<ApplicationInfo> all){
         contentGrid.removeAllViews();
-        contentGrid.addView(section(all.size()+" APPLICATIONS AVAILABLE • USER + SYSTEM"));
-        GridLayout grid=new GridLayout(this);grid.setColumnCount(2);
         PackageManager pm=getPackageManager();
-        int limit=Math.min(all.size(),300);
+        ArrayList<ApplicationInfo> userApps=new ArrayList<>();
+        ArrayList<ApplicationInfo> systemApps=new ArrayList<>();
+        for(ApplicationInfo app:all){if(isSystemApp(app))systemApps.add(app);else userApps.add(app);}
+        contentGrid.addView(section("USER-INSTALLED APPLICATIONS ("+userApps.size()+")"));
+        addAppGrid(userApps,pm);
+        contentGrid.addView(section("PREINSTALLED / SYSTEM APPLICATIONS ("+systemApps.size()+")"));
+        addAppGrid(systemApps,pm);
+        if(all.isEmpty())contentGrid.addView(label("No matching applications found.",13,Color.GRAY));
+    }
+
+    private void addAppGrid(ArrayList<ApplicationInfo> apps,PackageManager pm){
+        GridLayout grid=new GridLayout(this);grid.setColumnCount(3);
+        int limit=Math.min(apps.size(),300);
         for(int index=0;index<limit;index++){
-            ApplicationInfo app=all.get(index);
-            LinearLayout card=new LinearLayout(this);card.setOrientation(LinearLayout.VERTICAL);card.setPadding(dp(6),dp(6),dp(6),dp(6));
-            card.setBackground(bg(Color.rgb(25,27,32),16));
-            CheckBox box=new CheckBox(this);box.setText("SELECT");box.setTextColor(Color.LTGRAY);box.setTextSize(11);
+            ApplicationInfo app=apps.get(index);
+            LinearLayout card=new LinearLayout(this);card.setOrientation(LinearLayout.VERTICAL);card.setPadding(dp(4),dp(4),dp(4),dp(4));
+            card.setBackground(bg(Color.rgb(25,27,32),12));
             ImageView icon=new ImageView(this);
-            icon.setImageResource(android.R.drawable.sym_def_app_icon); final ImageView iconView=icon; io.execute(()->{try{Drawable d=pm.getApplicationIcon(app);runOnUiThread(()->iconView.setImageDrawable(d));}catch(Exception ignored){}});
-            card.addView(icon,new LinearLayout.LayoutParams(-1,dp(42)));
-            TextView name=label(String.valueOf(pm.getApplicationLabel(app)),12,Color.WHITE);
-            name.setTypeface(Typeface.DEFAULT,Typeface.BOLD);name.setGravity(Gravity.CENTER);
-            card.addView(name,new LinearLayout.LayoutParams(-1,-2));
-            TextView pkg=label(app.packageName,8,Color.GRAY);pkg.setGravity(Gravity.CENTER);card.addView(pkg);
-            TextView badge=label(isSystemApp(app)?"PREINSTALLED / SYSTEM":"USER INSTALLED",8,isSystemApp(app)?Color.rgb(255,190,80):Color.rgb(110,210,150));
-            badge.setGravity(Gravity.CENTER);card.addView(badge);
+            icon.setImageResource(android.R.drawable.sym_def_app_icon);
+            final ImageView iconView=icon;
+            io.execute(()->{try{Drawable d=pm.getApplicationIcon(app);runOnUiThread(()->iconView.setImageDrawable(d));}catch(Exception ignored){}});
+            card.addView(icon,new LinearLayout.LayoutParams(-1,dp(34)));
+            TextView name=label(String.valueOf(pm.getApplicationLabel(app)),11,Color.WHITE);
+            name.setTypeface(Typeface.DEFAULT,Typeface.BOLD);name.setGravity(Gravity.CENTER);name.setMaxLines(2);
+            card.addView(name,new LinearLayout.LayoutParams(-1,dp(30)));
+            TextView pkg=label(app.packageName,7,Color.GRAY);pkg.setGravity(Gravity.CENTER);pkg.setMaxLines(1);card.addView(pkg,new LinearLayout.LayoutParams(-1,dp(18)));
+            CheckBox box=new CheckBox(this);box.setText("SELECT");box.setTextColor(Color.LTGRAY);box.setTextSize(8);box.setGravity(Gravity.CENTER);
             box.setOnCheckedChangeListener((button,checked)->{
                 button.setEnabled(false);
                 final String packageName=app.packageName;
                 if(checked){
-                    String appLabel=String.valueOf(pm.getApplicationLabel(app));
-                    status.setText("Preparing "+appLabel+"…");
+                    String appLabel=String.valueOf(pm.getApplicationLabel(app));status.setText("Preparing "+appLabel+"…");
                     io.execute(()->{
-                        ArrayList<Item> made=new ArrayList<>();
-                        boolean ok=exportInstalledApp(app,made)>0;
+                        ArrayList<Item> made=new ArrayList<>();boolean ok=exportInstalledApp(app,made)>0;
                         runOnUiThread(()->{
-                            if(button.isChecked()&&ok){
-                                exportedApps.put(packageName,made);
-                                for(Item x:made){selected.removeIf(oldItem->oldItem.name.equals(x.name));selected.add(x);}
-                            }
-                            button.setEnabled(true);
-                            status.setText(ok?"Ready • "+appLabel+" can be sent":"Could not prepare "+appLabel);
-                            refreshSelectedText();
+                            if(button.isChecked()&&ok){exportedApps.put(packageName,made);for(Item x:made){selected.removeIf(oldItem->oldItem.name.equals(x.name));selected.add(x);}}
+                            button.setEnabled(true);status.setText(ok?"Ready • "+appLabel+" can be sent":"Could not prepare "+appLabel);refreshSelectedText();
                         });
                     });
                 }else{
-                    io.execute(()->{
-                        ArrayList<Item> made=exportedApps.remove(packageName);
-                        runOnUiThread(()->{
-                            if(made!=null)selected.removeAll(made);
-                            button.setEnabled(true);refreshSelectedText();
-                        });
-                    });
+                    io.execute(()->{ArrayList<Item> made=exportedApps.remove(packageName);runOnUiThread(()->{if(made!=null)selected.removeAll(made);button.setEnabled(true);refreshSelectedText();});});
                 }
             });
             card.addView(box);
             GridLayout.LayoutParams gp=new GridLayout.LayoutParams();
             gp.width=0;gp.height=GridLayout.LayoutParams.WRAP_CONTENT;
-            gp.columnSpec=GridLayout.spec(GridLayout.UNDEFINED,1f);
-            gp.setMargins(dp(4),dp(4),dp(4),dp(4));
+            gp.columnSpec=GridLayout.spec(GridLayout.UNDEFINED,1f);gp.setMargins(dp(3),dp(3),dp(3),dp(3));
             grid.addView(card,gp);
         }
-        contentGrid.addView(grid);
-        if(all.size()>limit)contentGrid.addView(label("Showing the first "+limit+" apps. Use Add files to transfer an APK directly.",12,Color.GRAY));
-        if(all.stream().anyMatch(this::isSystemApp)){
-            TextView split=section("APP CATEGORIES • USER INSTALLED / PREINSTALLED SYSTEM");
-            split.setPadding(0,dp(12),0,dp(8));
-            contentGrid.addView(split);
-        }
-        if(all.size()>limit)contentGrid.addView(label("Showing the first "+limit+" apps. Use Add files to transfer an APK directly.",12,Color.GRAY));
+        contentGrid.addView(grid,new LinearLayout.LayoutParams(-1,-2));
+        if(apps.size()>limit)contentGrid.addView(label("Showing the first "+limit+" apps in this section.",11,Color.GRAY));
     }
 
     private void filterRenderedApps(String query){
