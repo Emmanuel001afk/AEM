@@ -6,6 +6,14 @@ p = Path(sys.argv[1])
 s = p.read_text()
 manifest_open = r"(<manifest\b[^>]*>)"
 
+if "FOREGROUND_SERVICE" not in s:
+    s = re.sub(
+        manifest_open,
+        r'\1\n    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />\n    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />',
+        s,
+        count=1,
+    )
+
 if "INTERNET" not in s:
     s = re.sub(
         manifest_open,
@@ -47,6 +55,13 @@ if "AEM Package Installer" not in s:
         s = s[:activity_match.start()] + replacement + s[activity_match.end():]
     else:
         raise SystemExit("MainActivity not found while adding AEM Package Installer intent-filter")
+
+if "AemTransferService" not in s:
+    s = s.replace(
+        "</application>",
+        '    <service android:name=".AemTransferService" android:exported="false" android:foregroundServiceType="dataSync" />\n</application>',
+        1,
+    )
 
 if "AemTransferActivity" not in s:
     s = s.replace(
