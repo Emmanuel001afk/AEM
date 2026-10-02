@@ -46,7 +46,7 @@ public class AemTransferActivity extends Activity {
     private final ExecutorService io=Executors.newCachedThreadPool();
     private final AtomicBoolean transferRunning=new AtomicBoolean(false);
     private final ArrayList<Item> selected=new ArrayList<>(); private final ArrayList<WifiP2pDevice> peers=new ArrayList<>();
-    private LinearLayout root,peerBox,contentGrid; private TextView status,selectedText,categoryTitle,modeHint,deviceNameLabel; private ProgressBar progress; private RadarView radar; private ServerSocket server; private Button disconnectButton; private volatile boolean sending=false; private volatile boolean transferActive=false; private volatile boolean connectionActive=false; private volatile String connectedHost=null; private boolean waitingForWifi=false; private boolean waitingForLocation=false; private String pendingAction=null; private volatile String transferId=null; private boolean transferFlowOpen=false; private boolean receiverMode=false; private boolean wifiWasOff=false; private boolean locationWasOff=false; private String receiverToken=null; private String activeCategory="Apps"; private final HashMap<String,ArrayList<Item>> exportedApps=new HashMap<>(); private final ArrayList<TextView> categoryButtons=new ArrayList<>();
+    private LinearLayout root,peerBox,contentGrid; private TextView status,selectedText,categoryTitle,modeHint,deviceNameLabel; private EditText appSearch; private ProgressBar progress; private RadarView radar; private ServerSocket server; private Button disconnectButton; private volatile boolean sending=false; private volatile boolean transferActive=false; private volatile boolean connectionActive=false; private volatile String connectedHost=null; private boolean waitingForWifi=false; private boolean waitingForLocation=false; private String pendingAction=null; private volatile String transferId=null; private boolean transferFlowOpen=false; private boolean receiverMode=false; private boolean wifiWasOff=false; private boolean locationWasOff=false; private String receiverToken=null; private String activeCategory="Apps"; private final HashMap<String,ArrayList<Item>> exportedApps=new HashMap<>(); private final ArrayList<TextView> categoryButtons=new ArrayList<>();
 
     private static final class Item {
         final Uri uri; final String name; final long size;
@@ -161,7 +161,24 @@ public class AemTransferActivity extends Activity {
             LinearLayout.LayoutParams tp=new LinearLayout.LayoutParams(-2,dp(42));tp.setMargins(0,0,dp(8),0);tabs.addView(b,tp);
         }
         tabsScroll.addView(tabs);
-        root.addView(tabsScroll,new LinearLayout.LayoutParams(-1,dp(50)));
+        root.addView(tabsScroll,new LinearLayout.LayoutParams(-1,dp(46)));
+        appSearch=new EditText(this);
+        appSearch.setSingleLine(true);
+        appSearch.setHint("Search apps on this device…");
+        appSearch.setHintTextColor(Color.rgb(130,135,145));
+        appSearch.setTextColor(Color.WHITE);
+        appSearch.setTextSize(13);
+        appSearch.setPadding(dp(12),0,dp(12),0);
+        appSearch.setBackground(bg(Color.rgb(24,26,32),12));
+        LinearLayout.LayoutParams sp=new LinearLayout.LayoutParams(-1,dp(42));
+        sp.setMargins(0,dp(2),0,dp(4));
+        root.addView(appSearch,sp);
+        appSearch.setVisibility(View.VISIBLE);
+        appSearch.addTextChangedListener(new android.text.TextWatcher(){
+            public void beforeTextChanged(CharSequence s,int st,int c,int a){}
+            public void onTextChanged(CharSequence s,int st,int before,int count){if("Apps".equals(activeCategory)&&contentGrid!=null)filterRenderedApps(s.toString());}
+            public void afterTextChanged(android.text.Editable e){}
+        });
 
         contentGrid=new LinearLayout(this);
         contentGrid.setOrientation(LinearLayout.VERTICAL);
@@ -262,6 +279,7 @@ public class AemTransferActivity extends Activity {
         contentGrid.removeAllViews();
         categoryTitle.setText(activeCategory);
         updateCategoryButtons();
+        if(appSearch!=null)appSearch.setVisibility("Apps".equals(activeCategory)?View.VISIBLE:View.GONE);
         if("Apps".equals(activeCategory)){renderApps();return;}
         if("Files".equals(activeCategory)){renderFiles();return;}
         renderMedia(activeCategory);
@@ -418,23 +436,23 @@ public class AemTransferActivity extends Activity {
 
     private void showInstalledApps(ArrayList<ApplicationInfo> all){
         contentGrid.removeAllViews();
-        contentGrid.addView(section(all.size()+" APPLICATIONS AVAILABLE"));
+        contentGrid.addView(section(all.size()+" APPLICATIONS AVAILABLE • USER + SYSTEM"));
         GridLayout grid=new GridLayout(this);grid.setColumnCount(2);
         PackageManager pm=getPackageManager();
         int limit=Math.min(all.size(),300);
         for(int index=0;index<limit;index++){
             ApplicationInfo app=all.get(index);
-            LinearLayout card=new LinearLayout(this);card.setOrientation(LinearLayout.VERTICAL);card.setPadding(dp(10),dp(10),dp(10),dp(10));
+            LinearLayout card=new LinearLayout(this);card.setOrientation(LinearLayout.VERTICAL);card.setPadding(dp(6),dp(6),dp(6),dp(6));
             card.setBackground(bg(Color.rgb(25,27,32),16));
             CheckBox box=new CheckBox(this);box.setText("SELECT");box.setTextColor(Color.LTGRAY);box.setTextSize(11);
             ImageView icon=new ImageView(this);
             icon.setImageResource(android.R.drawable.sym_def_app_icon); final ImageView iconView=icon; io.execute(()->{try{Drawable d=pm.getApplicationIcon(app);runOnUiThread(()->iconView.setImageDrawable(d));}catch(Exception ignored){}});
-            card.addView(icon,new LinearLayout.LayoutParams(-1,dp(64)));
-            TextView name=label(String.valueOf(pm.getApplicationLabel(app)),14,Color.WHITE);
+            card.addView(icon,new LinearLayout.LayoutParams(-1,dp(42)));
+            TextView name=label(String.valueOf(pm.getApplicationLabel(app)),12,Color.WHITE);
             name.setTypeface(Typeface.DEFAULT,Typeface.BOLD);name.setGravity(Gravity.CENTER);
             card.addView(name,new LinearLayout.LayoutParams(-1,-2));
-            TextView pkg=label(app.packageName,9,Color.GRAY);pkg.setGravity(Gravity.CENTER);card.addView(pkg);
-            TextView badge=label(isSystemApp(app)?"SYSTEM APP":"INSTALLED APP",9,isSystemApp(app)?Color.rgb(255,190,80):Color.rgb(110,210,150));
+            TextView pkg=label(app.packageName,8,Color.GRAY);pkg.setGravity(Gravity.CENTER);card.addView(pkg);
+            TextView badge=label(isSystemApp(app)?"PREINSTALLED / SYSTEM":"USER INSTALLED",8,isSystemApp(app)?Color.rgb(255,190,80):Color.rgb(110,210,150));
             badge.setGravity(Gravity.CENTER);card.addView(badge);
             box.setOnCheckedChangeListener((button,checked)->{
                 button.setEnabled(false);
@@ -474,6 +492,25 @@ public class AemTransferActivity extends Activity {
         }
         contentGrid.addView(grid);
         if(all.size()>limit)contentGrid.addView(label("Showing the first "+limit+" apps. Use Add files to transfer an APK directly.",12,Color.GRAY));
+        if(all.stream().anyMatch(this::isSystemApp)){
+            TextView split=section("APP CATEGORIES • USER INSTALLED / PREINSTALLED SYSTEM");
+            split.setPadding(0,dp(12),0,dp(8));
+            contentGrid.addView(split);
+        }
+        if(all.size()>limit)contentGrid.addView(label("Showing the first "+limit+" apps. Use Add files to transfer an APK directly.",12,Color.GRAY));
+    }
+
+    private void filterRenderedApps(String query){
+        String q=query==null?"":query.trim().toLowerCase(Locale.US);
+        if(q.isEmpty()){renderApps();return;}
+        io.execute(()->{
+            PackageManager pm=getPackageManager(); ArrayList<ApplicationInfo> all=new ArrayList<>();
+            try{all.addAll(pm.getInstalledApplications(PackageManager.GET_META_DATA));}catch(Exception ignored){}
+            all.removeIf(a->a.packageName.equals(getPackageName()));
+            all.removeIf(a->{String n=String.valueOf(pm.getApplicationLabel(a)).toLowerCase(Locale.US);return !n.contains(q)&&!a.packageName.toLowerCase(Locale.US).contains(q);});
+            Collections.sort(all,(a,b)->String.valueOf(pm.getApplicationLabel(a)).compareToIgnoreCase(String.valueOf(pm.getApplicationLabel(b))));
+            runOnUiThread(()->showInstalledApps(all));
+        });
     }
 
     private void renderMedia(String category){
@@ -538,7 +575,7 @@ public class AemTransferActivity extends Activity {
         contentGrid.addView(label("Documents, ZIPs, APKs and folders are transferred directly. AEM does not open or play them.",13,Color.LTGRAY));
         Button b=new Button(this);b.setText("BROWSE FILES");b.setOnClickListener(v->pickFiles());contentGrid.addView(b);
         Button f=new Button(this);f.setText("BROWSE FOLDER");f.setOnClickListener(v->pickFolder());contentGrid.addView(f);
-        contentGrid.addView(label("Selected files stay in the transfer list below.",12,Color.GRAY));
+        contentGrid.addView(label("Selected files stay in the transfer list below.",11,Color.GRAY));
     }
 
     private int exportInstalledApp(ApplicationInfo app,ArrayList<Item> made){
