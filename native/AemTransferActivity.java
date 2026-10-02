@@ -10,6 +10,8 @@ import android.graphics.Color;
 import android.graphics.Typeface;
 import android.net.Uri;
 import android.net.wifi.p2p.*;
+import android.net.wifi.WifiManager;
+import android.location.LocationManager;
 import android.net.wifi.WpsInfo;
 import android.os.*;
 import android.provider.DocumentsContract;
@@ -471,6 +473,23 @@ public class AemTransferActivity extends Activity {
     private boolean isSystemApp(ApplicationInfo a){return (a.flags&(ApplicationInfo.FLAG_SYSTEM|ApplicationInfo.FLAG_UPDATED_SYSTEM_APP))!=0;}
     private int exportInstalledApp(ApplicationInfo app){ArrayList<Item> made=new ArrayList<>();return exportInstalledApp(app,made);}
 
+    private boolean wifiEnabled(){
+        try{WifiManager wm=(WifiManager)getApplicationContext().getSystemService(WIFI_SERVICE);return wm!=null&&wm.isWifiEnabled();}catch(Exception e){return true;}
+    }
+    private boolean locationEnabled(){
+        if(Build.VERSION.SDK_INT<28)return true;
+        try{LocationManager lm=(LocationManager)getSystemService(LOCATION_SERVICE);return lm!=null&&lm.isLocationEnabled();}catch(Exception e){return true;}
+    }
+    private void showSystemRequirement(String title,String message,boolean wifi){
+        peerBox.removeAllViews();
+        peerBox.addView(label(title,16,Color.WHITE));
+        TextView body=label(message,13,Color.LTGRAY);body.setPadding(0,dp(8),0,dp(12));peerBox.addView(body);
+        Button open=actionButton(wifi?"OPEN WI-FI SETTINGS":"OPEN LOCATION SETTINGS");
+        open.setBackground(bg(Color.rgb(50,92,210),12));
+        open.setOnClickListener(v->{try{startActivity(new Intent(wifi?android.provider.Settings.ACTION_WIFI_SETTINGS:android.provider.Settings.ACTION_LOCATION_SOURCE_SETTINGS));}catch(Exception ignored){startActivity(new Intent(android.provider.Settings.ACTION_SETTINGS));}});
+        peerBox.addView(open,new LinearLayout.LayoutParams(-1,dp(48)));
+    }
+
     private void startTransferService(){
         try{
             Intent i=new Intent(this,AemTransferService.class);
@@ -494,6 +513,7 @@ public class AemTransferActivity extends Activity {
 
     private void startReceive(){
         if(!hasPermission()){requestPermissions(requiredPermissions(),PERM);return;}
+        if(!wifiEnabled()){status.setText("Wi-Fi is off. Turn it on to receive directly.");showSystemRequirement("Wi-Fi is required","AEM Transfer uses Wi-Fi Direct for the local phone-to-phone connection.",true);return;}
         sending=false;
         modeHint.setText("Receive mode: keep this screen open. The sender will appear when nearby.");
         if(manager==null||channel==null){status.setText("Wi-Fi Direct is unavailable on this phone.");return;}
@@ -524,6 +544,8 @@ public class AemTransferActivity extends Activity {
     }
     private void discover(){
         if(!hasPermission()){requestPermissions(requiredPermissions(),PERM);return;}
+        if(!wifiEnabled()){status.setText("Wi-Fi is off. Turn it on to scan for nearby receivers.");showSystemRequirement("Turn on Wi-Fi","AEM uses Wi-Fi Direct locally; mobile data and Internet are not used for the transfer.",true);return;}
+        if(!locationEnabled()){status.setText("Location services are off. Android requires them for Wi-Fi Direct discovery.");showSystemRequirement("Turn on Location services","Android requires Location Mode enabled for Wi-Fi Direct peer discovery on supported versions. AEM does not use your location for the transfer.",false);return;}
         modeHint.setText("Send mode: AEM is scanning for nearby receivers.");
         if(manager==null||channel==null){status.setText("Wi-Fi Direct is unavailable on this phone.");return;}
         peerBox.removeAllViews();
@@ -567,7 +589,7 @@ public class AemTransferActivity extends Activity {
         }
     }
     private void requestPeers(){if(!hasPermission()||manager==null||channel==null)return;manager.requestPeers(channel,list->{peers.clear();peers.addAll(list.getDeviceList());renderPeers();});}
-    private void renderPeers(){peerBox.removeAllViews();for(WifiP2pDevice d:peers){
+    private void renderPeers(){peerBox.removeAllViews();if(peers.isEmpty()){TextView empty=label("No receiver found yet",15,Color.WHITE);empty.setTypeface(Typeface.DEFAULT,Typeface.BOLD);peerBox.addView(empty);peerBox.addView(label("Keep the other phone on AEM → Transfer → Receive, then scan again.",13,Color.LTGRAY));return;}TextView heading=label(peers.size()+" nearby device"+(peers.size()==1?"":"s"),13,Color.rgb(170,175,185));heading.setPadding(0,dp(2),0,dp(6));peerBox.addView(heading);for(WifiP2pDevice d:peers){
         LinearLayout card=new LinearLayout(this);
         card.setGravity(Gravity.CENTER_VERTICAL);
         card.setPadding(dp(14),dp(8),dp(8),dp(8));
