@@ -654,7 +654,7 @@ public class AemTransferActivity extends Activity {
             else target=new Intent(wifi?android.provider.Settings.ACTION_WIFI_SETTINGS:android.provider.Settings.ACTION_LOCATION_SOURCE_SETTINGS);
             startActivity(target);
         }catch(Exception ignored){try{startActivity(new Intent(android.provider.Settings.ACTION_SETTINGS));}catch(Exception ignored2){}}});
-        peerBox.addView(open,new LinearLayout.LayoutParams(-1,dp(48)));\n        try{\n            Intent target;\n            if(wifi&&Build.VERSION.SDK_INT>=29)target=new Intent(android.provider.Settings.Panel.ACTION_WIFI);\n            else target=new Intent(wifi?android.provider.Settings.ACTION_WIFI_SETTINGS:android.provider.Settings.ACTION_LOCATION_SOURCE_SETTINGS);\n            startActivity(target);\n        }catch(Exception ignored){}
+        peerBox.addView(open,new LinearLayout.LayoutParams(-1,dp(48)));
     }
 
     private void startTransferService(){
