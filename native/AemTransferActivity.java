@@ -638,7 +638,7 @@ public class AemTransferActivity extends Activity {
         try{stopService(new Intent(this,AemTransferService.class));}catch(Exception ignored){}
     }
     private void beginTransferSession(){
-        if(transferId==null||transferId.isEmpty())transferId=UUID.randomUUID().toString();
+        transferId=UUID.randomUUID().toString();
         transferActive=true;
         startTransferService();
         if(disconnectButton!=null)disconnectButton.setEnabled(true);
@@ -646,7 +646,33 @@ public class AemTransferActivity extends Activity {
     private void finishTransferSession(){
         transferActive=false;
         stopTransferService();
-        if(disconnectButton!=null)runOnUiThread(()->disconnectButton.setEnabled(false));
+        if(connectionActive) runOnUiThread(()->{
+            disconnectButton.setEnabled(true);
+            showPostTransferOptions();
+        });
+    }
+    private void showPostTransferOptions(){
+        peerBox.removeAllViews();
+        radar=null;
+        TextView h=label("Transfer complete",16,Color.WHITE);
+        h.setTypeface(Typeface.DEFAULT,Typeface.BOLD);
+        peerBox.addView(h);
+        TextView info=label("The connection is still active. Choose another item above and send again without disconnecting.",13,Color.LTGRAY);
+        info.setPadding(0,dp(8),0,dp(10));
+        peerBox.addView(info);
+        Button more=actionButton("BACK TO ITEMS / SEND MORE");
+        more.setBackground(bg(Color.rgb(50,92,210),12));
+        more.setOnClickListener(v->{
+            peerBox.removeAllViews();
+            status.setText("Connection active • select another item, then press Send.");
+            modeHint.setText("Connected transfer session: choose another item and send it without disconnecting.");
+        });
+        peerBox.addView(more,new LinearLayout.LayoutParams(-1,dp(48)));
+    }
+    private void showRadar(){
+        peerBox.removeAllViews();
+        radar=new RadarView(this);
+        peerBox.addView(radar,new LinearLayout.LayoutParams(-1,dp(168)));
     }
 
     private void startReceive(){
@@ -655,7 +681,7 @@ public class AemTransferActivity extends Activity {
         sending=false;
         modeHint.setText("Receive mode: keep this screen open. The sender will appear when nearby.");
         if(manager==null||channel==null){status.setText("Wi-Fi Direct is unavailable on this phone.");return;}
-        peerBox.removeAllViews();
+        showRadar();
         status.setText("Preparing receiver…");
         cleanupGroupThenCreate();
     }
@@ -687,7 +713,7 @@ public class AemTransferActivity extends Activity {
         if(!locationEnabled()){waitingForLocation=true;status.setText("Location services are off • turn them on, then return to AEM. Scanning will resume automatically.");showSystemRequirement("Turn on Location services","Android requires Location Mode enabled for Wi-Fi Direct peer discovery on supported versions. AEM does not use your location for the transfer.",false);return;}
         modeHint.setText("Send mode: AEM is scanning for nearby receivers.");
         if(manager==null||channel==null){status.setText("Wi-Fi Direct is unavailable on this phone.");return;}
-        peerBox.removeAllViews();
+        showRadar();
         showConnectionGuide(true);
         status.setText("Scanning for nearby AEM phones…");
         try{
@@ -707,7 +733,7 @@ public class AemTransferActivity extends Activity {
         });
     }
     private void showConnectionGuide(boolean sender){
-        peerBox.removeAllViews();
+        if(radar==null){radar=new RadarView(this);peerBox.addView(radar,new LinearLayout.LayoutParams(-1,dp(168)));}
         TextView h=label(sender?"Nearby receivers":"Waiting for a sender",15,Color.WHITE);
         h.setTypeface(Typeface.DEFAULT,Typeface.BOLD);peerBox.addView(h);
         peerBox.addView(label(sender
@@ -730,7 +756,7 @@ public class AemTransferActivity extends Activity {
         }
     }
     private void requestPeers(){if(!hasPermission()||manager==null||channel==null)return;manager.requestPeers(channel,list->{peers.clear();peers.addAll(list.getDeviceList());renderPeers();});}
-    private void renderPeers(){\n        peerBox.removeAllViews();\n        radar=new RadarView(this);\n        peerBox.addView(radar,new LinearLayout.LayoutParams(-1,dp(168)));if(peers.isEmpty()){TextView empty=label(sending?"Scanning for nearby receivers…":"No receiver found yet",15,Color.WHITE);empty.setTypeface(Typeface.DEFAULT,Typeface.BOLD);peerBox.addView(empty);if(sending){ProgressBar scan=new ProgressBar(this);scan.setIndeterminate(true);peerBox.addView(scan,new LinearLayout.LayoutParams(-1,dp(4)));peerBox.addView(label("Keep the receiver on AEM → Transfer → Receive. AEM will update this list when a compatible phone is found.",13,Color.LTGRAY));}else peerBox.addView(label("Keep the other phone on AEM → Transfer → Receive, then scan again.",13,Color.LTGRAY));if(sending){Button retry=actionButton("SCAN AGAIN");retry.setBackground(bg(Color.rgb(50,92,210),12));retry.setOnClickListener(v->discover());peerBox.addView(retry,new LinearLayout.LayoutParams(-1,dp(46)));}return;}TextView heading=label(peers.size()+" nearby device"+(peers.size()==1?"":"s"),13,Color.rgb(170,175,185));heading.setPadding(0,dp(2),0,dp(6));peerBox.addView(heading);for(WifiP2pDevice d:peers){
+    private void renderPeers(){\n        peerBox.removeAllViews();\n        radar=new RadarView(this);\n        peerBox.addView(radar,new LinearLayout.LayoutParams(-1,dp(168)));\n        radar=new RadarView(this);\n        peerBox.addView(radar,new LinearLayout.LayoutParams(-1,dp(168)));if(peers.isEmpty()){TextView empty=label(sending?"Scanning for nearby receivers…":"No receiver found yet",15,Color.WHITE);empty.setTypeface(Typeface.DEFAULT,Typeface.BOLD);peerBox.addView(empty);if(sending){ProgressBar scan=new ProgressBar(this);scan.setIndeterminate(true);peerBox.addView(scan,new LinearLayout.LayoutParams(-1,dp(4)));peerBox.addView(label("Keep the receiver on AEM → Transfer → Receive. AEM will update this list when a compatible phone is found.",13,Color.LTGRAY));}else peerBox.addView(label("Keep the other phone on AEM → Transfer → Receive, then scan again.",13,Color.LTGRAY));if(sending){Button retry=actionButton("SCAN AGAIN");retry.setBackground(bg(Color.rgb(50,92,210),12));retry.setOnClickListener(v->discover());peerBox.addView(retry,new LinearLayout.LayoutParams(-1,dp(46)));}return;}TextView heading=label(peers.size()+" nearby device"+(peers.size()==1?"":"s"),13,Color.rgb(170,175,185));heading.setPadding(0,dp(2),0,dp(6));peerBox.addView(heading);for(WifiP2pDevice d:peers){
         LinearLayout card=new LinearLayout(this);
         card.setGravity(Gravity.CENTER_VERTICAL);
         card.setPadding(dp(14),dp(8),dp(8),dp(8));
@@ -749,9 +775,17 @@ public class AemTransferActivity extends Activity {
     private void connect(WifiP2pDevice d){if(selected.isEmpty()){status.setText("Select at least one item first.");return;}sending=true;connectedHost=null;beginTransferSession();status.setText("Connecting to "+d.deviceName+"…");WifiP2pConfig c=new WifiP2pConfig();c.deviceAddress=d.deviceAddress;c.wps.setup=WpsInfo.PBC;
         manager.connect(channel,c,new WifiP2pManager.ActionListener(){public void onSuccess(){status.setText("Connection requested...");}public void onFailure(int r){sending=false;finishTransferSession();status.setText("Connection failed: "+r);}});
     }
-    private void requestConnection(){if(!hasPermission()||manager==null||channel==null)return;manager.requestConnectionInfo(channel,info->{if(info.groupFormed&&!info.isGroupOwner&&info.groupOwnerAddress!=null&&sending){
-        sending=false;final String host=info.groupOwnerAddress.getHostAddress();io.execute(()->sendFiles(host));
-    }});}
+    private void requestConnection(){if(!hasPermission()||manager==null||channel==null)return;manager.requestConnectionInfo(channel,info->{
+        if(info.groupFormed){
+            connectionActive=true;
+            disconnectButton.setEnabled(true);
+            if(!info.isGroupOwner&&info.groupOwnerAddress!=null&&sending){
+                sending=false;
+                connectedHost=info.groupOwnerAddress.getHostAddress();
+                io.execute(()->sendFiles(connectedHost));
+            }
+        }
+    });}
     private void startServer(){if(server!=null&&!server.isClosed())return;io.execute(()->{try{server=new ServerSocket(PORT);while(!server.isClosed()){Socket s=server.accept();receiveFiles(s);}}catch(Exception ignored){}});}
 
     private long skipFully(InputStream in,long offset)throws IOException{
@@ -884,6 +918,9 @@ public class AemTransferActivity extends Activity {
     private void disconnectTransfer(){
         sending=false;
         transferActive=false;
+        connectionActive=false;
+        connectedHost=null;
+        transferId=null;
         stopTransferService();
         try{if(server!=null)server.close();}catch(Exception ignored){}
         try{
