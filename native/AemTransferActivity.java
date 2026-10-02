@@ -79,12 +79,14 @@ public class AemTransferActivity extends Activity {
         refreshSelectedText();
     }
     private void addUri(Uri u,String forcedName){String n=forcedName==null?displayName(u):forcedName;long s=size(u);if(s<0)s=0;selected.add(new Item(u,n,s));}
-    private void addTree(Uri tree){
+    private void addTree(Uri tree){addTree(tree,"");}
+    private void addTree(Uri tree,String relative){
         Cursor c=null;try{String doc=DocumentsContract.getTreeDocumentId(tree);Uri children=DocumentsContract.buildChildDocumentsUriUsingTree(tree,doc);
             c=getContentResolver().query(children,new String[]{DocumentsContract.Document.COLUMN_DOCUMENT_ID,DocumentsContract.Document.COLUMN_DISPLAY_NAME,DocumentsContract.Document.COLUMN_MIME_TYPE,DocumentsContract.Document.COLUMN_SIZE},null,null,null);
             if(c!=null)while(c.moveToNext()){String id=c.getString(0),name=c.getString(1),mime=c.getString(2);Uri child=DocumentsContract.buildDocumentUriUsingTree(tree,id);
-                if(DocumentsContract.Document.MIME_TYPE_DIR.equals(mime))addTree(child);
-                else selected.add(new Item(child,name,Math.max(0,c.isNull(3)?size(child):c.getLong(3))));
+                String path=relative.isEmpty()?name:relative+"/"+name;
+                if(DocumentsContract.Document.MIME_TYPE_DIR.equals(mime))addTree(child,path);
+                else selected.add(new Item(child,path,Math.max(0,c.isNull(3)?size(child):c.getLong(3))));
             }
         }catch(Exception e){update("Folder selection failed: "+e.getMessage(),0);}finally{if(c!=null)c.close();}}
     private String displayName(Uri u){Cursor c=null;try{c=getContentResolver().query(u,new String[]{OpenableColumns.DISPLAY_NAME},null,null,null);return c!=null&&c.moveToFirst()&&!c.isNull(0)?c.getString(0):"AEM-file";}catch(Exception e){return u.getLastPathSegment()==null?"AEM-file":u.getLastPathSegment();}finally{if(c!=null)c.close();}}
@@ -159,5 +161,5 @@ public class AemTransferActivity extends Activity {
     private int percent(long d,long t){return t>0?(int)Math.max(0,Math.min(100,d*100/t)):0;}
     private String safe(Exception e){String m=e.getMessage();return m==null?"connection interrupted":m;}
     private void update(String text,int pct){runOnUiThread(()->{status.setText(text);progress.setProgress(pct);});}
-    @Override protected void onDestroy(){try{unregisterReceiver(receiver);}catch(Exception ignored){}try{if(server!=null)server.close();}catch(Exception ignored){}io.shutdownNow();super.onDestroy();}
+    @Override protected void onDestroy(){try{unregisterReceiver(receiver);}catch(Exception ignored){}try{if(server!=null)server.close();}catch(Exception ignored){}try{if(manager!=null&&channel!=null)manager.removeGroup(channel,new WifiP2pManager.ActionListener(){public void onSuccess(){}public void onFailure(int r){}});}catch(Exception ignored){}io.shutdownNow();super.onDestroy();}
 }
