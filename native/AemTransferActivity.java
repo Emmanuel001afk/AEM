@@ -604,7 +604,7 @@ public class AemTransferActivity extends Activity {
         b.setOnClickListener(v->connect(d));
     }}
     private void connect(WifiP2pDevice d){if(selected.isEmpty()){status.setText("Select at least one item first.");return;}sending=true;beginTransferSession();status.setText("Connecting to "+d.deviceName+"…");WifiP2pConfig c=new WifiP2pConfig();c.deviceAddress=d.deviceAddress;c.wps.setup=WpsInfo.PBC;
-        manager.connect(channel,c,new WifiP2pManager.ActionListener(){public void onSuccess(){status.setText("Connection requested...");}public void onFailure(int r){sending=false;status.setText("Connection failed: "+r);}});
+        manager.connect(channel,c,new WifiP2pManager.ActionListener(){public void onSuccess(){status.setText("Connection requested...");}public void onFailure(int r){sending=false;finishTransferSession();status.setText("Connection failed: "+r);}});
     }
     private void requestConnection(){if(!hasPermission()||manager==null||channel==null)return;manager.requestConnectionInfo(channel,info->{if(info.groupFormed&&!info.isGroupOwner&&info.groupOwnerAddress!=null&&sending){
         sending=false;final String host=info.groupOwnerAddress.getHostAddress();io.execute(()->sendFiles(host));
