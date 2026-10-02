@@ -42,7 +42,7 @@ public class AemTransferActivity extends Activity {
     private final HashMap<String,String> peerNames=new HashMap<>();
     private final ExecutorService io=Executors.newCachedThreadPool();
     private final ArrayList<Item> selected=new ArrayList<>(); private final ArrayList<WifiP2pDevice> peers=new ArrayList<>();
-    private LinearLayout root,peerBox,contentGrid; private TextView status,selectedText,categoryTitle,modeHint,deviceNameLabel; private ProgressBar progress; private RadarView radar; private ServerSocket server; private Button disconnectButton; private boolean sending=false; private boolean transferActive=false; private boolean waitingForWifi=false; private boolean waitingForLocation=false; private String transferId=null; private String activeCategory="Apps"; private final HashMap<String,ArrayList<Item>> exportedApps=new HashMap<>(); private final ArrayList<TextView> categoryButtons=new ArrayList<>();
+    private LinearLayout root,peerBox,contentGrid; private TextView status,selectedText,categoryTitle,modeHint,deviceNameLabel; private ProgressBar progress; private RadarView radar; private ServerSocket server; private Button disconnectButton; private boolean sending=false; private boolean transferActive=false; private boolean waitingForWifi=false; private boolean waitingForLocation=false; private String pendingAction=null; private String transferId=null; private String activeCategory="Apps"; private final HashMap<String,ArrayList<Item>> exportedApps=new HashMap<>(); private final ArrayList<TextView> categoryButtons=new ArrayList<>();
 
     private static final class Item {
         final Uri uri; final String name; final long size;
@@ -78,7 +78,6 @@ public class AemTransferActivity extends Activity {
         }};
         IntentFilter f=new IntentFilter(); f.addAction(WifiP2pManager.WIFI_P2P_STATE_CHANGED_ACTION); f.addAction(WifiP2pManager.WIFI_P2P_PEERS_CHANGED_ACTION); f.addAction(WifiP2pManager.WIFI_P2P_CONNECTION_CHANGED_ACTION);
         if(Build.VERSION.SDK_INT>=33) registerReceiver(receiver,f,Context.RECEIVER_EXPORTED); else registerReceiver(receiver,f);
-        if(!hasPermission()) requestPermissions(requiredPermissions(),PERM);
     }
 
     private int dp(int v){return (int)(v*getResources().getDisplayMetrics().density+0.5f);}
@@ -231,7 +230,7 @@ public class AemTransferActivity extends Activity {
         if(Build.VERSION.SDK_INT<33 && Build.VERSION.SDK_INT>=23){p.add(Manifest.permission.READ_EXTERNAL_STORAGE);}
         return p.toArray(new String[0]);
     }
-    @Override public void onRequestPermissionsResult(int r,String[] p,int[] g){super.onRequestPermissionsResult(r,p,g);if(r==PERM){status.setText(hasPermission()?"Permission granted. Ready.":"Required permission was not granted.");renderCategory();}}
+    @Override public void onRequestPermissionsResult(int r,String[] p,int[] g){super.onRequestPermissionsResult(r,p,g);if(r==PERM){if(hasPermission()){String action=pendingAction;pendingAction=null;if("send".equals(action))discover();else if("receive".equals(action))startReceive();else {status.setText("Permission granted. Ready.");renderCategory();}}else status.setText("Nearby-device permission was not granted.");}}
     @Override protected void onResume(){
         super.onResume();
         if(waitingForWifi && wifiEnabled()){
@@ -638,7 +637,7 @@ public class AemTransferActivity extends Activity {
     }
 
     private void startReceive(){
-        if(!hasPermission()){requestPermissions(requiredPermissions(),PERM);return;}
+        if(!hasPermission()){pendingAction="receive";requestPermissions(requiredPermissions(),PERM);return;}
         if(!wifiEnabled()){waitingForWifi=true;status.setText("Wi-Fi is off • turn it on, then return to AEM. Receiver setup will resume automatically.");showSystemRequirement("Wi-Fi is required","AEM Transfer uses Wi-Fi Direct for the local phone-to-phone connection.",true);return;}
         sending=false;
         modeHint.setText("Receive mode: keep this screen open. The sender will appear when nearby.");
@@ -670,7 +669,7 @@ public class AemTransferActivity extends Activity {
         });
     }
     private void discover(){
-        if(!hasPermission()){requestPermissions(requiredPermissions(),PERM);return;}
+        if(!hasPermission()){pendingAction="send";requestPermissions(requiredPermissions(),PERM);return;}
         if(!wifiEnabled()){waitingForWifi=true;status.setText("Wi-Fi is off • turn it on, then return to AEM. Scanning will resume automatically.");showSystemRequirement("Turn on Wi-Fi","AEM uses Wi-Fi Direct locally; mobile data and Internet are not used for the transfer.",true);return;}
         if(!locationEnabled()){waitingForLocation=true;status.setText("Location services are off • turn them on, then return to AEM. Scanning will resume automatically.");showSystemRequirement("Turn on Location services","Android requires Location Mode enabled for Wi-Fi Direct peer discovery on supported versions. AEM does not use your location for the transfer.",false);return;}
         modeHint.setText("Send mode: AEM is scanning for nearby receivers.");
