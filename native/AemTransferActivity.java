@@ -354,7 +354,7 @@ public class AemTransferActivity extends Activity {
                 : "Send and Receive stay here. Device discovery opens only when you start a connection.";
         TextView m=label(message,13,Color.LTGRAY);
         m.setPadding(0,dp(6),0,dp(10)); card.addView(m);
-        if(connectionActive){
+        if(connectionActive && connectedHost!=null){
             Button sendMore=actionButton("SEND MORE");
             sendMore.setBackground(bg(Color.rgb(50,92,210),12));
             sendMore.setOnClickListener(v->{
@@ -362,6 +362,15 @@ public class AemTransferActivity extends Activity {
                 sending=false; beginTransferSession(); io.execute(()->sendFiles(connectedHost));
             });
             card.addView(sendMore,new LinearLayout.LayoutParams(-1,dp(46)));
+        } else if(connectionActive) {
+            TextView incoming=label("Connected as receiver • ready for incoming transfers. You can remain on this home while the sender sends.",12,Color.rgb(170,175,185));
+            incoming.setPadding(0,0,0,dp(8)); card.addView(incoming);
+            Button receiveMore=actionButton("KEEP RECEIVING");
+            receiveMore.setBackground(bg(Color.rgb(50,92,210),12));
+            receiveMore.setOnClickListener(v->{status.setText("Receiver is ready for another transfer.");});
+            card.addView(receiveMore,new LinearLayout.LayoutParams(-1,dp(46)));
+        }
+        if(connectionActive){
             Button disconnect=actionButton("DISCONNECT");
             disconnect.setBackground(bg(Color.rgb(50,52,60),12));
             disconnect.setOnClickListener(v->disconnectTransfer());
