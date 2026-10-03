@@ -46,7 +46,7 @@ public class AemTransferActivity extends Activity {
     private final ExecutorService io=Executors.newCachedThreadPool();
     private final AtomicBoolean transferRunning=new AtomicBoolean(false);
     private final ArrayList<Item> selected=new ArrayList<>(); private final ArrayList<WifiP2pDevice> peers=new ArrayList<>();
-    private LinearLayout root,peerBox,contentGrid; private TextView status,selectedText,categoryTitle,modeHint,deviceNameLabel; private EditText appSearch; private ProgressBar progress; private RadarView radar; private ServerSocket server; private Button disconnectButton; private volatile boolean sending=false; private volatile boolean transferActive=false; private volatile String connectedToken=null; private volatile boolean connectionActive=false; private volatile String connectedHost=null; private boolean waitingForWifi=false; private boolean waitingForLocation=false; private String pendingAction=null; private volatile String transferId=null; private boolean transferFlowOpen=false; private boolean receiverMode=false; private boolean wifiWasOff=false; private boolean locationWasOff=false; private String receiverToken=null; private String activeCategory="Apps"; private final HashMap<String,ArrayList<Item>> exportedApps=new HashMap<>(); private final ArrayList<TextView> categoryButtons=new ArrayList<>();
+    private LinearLayout root,peerBox,contentGrid; private LinearLayout modesView,tabsView,selectedBarView,bottomActionsView; private TextView status,selectedText,categoryTitle,modeHint,deviceNameLabel,transferActivityTitle,transferActivityItems; private EditText appSearch; private ProgressBar progress; private RadarView radar; private ServerSocket server; private Button disconnectButton; private String activeSection="Transfer"; private volatile boolean sending=false; private volatile boolean transferActive=false; private volatile String connectedToken=null; private volatile boolean connectionActive=false; private volatile String connectedHost=null; private boolean waitingForWifi=false; private boolean waitingForLocation=false; private String pendingAction=null; private volatile String transferId=null; private boolean transferFlowOpen=false; private boolean receiverMode=false; private boolean wifiWasOff=false; private boolean locationWasOff=false; private String receiverToken=null; private BroadcastReceiver installReceiver; private String activeCategory="Apps"; private final HashMap<String,ArrayList<Item>> exportedApps=new HashMap<>(); private final ArrayList<TextView> categoryButtons=new ArrayList<>();
 
     private static final class Item {
         final Uri uri; final String name; final long size;
@@ -82,6 +82,22 @@ public class AemTransferActivity extends Activity {
         }};
         IntentFilter f=new IntentFilter(); f.addAction(WifiP2pManager.WIFI_P2P_STATE_CHANGED_ACTION); f.addAction(WifiP2pManager.WIFI_P2P_PEERS_CHANGED_ACTION); f.addAction(WifiP2pManager.WIFI_P2P_CONNECTION_CHANGED_ACTION);
         if(Build.VERSION.SDK_INT>=33) registerReceiver(receiver,f,Context.RECEIVER_EXPORTED); else registerReceiver(receiver,f);
+        installReceiver=new BroadcastReceiver(){@Override public void onReceive(Context c,Intent i){
+            int statusCode=i.getIntExtra(PackageInstaller.EXTRA_STATUS,PackageInstaller.STATUS_FAILURE);
+            if(statusCode==PackageInstaller.STATUS_PENDING_USER_ACTION){
+                Intent confirm=i.getParcelableExtra(Intent.EXTRA_INTENT);
+                if(confirm!=null){confirm.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);startActivity(confirm);}
+            }else if(statusCode==PackageInstaller.STATUS_SUCCESS){
+                status.setText("App installed successfully.");
+                renderDownloads();
+                recordHistory("INSTALLED",i.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE)==null?"App":i.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE),0,"Installed");
+            }else{
+                String msg=i.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE);
+                status.setText("Installation failed"+(msg==null||msg.isEmpty()?"":": "+msg));
+            }
+        }};
+        IntentFilter installFilter=new IntentFilter("com.aem.store.PACKAGE_INSTALL");
+        if(Build.VERSION.SDK_INT>=33) registerReceiver(installReceiver,installFilter,Context.RECEIVER_NOT_EXPORTED); else registerReceiver(installReceiver,installFilter);
     }
 
     private int dp(int v){return (int)(v*getResources().getDisplayMetrics().density+0.5f);}
@@ -121,8 +137,20 @@ public class AemTransferActivity extends Activity {
         deviceNameLabel.setPadding(2,0,2,4);
         deviceNameLabel.setOnClickListener(v->showTransferNameDialog());
         root.addView(deviceNameLabel,new LinearLayout.LayoutParams(-1,dp(34)));
+        LinearLayout nav=new LinearLayout(this);
+        nav.setPadding(0,dp(4),0,dp(8));
+        TextView transferNav=label("Transfer",14,Color.WHITE);
+        TextView downloadsNav=label("Downloads",14,Color.LTGRAY);
+        TextView historyNav=label("History",14,Color.LTGRAY);
+        for(TextView n:new TextView[]{transferNav,downloadsNav,historyNav}){n.setGravity(Gravity.CENTER);n.setTypeface(Typeface.DEFAULT,Typeface.BOLD);n.setPadding(dp(8),0,dp(8),0);nav.addView(n,new LinearLayout.LayoutParams(0,dp(42),1));}
+        transferNav.setBackground(bg(Color.rgb(50,92,210),12));
+        transferNav.setOnClickListener(v->setSection("Transfer"));
+        downloadsNav.setOnClickListener(v->setSection("Downloads"));
+        historyNav.setOnClickListener(v->setSection("History"));
+        root.addView(nav,new LinearLayout.LayoutParams(-1,dp(50)));
+        
 
-        LinearLayout modes=new LinearLayout(this);
+        LinearLayout modes=new LinearLayout(this); modesView=modes;
         modes.setPadding(0,dp(8),0,dp(8));
         Button send=actionButton("Send");
         Button receive=actionButton("Receive");
@@ -146,7 +174,7 @@ public class AemTransferActivity extends Activity {
         categoryTitle.setPadding(0,dp(8),0,dp(8));
         root.addView(categoryTitle,new LinearLayout.LayoutParams(-1,dp(42)));
 
-        HorizontalScrollView tabsScroll=new HorizontalScrollView(this);
+        HorizontalScrollView tabsScroll=new HorizontalScrollView(this); tabsView=tabsScroll;
         tabsScroll.setHorizontalScrollBarEnabled(false);
         LinearLayout tabs=new LinearLayout(this);
         tabs.setOrientation(LinearLayout.HORIZONTAL);
@@ -189,7 +217,7 @@ public class AemTransferActivity extends Activity {
         contentScroll.addView(contentGrid);
         root.addView(contentScroll,new LinearLayout.LayoutParams(-1,0,1));
 
-        LinearLayout selectedBar=new LinearLayout(this);
+        LinearLayout selectedBar=new LinearLayout(this); selectedBarView=selectedBar;
         selectedBar.setGravity(Gravity.CENTER_VERTICAL);
         selectedBar.setPadding(dp(14),0,dp(14),0);
         selectedBar.setBackground(bg(Color.rgb(24,26,32),14));
@@ -213,9 +241,14 @@ public class AemTransferActivity extends Activity {
         peerBox=new LinearLayout(this);
         peerBox.setOrientation(LinearLayout.VERTICAL);
         peerBox.setPadding(0,dp(4),0,0);
+        LinearLayout activityCard=new LinearLayout(this); activityCard.setOrientation(LinearLayout.VERTICAL); activityCard.setPadding(dp(12),dp(10),dp(12),dp(10)); activityCard.setBackground(bg(Color.rgb(24,26,32),14));
+        transferActivityTitle=label("Transfer activity",14,Color.WHITE); transferActivityTitle.setTypeface(Typeface.DEFAULT,Typeface.BOLD);
+        transferActivityItems=label("No active transfer",12,Color.LTGRAY); transferActivityItems.setPadding(0,dp(5),0,0); transferActivityItems.setMaxLines(6);
+        activityCard.addView(transferActivityTitle); activityCard.addView(transferActivityItems);
+        peerBox.addView(activityCard);
         root.addView(peerBox);
 
-        LinearLayout bottom=new LinearLayout(this);
+        LinearLayout bottom=new LinearLayout(this); bottomActionsView=bottom;
         Button chooseFiles=actionButton("Add files");
         Button chooseFolder=actionButton("Add folder");
         LinearLayout.LayoutParams bp=new LinearLayout.LayoutParams(0,dp(50),1);bp.setMargins(0,dp(6),dp(5),0);bottom.addView(chooseFiles,bp);
@@ -246,6 +279,7 @@ public class AemTransferActivity extends Activity {
         status.setText("Ready");
         updateCategoryButtons();
         renderCategory();
+        setSection("Transfer");
     }
     private boolean hasPermission(){
         return Build.VERSION.SDK_INT>=33?checkSelfPermission(Manifest.permission.NEARBY_WIFI_DEVICES)==PackageManager.PERMISSION_GRANTED:checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION)==PackageManager.PERMISSION_GRANTED;
@@ -271,6 +305,123 @@ public class AemTransferActivity extends Activity {
             waitingForLocation=false;
             status.setText("Location services are on • resuming nearby-device scan…");
             if(sending) discover();
+        }
+    }
+
+    private void setSection(String section){
+        activeSection=section;
+        boolean transfer="Transfer".equals(section);
+        boolean downloads="Downloads".equals(section);
+        modesView.setVisibility(transfer?View.VISIBLE:View.GONE);
+        tabsView.setVisibility(transfer?View.VISIBLE:View.GONE);
+        appSearch.setVisibility(transfer&&"Apps".equals(activeCategory)?View.VISIBLE:View.GONE);
+        selectedBarView.setVisibility(transfer?View.VISIBLE:View.GONE);
+        bottomActionsView.setVisibility(transfer?View.VISIBLE:View.GONE);
+        peerBox.setVisibility(transfer?View.VISIBLE:View.GONE);
+        status.setVisibility(transfer?View.VISIBLE:View.GONE);
+        progress.setVisibility(transfer?View.VISIBLE:View.GONE);
+        categoryTitle.setVisibility(View.VISIBLE);
+        if(downloads){categoryTitle.setText("Downloads");renderDownloads();}
+        else if("History".equals(section)){categoryTitle.setText("Transfer history");renderHistory();}
+        else renderCategory();
+    }
+
+    private File transferDir(){return new File(getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS),"AEM Transfer");}
+    private void collectTransferFiles(File dir,ArrayList<File> out){
+        if(dir==null||!dir.exists())return;
+        File[] fs=dir.listFiles(); if(fs==null)return;
+        for(File f:fs){if(f.isDirectory()){if(!".resume".equals(f.getName()))collectTransferFiles(f,out);}else out.add(f);}
+    }
+    private String mimeFor(File f){
+        String n=f.getName().toLowerCase(Locale.US);
+        if(n.endsWith(".apk"))return "application/vnd.android.package-archive";
+        if(n.endsWith(".apks"))return "application/octet-stream";
+        if(n.endsWith(".pdf"))return "application/pdf";
+        if(n.endsWith(".jpg")||n.endsWith(".jpeg"))return "image/jpeg";
+        if(n.endsWith(".png"))return "image/png";
+        if(n.endsWith(".mp4"))return "video/mp4";
+        if(n.endsWith(".mp3"))return "audio/mpeg";
+        return "*/*";
+    }
+    private void openTransferredFile(File f){
+        try{
+            Uri u=FileProvider.getUriForFile(this,getPackageName()+".fileprovider",f);
+            Intent i=new Intent(Intent.ACTION_VIEW);i.setDataAndType(u,mimeFor(f));i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            startActivity(i);
+        }catch(Exception e){status.setVisibility(View.VISIBLE);status.setText("Cannot open "+f.getName()+": "+safe(e));}
+    }
+    private void deleteTransferredFile(File f){
+        if(f.delete()){recordHistory("DELETED",f.getName(),0,"Deleted");renderDownloads();status.setVisibility(View.VISIBLE);status.setText("Deleted "+f.getName());}
+        else{status.setVisibility(View.VISIBLE);status.setText("Could not delete "+f.getName());}
+    }
+    private void installTransferredPackage(File file){
+        io.execute(()->{
+            try{
+                PackageInstaller installer=getPackageManager().getPackageInstaller();
+                PackageInstaller.SessionParams params=new PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL);
+                int sid=installer.createSession(params);
+                PackageInstaller.Session session=installer.openSession(sid);
+                try{
+                    if(file.getName().toLowerCase(Locale.US).endsWith(".apks")){
+                        try(ZipInputStream zin=new ZipInputStream(new BufferedInputStream(new FileInputStream(file),1024*1024))){
+                            ZipEntry e;byte[] buf=new byte[1024*1024];
+                            while((e=zin.getNextEntry())!=null){
+                                if(e.isDirectory()||!e.getName().toLowerCase(Locale.US).endsWith(".apk"))continue;
+                                try(OutputStream out=session.openWrite(e.getName(),0,-1)){int n;while((n=zin.read(buf))!=-1)if(n>0)out.write(buf,0,n);out.flush();}
+                            }
+                        }
+                    }else{
+                        try(InputStream in=new BufferedInputStream(new FileInputStream(file),1024*1024);OutputStream out=session.openWrite(file.getName(),0,file.length())){
+                            byte[] buf=new byte[1024*1024];int n;while((n=in.read(buf))!=-1)if(n>0)out.write(buf,0,n);out.flush();
+                        }
+                    }
+                    Intent callback=new Intent("com.aem.store.PACKAGE_INSTALL").setPackage(getPackageName());
+                    PendingIntent pi=PendingIntent.getBroadcast(this,(int)(System.currentTimeMillis()&0x7fffffff),callback,PendingIntent.FLAG_UPDATE_CURRENT|PendingIntent.FLAG_MUTABLE);
+                    session.commit(pi.getIntentSender());
+                }catch(Exception e){session.abandon();throw e;}
+            }catch(Exception e){runOnUiThread(()->status.setText("Install failed: "+(e.getMessage()==null?"invalid package":e.getMessage())));}
+        });
+    }
+    private void recordHistory(String action,String name,long size,String result){
+        String line=System.currentTimeMillis()+"|"+action.replace("|"," ")+"|"+name.replace("|"," ")+"|"+size+"|"+result.replace("|"," ");
+        android.content.SharedPreferences p=getSharedPreferences("aem_transfer_history",MODE_PRIVATE);
+        String old=p.getString("items","");
+        String combined=line+"\n"+old;
+        String[] lines=combined.split("\\n");
+        if(lines.length>100)combined=String.join("\\n",Arrays.copyOf(lines,100));
+        p.edit().putString("items",combined).apply();
+    }
+    private void renderDownloads(){
+        contentGrid.removeAllViews();
+        File dir=transferDir();ArrayList<File> files=new ArrayList<>();collectTransferFiles(dir,files);
+        Collections.sort(files,(a,b)->Long.compare(b.lastModified(),a.lastModified()));
+        contentGrid.addView(section(files.size()+" DOWNLOADED ITEM"+(files.size()==1?"":"S")));
+        if(files.isEmpty()){contentGrid.addView(label("No transferred files are stored on this device yet.",14,Color.GRAY));return;}
+        for(File f:files){
+            LinearLayout row=new LinearLayout(this);row.setGravity(Gravity.CENTER_VERTICAL);row.setPadding(dp(10),dp(8),dp(8),dp(8));row.setBackground(bg(Color.rgb(24,26,31),14));
+            LinearLayout info=new LinearLayout(this);info.setOrientation(LinearLayout.VERTICAL);
+            info.addView(label(f.getName(),13,Color.WHITE));info.addView(label(format(f.length())+" • "+new Date(f.lastModified()).toString(),10,Color.GRAY));
+            row.addView(info,new LinearLayout.LayoutParams(0,-2,1));
+            if(f.getName().toLowerCase(Locale.US).endsWith(".apk")||f.getName().toLowerCase(Locale.US).endsWith(".apks")){
+                Button install=actionButton("Install");install.setTextSize(11);install.setBackground(bg(Color.rgb(50,92,210),10));install.setOnClickListener(v->installTransferredPackage(f));row.addView(install,new LinearLayout.LayoutParams(dp(74),dp(42)));
+            }
+            Button open=actionButton("Open");open.setTextSize(11);open.setOnClickListener(v->openTransferredFile(f));row.addView(open,new LinearLayout.LayoutParams(dp(68),dp(42)));
+            Button del=actionButton("Delete");del.setTextSize(11);del.setOnClickListener(v->deleteTransferredFile(f));row.addView(del,new LinearLayout.LayoutParams(dp(68),dp(42)));
+            LinearLayout.LayoutParams rp=new LinearLayout.LayoutParams(-1,-2);rp.setMargins(0,dp(4),0,dp(4));contentGrid.addView(row,rp);
+        }
+    }
+    private void renderHistory(){
+        contentGrid.removeAllViews();
+        TextView clear=label("CLEAR HISTORY",12,Color.rgb(130,170,255));clear.setGravity(Gravity.CENTER_VERTICAL);clear.setPadding(dp(8),0,dp(8),0);clear.setOnClickListener(v->{getSharedPreferences("aem_transfer_history",MODE_PRIVATE).edit().clear().apply();renderHistory();});
+        contentGrid.addView(clear,new LinearLayout.LayoutParams(-1,dp(40)));
+        String raw=getSharedPreferences("aem_transfer_history",MODE_PRIVATE).getString("items","");
+        if(raw.trim().isEmpty()){contentGrid.addView(label("No transfer history yet.",14,Color.GRAY));return;}
+        for(String line:raw.split("\\n")){
+            String[] p=line.split("\\|",-1);if(p.length<5)continue;
+            String when;try{when=new Date(Long.parseLong(p[0])).toString();}catch(Exception e){when="Unknown time";}
+            LinearLayout row=new LinearLayout(this);row.setOrientation(LinearLayout.VERTICAL);row.setPadding(dp(10),dp(8),dp(10),dp(8));row.setBackground(bg(Color.rgb(24,26,31),14));
+            row.addView(label(p[1]+" • "+p[2],13,Color.WHITE));row.addView(label(when+" • "+(Long.parseLong(p[3])>0?format(Long.parseLong(p[3]))+" • ":"")+p[4],10,Color.GRAY));
+            contentGrid.addView(row,new LinearLayout.LayoutParams(-1,-2));
         }
     }
 
@@ -671,6 +822,8 @@ public class AemTransferActivity extends Activity {
         transferActive=true;
         transferRunning.set(true);
         startTransferService();
+        transferActivityTitle.setText(sending?"Sending transfer":"Receiving transfer");
+        transferActivityItems.setText(sending&&selected.size()>0?selected.size()+" item"+(selected.size()==1?"":"s")+" selected • starting transfer…":"Preparing incoming transfer…");
         if(disconnectButton!=null)disconnectButton.setEnabled(true);
     }
     private void finishTransferSession(){
@@ -688,7 +841,7 @@ public class AemTransferActivity extends Activity {
         TextView h=label("Transfer complete",16,Color.WHITE);
         h.setTypeface(Typeface.DEFAULT,Typeface.BOLD);
         peerBox.addView(h);
-        TextView info=label("The connection is still active. Choose another item above and send again without disconnecting.",13,Color.LTGRAY);
+        TextView info=label("The transfer is complete. Open Downloads to install, open, or delete received files.",13,Color.LTGRAY);
         info.setPadding(0,dp(8),0,dp(10));
         peerBox.addView(info);
         Button more=actionButton("BACK TO ITEMS / SEND MORE");
@@ -699,6 +852,10 @@ public class AemTransferActivity extends Activity {
             modeHint.setText("Connected transfer session: choose another item and send it without disconnecting.");
         });
         peerBox.addView(more,new LinearLayout.LayoutParams(-1,dp(48)));
+        Button downloads=actionButton("OPEN DOWNLOADS");
+        downloads.setBackground(bg(Color.rgb(31,34,41),12));
+        downloads.setOnClickListener(v->setSection("Downloads"));
+        peerBox.addView(downloads,new LinearLayout.LayoutParams(-1,dp(46)));
     }
     private void showRadar(){
         peerBox.removeAllViews();
@@ -924,7 +1081,7 @@ public class AemTransferActivity extends Activity {
                     }
                 }
                 int result=ackIn.readInt();
-                if(result==1){update("Transfer completed and verified",100);finishTransferSession();return;}
+                if(result==1){for(Item x:selected)recordHistory("SENT",x.name,x.size,"Completed");update("Transfer completed and verified",100);finishTransferSession();return;}
                 throw new IOException("Receiver rejected transfer");
             }catch(Exception e){
                 if(!transferActive)return;
@@ -954,6 +1111,9 @@ public class AemTransferActivity extends Activity {
                 byte[] nb=new byte[nl];in.readFully(nb);String name=safePath(new String(nb,"UTF-8"));long size=in.readLong();if(size<0)throw new IOException("Invalid file size");
                 hs.add(new Header(name,size,null));total+=size;if(total<0||total>declaredTotal)throw new IOException("Invalid transfer size");
             }
+            final StringBuilder incoming=new StringBuilder();
+            for(Header h:hs){if(incoming.length()>0)incoming.append("\n");incoming.append("• ").append(h.name).append(" — ").append(format(h.size));}
+            runOnUiThread(()->{transferActivityTitle.setText("Incoming transfer");transferActivityItems.setText(incoming.toString());});
             long[] offsets=new long[count];
             for(int i=0;i<count;i++){
                 File done=doneFile(id,i),part=partFile(id,i);
@@ -984,6 +1144,7 @@ public class AemTransferActivity extends Activity {
                 if(!Arrays.equals(expected,actual))throw new IOException("Integrity check failed for "+h.name);
                 File target=unique(new File(dir,h.name));File parent=target.getParentFile();if(parent!=null&&!parent.exists()&&!parent.mkdirs())throw new IOException("Cannot create destination folder");
                 if(!part.renameTo(target))throw new IOException("Cannot finalize "+h.name);
+                recordHistory("RECEIVED",target.getName(),target.length(),"Completed");
                 File done=doneFile(id,i);if(!done.createNewFile()&&!done.exists())throw new IOException("Cannot persist resume state");
             }
             control.writeInt(1);control.flush();
@@ -1051,15 +1212,20 @@ public class AemTransferActivity extends Activity {
         renderCategory();
     }
     @Override public void onBackPressed(){
+        if(!"Transfer".equals(activeSection)){setSection("Transfer");return;}
         if(transferFlowOpen){returnToItems();return;}
         super.onBackPressed();
     }
 
     private int percent(long d,long t){return t>0?(int)Math.max(0,Math.min(100,d*100/t)):0;}
     private String safe(Exception e){String m=e.getMessage();return m==null?"connection interrupted":m;}
-    private void update(String text,int pct){runOnUiThread(()->{status.setText(text);progress.setProgress(pct);});}
+    private void update(String text,int pct){runOnUiThread(()->{
+        status.setText(text);progress.setProgress(pct);
+        if(transferActivityItems!=null)transferActivityItems.setText(text);
+        });}
     @Override protected void onDestroy(){
         try{unregisterReceiver(receiver);}catch(Exception ignored){}
+        try{if(installReceiver!=null)unregisterReceiver(installReceiver);}catch(Exception ignored){}
         transferActive=false; transferRunning.set(false);
         try{if(server!=null)server.close();}catch(Exception ignored){}
         try{if(manager!=null&&channel!=null)manager.stopPeerDiscovery(channel,new WifiP2pManager.ActionListener(){public void onSuccess(){}public void onFailure(int r){}});}catch(Exception ignored){}
