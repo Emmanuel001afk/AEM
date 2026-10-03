@@ -190,7 +190,7 @@ public class AemTransferActivity extends Activity {
         categoryTitle=new TextView(this);
         categoryTitle.setText("Apps");
         categoryTitle.setTextSize(19);
-        categoryTitle.setTextColor(Color.WHITE);
+        categoryTitle.setTextColor(textColor());
         categoryTitle.setTypeface(null,1);
         categoryTitle.setPadding(0,dp(12),0,dp(10));
         root.addView(categoryTitle,new LinearLayout.LayoutParams(-1,dp(58)));
@@ -215,7 +215,7 @@ public class AemTransferActivity extends Activity {
         appSearch.setSingleLine(true);
         appSearch.setHint("Search apps on this device…");
         appSearch.setHintTextColor(mutedTextColor());
-        appSearch.setTextColor(Color.WHITE);
+        appSearch.setTextColor(textColor());
         appSearch.setTextSize(13);
         appSearch.setPadding(dp(12),0,dp(12),0);
         appSearch.setBackground(bg(surface(),14));
@@ -288,7 +288,7 @@ public class AemTransferActivity extends Activity {
         chooseFolder.setOnClickListener(v->pickFolder());
         receive.setOnClickListener(v->startReceive());
         send.setOnClickListener(v->{
-            if(selected.isEmpty()){status.setText("Select something to send first.");return;}
+            if(selected.isEmpty()){status.setVisibility(View.VISIBLE);status.setText("Select something to send first.");return;}
             if(connectionActive&&connectedHost!=null){
                 sending=false;
                 beginTransferSession();
@@ -718,7 +718,7 @@ public class AemTransferActivity extends Activity {
         String[] names={"Transfer","Downloads","History"};
         for(int i=0;i<sectionButtons.size()&&i<names.length;i++){
             TextView b=sectionButtons.get(i); boolean active=names[i].equals(activeSection);
-            b.setTextColor(Color.WHITE);
+            b.setTextColor(active?Color.WHITE:textColor());
             b.setBackground(bg(active?accent():surfaceAlt(),12));
             b.setAlpha(active?1f:.78f);
         }
@@ -985,6 +985,7 @@ public class AemTransferActivity extends Activity {
         transferActive=true;
         transferRunning.set(true);
         startTransferService();
+        status.setVisibility(View.VISIBLE); progress.setVisibility(View.VISIBLE);
         transferActivityTitle.setText(sending?"Sending transfer":"Receiving transfer");
         transferActivityItems.setText(sending&&selected.size()>0?selected.size()+" item"+(selected.size()==1?"":"s")+" selected • starting transfer…":"Preparing incoming transfer…");
         if(disconnectButton!=null)disconnectButton.setEnabled(true);
