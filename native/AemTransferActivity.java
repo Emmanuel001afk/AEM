@@ -48,7 +48,7 @@ public class AemTransferActivity extends Activity {
     private final ExecutorService io=Executors.newCachedThreadPool();
     private final AtomicBoolean transferRunning=new AtomicBoolean(false);
     private final ArrayList<Item> selected=new ArrayList<>(); private final ArrayList<WifiP2pDevice> peers=new ArrayList<>();
-    private LinearLayout root,peerBox,contentGrid; private LinearLayout modesView,selectedBarView,bottomActionsView; private View tabsView; private TextView status,selectedText,categoryTitle,modeHint,deviceNameLabel,transferActivityTitle,transferActivityItems; private EditText appSearch; private ProgressBar progress; private RadarView radar; private ServerSocket server; private Button disconnectButton; private String activeSection="Transfer"; private volatile boolean sending=false; private volatile boolean transferActive=false; private volatile String connectedToken=null; private volatile boolean connectionActive=false; private volatile String connectedHost=null; private boolean waitingForWifi=false; private boolean waitingForLocation=false; private String pendingAction=null; private volatile String transferId=null; private boolean transferFlowOpen=false; private boolean receiverMode=false; private boolean wifiWasOff=false; private boolean locationWasOff=false; private String receiverToken=null; private BroadcastReceiver installReceiver; private String activeCategory="Apps"; private final HashMap<String,ArrayList<Item>> exportedApps=new HashMap<>(); private final ArrayList<TextView> categoryButtons=new ArrayList<>();
+    private LinearLayout root,peerBox,contentGrid; private LinearLayout modesView,selectedBarView,bottomActionsView; private View tabsView; private TextView status,selectedText,categoryTitle,modeHint,deviceNameLabel,transferActivityTitle,transferActivityItems; private EditText appSearch; private ProgressBar progress; private RadarView radar; private ServerSocket server; private Button disconnectButton; private String activeSection="Transfer"; private volatile boolean sending=false; private volatile boolean transferActive=false; private volatile String connectedToken=null; private volatile boolean connectionActive=false; private volatile String connectedHost=null; private boolean waitingForWifi=false; private String transferScreen="home"; private boolean waitingForLocation=false; private String pendingAction=null; private volatile String transferId=null; private boolean transferFlowOpen=false; private boolean receiverMode=false; private boolean wifiWasOff=false; private boolean locationWasOff=false; private String receiverToken=null; private BroadcastReceiver installReceiver; private String activeCategory="Apps"; private final HashMap<String,ArrayList<Item>> exportedApps=new HashMap<>(); private final ArrayList<TextView> categoryButtons=new ArrayList<>();
 
     private static final class Item {
         final Uri uri; final String name; final long size;
@@ -90,7 +90,7 @@ public class AemTransferActivity extends Activity {
                 Intent confirm=i.getParcelableExtra(Intent.EXTRA_INTENT);
                 if(confirm!=null){confirm.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);startActivity(confirm);}
             }else if(statusCode==PackageInstaller.STATUS_SUCCESS){
-                status.setText("App installed successfully.");
+                status.setText("Installation completed • the installed package is now shown as Open.");
                 renderDownloads();
                 recordHistory("INSTALLED",i.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE)==null?"App":i.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE),0,"Installed");
             }else{
@@ -312,20 +312,94 @@ public class AemTransferActivity extends Activity {
 
     private void setSection(String section){
         activeSection=section;
-        boolean transfer="Transfer".equals(section);
-        boolean downloads="Downloads".equals(section);
-        modesView.setVisibility(transfer?View.VISIBLE:View.GONE);
-        tabsView.setVisibility(transfer?View.VISIBLE:View.GONE);
-        appSearch.setVisibility(transfer&&"Apps".equals(activeCategory)?View.VISIBLE:View.GONE);
-        selectedBarView.setVisibility(transfer?View.VISIBLE:View.GONE);
-        bottomActionsView.setVisibility(transfer?View.VISIBLE:View.GONE);
-        peerBox.setVisibility(transfer?View.VISIBLE:View.GONE);
-        status.setVisibility(transfer?View.VISIBLE:View.GONE);
-        progress.setVisibility(transfer?View.VISIBLE:View.GONE);
+        if("Transfer".equals(section)){showTransferHome();return;}
+        transferScreen="home";
+        modesView.setVisibility(View.GONE);
+        tabsView.setVisibility(View.GONE);
+        appSearch.setVisibility(View.GONE);
+        selectedBarView.setVisibility(View.GONE);
+        bottomActionsView.setVisibility(View.GONE);
+        peerBox.setVisibility(View.GONE);
+        status.setVisibility(View.GONE);
+        progress.setVisibility(View.GONE);
         categoryTitle.setVisibility(View.VISIBLE);
-        if(downloads){categoryTitle.setText("Downloads");renderDownloads();}
-        else if("History".equals(section)){categoryTitle.setText("Transfer history");renderHistory();}
-        else renderCategory();
+        if("Downloads".equals(section)){categoryTitle.setText("Downloads");renderDownloads();}
+        else {categoryTitle.setText("Transfer history");renderHistory();}
+    }
+
+    private void showTransferHome(){
+        activeSection="Transfer"; transferScreen="home";
+        modesView.setVisibility(View.VISIBLE);
+        tabsView.setVisibility(View.VISIBLE);
+        appSearch.setVisibility("Apps".equals(activeCategory)?View.VISIBLE:View.GONE);
+        selectedBarView.setVisibility(View.VISIBLE);
+        bottomActionsView.setVisibility(View.VISIBLE);
+        peerBox.setVisibility(View.VISIBLE);
+        status.setVisibility(View.VISIBLE);
+        progress.setVisibility(View.VISIBLE);
+        categoryTitle.setVisibility(View.VISIBLE);
+        categoryTitle.setText(activeCategory);
+        renderCategory();
+        peerBox.removeAllViews();
+        radar=null;
+        LinearLayout card=new LinearLayout(this);
+        card.setOrientation(LinearLayout.VERTICAL);
+        card.setPadding(dp(14),dp(12),dp(14),dp(12));
+        card.setBackground(bg(Color.rgb(24,26,32),16));
+        TextView h=label(connectionActive?"Connection ready":"Transfer ready",16,Color.WHITE);
+        h.setTypeface(Typeface.DEFAULT,Typeface.BOLD);
+        card.addView(h);
+        String message=connectionActive
+                ? "Connected • you can send more items or disconnect. Receiving remains available on the connection."
+                : "Send and Receive stay here. Device discovery opens only when you start a connection.";
+        TextView m=label(message,13,Color.LTGRAY);
+        m.setPadding(0,dp(6),0,dp(10)); card.addView(m);
+        if(connectionActive){
+            Button sendMore=actionButton("SEND MORE");
+            sendMore.setBackground(bg(Color.rgb(50,92,210),12));
+            sendMore.setOnClickListener(v->{
+                if(selected.isEmpty()){status.setText("Select items first.");return;}
+                sending=false; beginTransferSession(); io.execute(()->sendFiles(connectedHost));
+            });
+            card.addView(sendMore,new LinearLayout.LayoutParams(-1,dp(46)));
+            Button disconnect=actionButton("DISCONNECT");
+            disconnect.setBackground(bg(Color.rgb(50,52,60),12));
+            disconnect.setOnClickListener(v->disconnectTransfer());
+            card.addView(disconnect,new LinearLayout.LayoutParams(-1,dp(44)));
+        } else {
+            TextView hint=label("Choose files, photos, videos, music or apps above, then use Send. Receive can be activated independently.",12,Color.rgb(170,175,185));
+            card.addView(hint);
+        }
+        peerBox.addView(card);
+        if(disconnectButton!=null)disconnectButton.setVisibility(connectionActive?View.GONE:View.GONE);
+        status.setText(connectionActive?"Connection active":"Ready");
+    }
+
+    private void showDiscoveryScreen(boolean sender){
+        transferScreen="discovery";
+        modesView.setVisibility(View.GONE);
+        tabsView.setVisibility(View.GONE);
+        appSearch.setVisibility(View.GONE);
+        selectedBarView.setVisibility(View.GONE);
+        bottomActionsView.setVisibility(View.GONE);
+        categoryTitle.setVisibility(View.GONE);
+        status.setVisibility(View.VISIBLE);
+        progress.setVisibility(View.VISIBLE);
+        peerBox.setVisibility(View.VISIBLE);
+        peerBox.removeAllViews();
+        TextView back=label("‹  Back to Transfer",14,Color.rgb(130,170,255));
+        back.setPadding(0,0,0,dp(10));
+        back.setOnClickListener(v->returnToItems());
+        peerBox.addView(back);
+        TextView title=label(sender?"Find a device":"Waiting for a device",23,Color.WHITE);
+        title.setTypeface(Typeface.DEFAULT,Typeface.BOLD); peerBox.addView(title);
+        TextView desc=label(sender
+                ?"This is a temporary discovery screen. Select a receiver when it appears."
+                :"This is a temporary connection screen. Keep it open until a sender connects.",
+                13,Color.LTGRAY);
+        desc.setPadding(0,dp(5),0,dp(8)); peerBox.addView(desc);
+        showRadar();
+        if(sender) showConnectionGuide(true); else showConnectionGuide(false);
     }
 
     private File transferDir(){return new File(getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS),"AEM Transfer");}
@@ -400,24 +474,60 @@ public class AemTransferActivity extends Activity {
         if(lines.length>100)combined=String.join("\n",Arrays.copyOf(lines,100));
         p.edit().putString("items",combined).apply();
     }
+    private boolean isPackageFile(File f){
+        String n=f.getName().toLowerCase(Locale.US);
+        return n.endsWith(".apk")||n.endsWith(".apks")||n.endsWith(".xapk")||n.endsWith(".apkm")||n.endsWith(".zip");
+    }
+    private String installedPackageFor(File f){
+        try{
+            if(!f.getName().toLowerCase(Locale.US).endsWith(".apk")) return null;
+            PackageInfo info=getPackageManager().getPackageArchiveInfo(f.getAbsolutePath(),PackageManager.GET_META_DATA);
+            return info==null?null:info.packageName;
+        }catch(Exception e){return null;}
+    }
+    private boolean isPackageInstalled(File f){
+        String pkg=installedPackageFor(f);
+        if(pkg==null)return false;
+        try{getPackageManager().getPackageInfo(pkg,0);return true;}catch(Exception e){return false;}
+    }
+    private void openInstalledPackage(File f){
+        String pkg=installedPackageFor(f);
+        if(pkg==null){openTransferredFile(f);return;}
+        Intent launch=getPackageManager().getLaunchIntentForPackage(pkg);
+        if(launch==null){status.setText("Installed, but this package has no launchable activity.");return;}
+        launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK); startActivity(launch);
+    }
     private void renderDownloads(){
         contentGrid.removeAllViews();
         File dir=transferDir();ArrayList<File> files=new ArrayList<>();collectTransferFiles(dir,files);
         Collections.sort(files,(a,b)->Long.compare(b.lastModified(),a.lastModified()));
-        contentGrid.addView(section(files.size()+" DOWNLOADED ITEM"+(files.size()==1?"":"S")));
-        if(files.isEmpty()){contentGrid.addView(label("No transferred files are stored on this device yet.",14,Color.GRAY));return;}
+        contentGrid.addView(section("DOWNLOADED FILES"));
+        if(files.isEmpty()){contentGrid.addView(label("No downloaded or received files yet.",14,Color.GRAY));return;}
         for(File f:files){
-            LinearLayout row=new LinearLayout(this);row.setGravity(Gravity.CENTER_VERTICAL);row.setPadding(dp(10),dp(8),dp(8),dp(8));row.setBackground(bg(Color.rgb(24,26,31),14));
-            LinearLayout info=new LinearLayout(this);info.setOrientation(LinearLayout.VERTICAL);
-            info.addView(label(f.getName(),13,Color.WHITE));info.addView(label(format(f.length())+" • "+new Date(f.lastModified()).toString(),10,Color.GRAY));
-            row.addView(info,new LinearLayout.LayoutParams(0,-2,1));
-            if(f.getName().toLowerCase(Locale.US).endsWith(".apk")||f.getName().toLowerCase(Locale.US).endsWith(".apks")){
-                Button install=actionButton("Install");install.setTextSize(11);install.setBackground(bg(Color.rgb(50,92,210),10));install.setOnClickListener(v->installTransferredPackage(f));row.addView(install,new LinearLayout.LayoutParams(dp(74),dp(42)));
+            LinearLayout card=new LinearLayout(this);card.setOrientation(LinearLayout.VERTICAL);
+            card.setPadding(dp(14),dp(12),dp(12),dp(12));card.setBackground(bg(Color.rgb(24,26,32),16));
+            LinearLayout head=new LinearLayout(this);head.setGravity(Gravity.CENTER_VERTICAL);
+            ImageView icon=new ImageView(this);icon.setImageResource(isPackageFile(f)?android.R.drawable.sym_def_app_icon:android.R.drawable.ic_menu_save);
+            head.addView(icon,new LinearLayout.LayoutParams(dp(42),dp(42)));
+            LinearLayout info=new LinearLayout(this);info.setOrientation(LinearLayout.VERTICAL);info.setPadding(dp(10),0,0,0);
+            TextView name=label(f.getName(),15,Color.WHITE);name.setTypeface(Typeface.DEFAULT,Typeface.BOLD);name.setMaxLines(2);
+            info.addView(name);info.addView(label(format(f.length())+" • "+new Date(f.lastModified()).toString(),11,Color.GRAY));
+            head.addView(info,new LinearLayout.LayoutParams(0,-2,1));card.addView(head);
+            LinearLayout actions=new LinearLayout(this);actions.setGravity(Gravity.CENTER_VERTICAL);actions.setPadding(0,dp(10),0,0);
+            if(isPackageFile(f)){
+                Button primary=actionButton(isPackageInstalled(f)?"Open":"Install");primary.setTextSize(12);primary.setBackground(bg(Color.rgb(50,92,210),10));
+                primary.setOnClickListener(v->{if(isPackageInstalled(f))openInstalledPackage(f);else installTransferredPackage(f);});
+                actions.addView(primary,new LinearLayout.LayoutParams(0,dp(44),1));
+            }else{
+                Button open=actionButton("Open");open.setTextSize(12);open.setBackground(bg(Color.rgb(50,92,210),10));open.setOnClickListener(v->openTransferredFile(f));
+                actions.addView(open,new LinearLayout.LayoutParams(0,dp(44),1));
             }
-            Button open=actionButton("Open");open.setTextSize(11);open.setOnClickListener(v->openTransferredFile(f));row.addView(open,new LinearLayout.LayoutParams(dp(64),dp(42)));
-            Button share=actionButton("Share");share.setTextSize(11);share.setOnClickListener(v->shareTransferredFile(f));row.addView(share,new LinearLayout.LayoutParams(dp(64),dp(42)));
-            Button del=actionButton("Delete");del.setTextSize(11);del.setOnClickListener(v->deleteTransferredFile(f));row.addView(del,new LinearLayout.LayoutParams(dp(68),dp(42)));
-            LinearLayout.LayoutParams rp=new LinearLayout.LayoutParams(-1,-2);rp.setMargins(0,dp(4),0,dp(4));contentGrid.addView(row,rp);
+            Button share=actionButton("Share");share.setTextSize(12);share.setOnClickListener(v->shareTransferredFile(f));
+            LinearLayout.LayoutParams ap=new LinearLayout.LayoutParams(0,dp(44),1);ap.setMargins(dp(6),0,0,0);actions.addView(share,ap);
+            Button del=actionButton("Delete");del.setTextSize(12);del.setOnClickListener(v->deleteTransferredFile(f));
+            LinearLayout.LayoutParams dpv=new LinearLayout.LayoutParams(0,dp(44),1);dpv.setMargins(dp(6),0,0,0);actions.addView(del,dpv);
+            card.addView(actions);
+            LinearLayout.LayoutParams cp=new LinearLayout.LayoutParams(-1,-2);cp.setMargins(0,0,0,dp(10));contentGrid.addView(card,cp);
         }
     }
     private void renderHistory(){
@@ -916,8 +1026,7 @@ public class AemTransferActivity extends Activity {
         if(!locationEnabled()){waitingForLocation=true;locationWasOff=true;status.setText("Location services are off • turn them on, then return to AEM. Scanning will resume automatically.");showSystemRequirement("Turn on Location services","Android requires Location Mode enabled for Wi-Fi Direct peer discovery on supported versions. AEM does not use your location for the transfer.",false);return;}
         modeHint.setText("Send mode: AEM is scanning for nearby receivers.");
         if(manager==null||channel==null){status.setText("Wi-Fi Direct is unavailable on this phone.");return;}
-        showRadar();
-        showConnectionGuide(true);
+        showDiscoveryScreen(true);
         status.setText("Scanning for nearby AEM phones…");
         try{
             manager.stopPeerDiscovery(channel,new WifiP2pManager.ActionListener(){public void onSuccess(){beginDiscovery();}public void onFailure(int r){beginDiscovery();}});
@@ -977,7 +1086,12 @@ public class AemTransferActivity extends Activity {
     }
     private void requestPeers(){if(!hasPermission()||manager==null||channel==null)return;manager.requestPeers(channel,list->{peers.clear();peers.addAll(list.getDeviceList());renderPeers();});}
     private void renderPeers(){
+        if(!"discovery".equals(transferScreen)) return;
         peerBox.removeAllViews();
+        TextView back=label("‹  Back to Transfer",14,Color.rgb(130,170,255));
+        back.setPadding(0,0,0,dp(10)); back.setOnClickListener(v->returnToItems()); peerBox.addView(back);
+        TextView title=label(sending?"Find a receiver":"Nearby devices",23,Color.WHITE);
+        title.setTypeface(Typeface.DEFAULT,Typeface.BOLD); peerBox.addView(title);
         radar=new RadarView(this);
         peerBox.addView(radar,new LinearLayout.LayoutParams(-1,dp(168)));
         if(peers.isEmpty()){
@@ -1022,13 +1136,13 @@ public class AemTransferActivity extends Activity {
         }
     }
     private void connect(WifiP2pDevice d){if(selected.isEmpty()){status.setText("Select at least one item first.");return;}String token=peerTokens.get(d.deviceAddress);if(token==null||token.trim().isEmpty()){status.setText("Receiver handshake not available yet. Scan again.");return;}sending=true;connectedHost=null;connectedToken=token;beginTransferSession();status.setText("Connecting to "+d.deviceName+"…");WifiP2pConfig c=new WifiP2pConfig();c.deviceAddress=d.deviceAddress;c.wps.setup=WpsInfo.PBC;
-        manager.connect(channel,c,new WifiP2pManager.ActionListener(){public void onSuccess(){status.setText("Connection requested...");}public void onFailure(int r){sending=false;finishTransferSession();status.setText("Connection failed: "+r);}});
+        manager.connect(channel,c,new WifiP2pManager.ActionListener(){public void onSuccess(){status.setText("Connection requested...");}public void onFailure(int r){sending=false;finishTransferSession();runOnUiThread(()->{status.setText("Connection failed: "+r);showTransferHome();});}});
     }
     private void requestConnection(){if(!hasPermission()||manager==null||channel==null)return;manager.requestConnectionInfo(channel,info->{
         if(info.groupFormed){
             connectionActive=true;
             transferFlowOpen=true;
-            runOnUiThread(()->{if(status!=null)status.setText("Connected • ready to transfer.");});
+            runOnUiThread(()->{if(status!=null)status.setText("Connected • ready to transfer."); showTransferHome();});
             disconnectButton.setEnabled(true);
             if(!info.isGroupOwner&&info.groupOwnerAddress!=null&&sending){
                 sending=false;
@@ -1091,7 +1205,7 @@ public class AemTransferActivity extends Activity {
                     }
                 }
                 int result=ackIn.readInt();
-                if(result==1){for(Item x:selected)recordHistory("SENT",x.name,x.size,"Completed");update("Transfer completed and verified",100);finishTransferSession();return;}
+                if(result==1){for(Item x:selected)recordHistory("SENT",x.name,x.size,"Completed");update("Transfer completed and verified",100);finishTransferSession();runOnUiThread(()->showTransferHome());return;}
                 throw new IOException("Receiver rejected transfer");
             }catch(Exception e){
                 if(!transferActive)return;
@@ -1209,7 +1323,7 @@ public class AemTransferActivity extends Activity {
     }
 
     private void returnToItems(){
-        transferFlowOpen=false;
+        transferFlowOpen=false; transferScreen="home";
         peerBox.removeAllViews();
         radar=null;
         if(connectionActive){
@@ -1225,7 +1339,8 @@ public class AemTransferActivity extends Activity {
     }
     @Override public void onBackPressed(){
         if(!"Transfer".equals(activeSection)){setSection("Transfer");return;}
-        if(transferFlowOpen){returnToItems();return;}
+        if("discovery".equals(transferScreen)){returnToItems();return;}
+        if(connectionActive && transferFlowOpen){showTransferHome();return;}
         super.onBackPressed();
     }
 
