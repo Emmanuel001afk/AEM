@@ -956,6 +956,77 @@ public class AemTransferActivity extends Activity {
         if(Build.VERSION.SDK_INT<28)return true;
         try{LocationManager lm=(LocationManager)getSystemService(LOCATION_SERVICE);return lm!=null&&lm.isLocationEnabled();}catch(Exception e){return true;}
     }
+    private boolean showReadinessScreen(boolean sender){
+        boolean wifi=wifiEnabled();
+        boolean location=locationEnabled();
+        if(wifi && location)return false;
+        transferScreen="readiness";
+        modesView.setVisibility(View.GONE);
+        tabsView.setVisibility(View.GONE);
+        appSearch.setVisibility(View.GONE);
+        selectedBarView.setVisibility(View.GONE);
+        bottomActionsView.setVisibility(View.GONE);
+        categoryTitle.setVisibility(View.GONE);
+        status.setVisibility(View.VISIBLE);
+        progress.setVisibility(View.GONE);
+        peerBox.setVisibility(View.VISIBLE);
+        peerBox.removeAllViews();
+
+        TextView back=label("‹  Back to Transfer",14,accentSoft());
+        back.setPadding(0,0,0,dp(12));
+        back.setOnClickListener(v->returnToItems());
+        peerBox.addView(back);
+
+        TextView title=label(sender?"Ready to send":"Ready to receive",22,textColor());
+        title.setTypeface(Typeface.DEFAULT,Typeface.BOLD);
+        peerBox.addView(title);
+
+        TextView intro=label("AEM needs the local connection controls ready before it can discover or connect to another phone.",13,secondaryTextColor());
+        intro.setPadding(0,dp(6),0,dp(14));
+        peerBox.addView(intro);
+
+        LinearLayout checks=new LinearLayout(this);
+        checks.setOrientation(LinearLayout.VERTICAL);
+        checks.setPadding(dp(14),dp(12),dp(14),dp(12));
+        checks.setBackground(bg(surface(),16));
+
+        TextView wifiRow=label((wifi?"✓  Wi-Fi is on":"!  Wi-Fi is off"),14,wifi?Color.rgb(90,190,130):Color.rgb(245,180,80));
+        wifiRow.setTypeface(Typeface.DEFAULT,Typeface.BOLD);
+        checks.addView(wifiRow,new LinearLayout.LayoutParams(-1,dp(40)));
+
+        TextView locationRow=label((location?"✓  Location services are on":"!  Location services are off"),14,location?Color.rgb(90,190,130):Color.rgb(245,180,80));
+        locationRow.setTypeface(Typeface.DEFAULT,Typeface.BOLD);
+        checks.addView(locationRow,new LinearLayout.LayoutParams(-1,dp(40)));
+
+        peerBox.addView(checks,new LinearLayout.LayoutParams(-1,-2));
+
+        TextView reason=label("Wi-Fi Direct uses Wi-Fi for the local link. Android requires Location Mode for Wi-Fi Direct discovery on supported versions.",12,secondaryTextColor());
+        reason.setPadding(0,dp(12),0,dp(12));
+        peerBox.addView(reason);
+
+        if(!wifi){
+            Button openWifi=actionButton("TURN ON WI-FI");
+            openWifi.setBackground(bg(accent(),12));
+            openWifi.setOnClickListener(v->{try{
+                Intent target=Build.VERSION.SDK_INT>=29?new Intent(android.provider.Settings.Panel.ACTION_WIFI):new Intent(android.provider.Settings.ACTION_WIFI_SETTINGS);
+                startActivity(target);
+            }catch(Exception e){try{startActivity(new Intent(android.provider.Settings.ACTION_WIFI_SETTINGS));}catch(Exception ignored){}}});
+            peerBox.addView(openWifi,new LinearLayout.LayoutParams(-1,dp(48)));
+        }
+        if(!location){
+            Button openLocation=actionButton("TURN ON LOCATION");
+            openLocation.setBackground(bg(!wifi?surfaceAlt():accent(),12));
+            openLocation.setTextColor(!wifi?textColor():Color.WHITE);
+            openLocation.setOnClickListener(v->{try{startActivity(new Intent(android.provider.Settings.ACTION_LOCATION_SOURCE_SETTINGS));}catch(Exception ignored){try{startActivity(new Intent(android.provider.Settings.ACTION_SETTINGS));}catch(Exception ignored2){}}});
+            LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(-1,dp(48));
+            if(!wifi)lp.setMargins(0,dp(8),0,0);
+            peerBox.addView(openLocation,lp);
+        }
+
+        status.setText(sender?"Turn on the required controls, then tap Send again.":"Turn on the required controls, then tap Receive again.");
+        return true;
+    }
+
     private void showSystemRequirement(String title,String message,boolean wifi){
         peerBox.removeAllViews();
         peerBox.addView(label(title,16,Color.WHITE));
@@ -1032,7 +1103,7 @@ public class AemTransferActivity extends Activity {
         if(receiverToken==null)receiverToken=UUID.randomUUID().toString().replace("-","");
         localTransferToken=receiverToken;
         if(!hasPermission()){pendingAction="receive";requestPermissions(requiredPermissions(),PERM);return;}
-        if(!wifiEnabled()){wifiWasOff=true;waitingForWifi=true;status.setText("Wi-Fi is off • turn it on, then return to AEM. Receiver setup will resume automatically.");showSystemRequirement("Wi-Fi is required","AEM Transfer uses Wi-Fi Direct for the local phone-to-phone connection.",true);return;}
+        if(showReadinessScreen(false))return;
         sending=false;
         modeHint.setText("Receive mode: keep this screen open. The sender will appear when nearby.");
         if(manager==null||channel==null){status.setText("Wi-Fi Direct is unavailable on this phone.");return;}
@@ -1052,8 +1123,9 @@ public class AemTransferActivity extends Activity {
         transferFlowOpen=true; receiverMode=true;
         manager.createGroup(channel,new WifiP2pManager.ActionListener(){
             public void onSuccess(){
-                status.setText("Receiver ready • waiting for sender…");
                 receiverToken=UUID.randomUUID().toString().replace("-","");
+                localTransferToken=receiverToken;
+                status.setText("Receiver ready • waiting for sender…");
                 registerReceiverService();
                 startServer();
                 showConnectionGuide(false);
@@ -1068,8 +1140,7 @@ public class AemTransferActivity extends Activity {
     private void discover(){
         receiverMode=false; transferFlowOpen=true;
         if(!hasPermission()){pendingAction="send";requestPermissions(requiredPermissions(),PERM);return;}
-        if(!wifiEnabled()){wifiWasOff=true;waitingForWifi=true;status.setText("Wi-Fi is off • turn it on, then return to AEM. Scanning will resume automatically.");showSystemRequirement("Turn on Wi-Fi","AEM uses Wi-Fi Direct locally; mobile data and Internet are not used for the transfer.",true);return;}
-        if(!locationEnabled()){waitingForLocation=true;locationWasOff=true;status.setText("Location services are off • turn them on, then return to AEM. Scanning will resume automatically.");showSystemRequirement("Turn on Location services","Android requires Location Mode enabled for Wi-Fi Direct peer discovery on supported versions. AEM does not use your location for the transfer.",false);return;}
+        if(showReadinessScreen(true))return;
         modeHint.setText("Send mode: AEM is scanning for nearby receivers.");
         if(manager==null||channel==null){status.setText("Wi-Fi Direct is unavailable on this phone.");return;}
         showDiscoveryScreen(true);
@@ -1188,13 +1259,13 @@ public class AemTransferActivity extends Activity {
     }
     private void requestConnection(){if(!hasPermission()||manager==null||channel==null)return;manager.requestConnectionInfo(channel,info->{
         if(info.groupFormed){
-            connectionActive=true;
             startServer();
             transferFlowOpen=true;
-            runOnUiThread(()->{if(status!=null)status.setText("Connected • ready to transfer."); showTransferHome();});
-            disconnectButton.setEnabled(true);
+            runOnUiThread(()->{
+                if(status!=null)status.setText(sending?"Wi-Fi Direct link established • starting transfer handshake…":"Wi-Fi Direct link established • waiting for transfer…");
+                if(receiverMode)refreshReceiverConnectionView();
+            });
             if(!info.isGroupOwner&&info.groupOwnerAddress!=null&&sending){
-                sending=false;
                 connectedHost=info.groupOwnerAddress.getHostAddress();
                 io.execute(()->sendFiles(connectedHost));
             }
@@ -1230,6 +1301,12 @@ public class AemTransferActivity extends Activity {
                 out.flush();
                 DataInputStream ackIn=new DataInputStream(new BufferedInputStream(s.getInputStream(),64*1024));
                 long[] offsets=new long[selected.size()];for(int i=0;i<offsets.length;i++)offsets[i]=ackIn.readLong();
+                connectionActive=true;
+                transferFlowOpen=true;
+                runOnUiThread(()->{
+                    if(status!=null)status.setText("Connected • transferring over the same connection.");
+                    if(transferScreen.equals("discovery"))showTransferHome();
+                });
                 long done=0;for(long o:offsets)done+=o;
                 SpeedMeter speed=new SpeedMeter();byte[] b=new byte[1024*1024];
                 for(int i=0;i<selected.size();i++){
@@ -1269,7 +1346,6 @@ public class AemTransferActivity extends Activity {
     }
 
     private void receiveFiles(Socket s){io.execute(()->{
-        beginTransferSession();
         boolean completed=false;
         ArrayList<Header> hs=new ArrayList<>();
         try(Socket sock=s){
@@ -1287,6 +1363,13 @@ public class AemTransferActivity extends Activity {
             if(peerReturnToken==null||peerReturnToken.trim().isEmpty())throw new IOException("Peer return handshake missing");
             remoteTransferToken=peerReturnToken;
             connectedToken=peerReturnToken;
+            connectionActive=true;
+            transferFlowOpen=true;
+            beginTransferSession();
+            runOnUiThread(()->{
+                if(status!=null)status.setText("Connected • receiving over the same connection.");
+                if(transferScreen.equals("discovery"))showTransferHome();
+            });
             if(!id.matches("[A-Za-z0-9-]{8,64}"))throw new IOException("Invalid transfer id");
             int count=in.readInt();if(count<0||count>1000)throw new IOException("Invalid item count");
             long declaredTotal=in.readLong();if(declaredTotal<0)throw new IOException("Invalid total size");
@@ -1401,7 +1484,7 @@ public class AemTransferActivity extends Activity {
     }
     @Override public void onBackPressed(){
         if(!"Transfer".equals(activeSection)){setSection("Transfer");return;}
-        if("discovery".equals(transferScreen)){returnToItems();return;}
+        if("readiness".equals(transferScreen)||"discovery".equals(transferScreen)){returnToItems();return;}
         if(connectionActive && transferFlowOpen){showTransferHome();return;}
         super.onBackPressed();
     }
