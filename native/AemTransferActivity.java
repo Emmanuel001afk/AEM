@@ -3,6 +3,7 @@ package com.aem.store;
 import android.Manifest;
 import android.app.Activity;
 import android.app.AlertDialog;
+import android.app.PendingIntent;
 import android.content.*;
 import android.content.pm.*;
 import android.database.Cursor;
@@ -47,7 +48,7 @@ public class AemTransferActivity extends Activity {
     private final ExecutorService io=Executors.newCachedThreadPool();
     private final AtomicBoolean transferRunning=new AtomicBoolean(false);
     private final ArrayList<Item> selected=new ArrayList<>(); private final ArrayList<WifiP2pDevice> peers=new ArrayList<>();
-    private LinearLayout root,peerBox,contentGrid; private LinearLayout modesView,tabsView,selectedBarView,bottomActionsView; private TextView status,selectedText,categoryTitle,modeHint,deviceNameLabel,transferActivityTitle,transferActivityItems; private EditText appSearch; private ProgressBar progress; private RadarView radar; private ServerSocket server; private Button disconnectButton; private String activeSection="Transfer"; private volatile boolean sending=false; private volatile boolean transferActive=false; private volatile String connectedToken=null; private volatile boolean connectionActive=false; private volatile String connectedHost=null; private boolean waitingForWifi=false; private boolean waitingForLocation=false; private String pendingAction=null; private volatile String transferId=null; private boolean transferFlowOpen=false; private boolean receiverMode=false; private boolean wifiWasOff=false; private boolean locationWasOff=false; private String receiverToken=null; private BroadcastReceiver installReceiver; private String activeCategory="Apps"; private final HashMap<String,ArrayList<Item>> exportedApps=new HashMap<>(); private final ArrayList<TextView> categoryButtons=new ArrayList<>();
+    private LinearLayout root,peerBox,contentGrid; private LinearLayout modesView,selectedBarView,bottomActionsView; private View tabsView; private TextView status,selectedText,categoryTitle,modeHint,deviceNameLabel,transferActivityTitle,transferActivityItems; private EditText appSearch; private ProgressBar progress; private RadarView radar; private ServerSocket server; private Button disconnectButton; private String activeSection="Transfer"; private volatile boolean sending=false; private volatile boolean transferActive=false; private volatile String connectedToken=null; private volatile boolean connectionActive=false; private volatile String connectedHost=null; private boolean waitingForWifi=false; private boolean waitingForLocation=false; private String pendingAction=null; private volatile String transferId=null; private boolean transferFlowOpen=false; private boolean receiverMode=false; private boolean wifiWasOff=false; private boolean locationWasOff=false; private String receiverToken=null; private BroadcastReceiver installReceiver; private String activeCategory="Apps"; private final HashMap<String,ArrayList<Item>> exportedApps=new HashMap<>(); private final ArrayList<TextView> categoryButtons=new ArrayList<>();
 
     private static final class Item {
         final Uri uri; final String name; final long size;
