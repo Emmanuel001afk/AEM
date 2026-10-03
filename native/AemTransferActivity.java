@@ -48,7 +48,7 @@ public class AemTransferActivity extends Activity {
     private final ExecutorService io=Executors.newCachedThreadPool();
     private final AtomicBoolean transferRunning=new AtomicBoolean(false);
     private final ArrayList<Item> selected=new ArrayList<>(); private final ArrayList<WifiP2pDevice> peers=new ArrayList<>();
-    private LinearLayout root,peerBox,contentGrid; private LinearLayout modesView,selectedBarView,bottomActionsView; private View tabsView; private TextView status,selectedText,categoryTitle,modeHint,deviceNameLabel,transferActivityTitle,transferActivityItems; private EditText appSearch; private ProgressBar progress; private RadarView radar; private ServerSocket server; private Button disconnectButton; private String activeSection="Transfer"; private volatile boolean sending=false; private volatile boolean transferActive=false; private volatile String connectedToken=null; private volatile boolean connectionActive=false; private volatile String connectedHost=null; private boolean waitingForWifi=false; private String transferScreen="home"; private boolean waitingForLocation=false; private String pendingAction=null; private volatile String transferId=null; private boolean transferFlowOpen=false; private boolean receiverMode=false; private boolean wifiWasOff=false; private boolean locationWasOff=false; private String receiverToken=null; private volatile String localTransferToken=null; private volatile String remoteTransferToken=null; private BroadcastReceiver installReceiver; private String activeCategory="Apps"; private final HashMap<String,ArrayList<Item>> exportedApps=new HashMap<>(); private final ArrayList<TextView> categoryButtons=new ArrayList<>();
+    private LinearLayout root,peerBox,contentGrid; private LinearLayout modesView,selectedBarView,bottomActionsView; private View tabsView; private final ArrayList<TextView> sectionButtons=new ArrayList<>(); private boolean lightTheme=false; private TextView status,selectedText,categoryTitle,modeHint,deviceNameLabel,transferActivityTitle,transferActivityItems; private EditText appSearch; private ProgressBar progress; private RadarView radar; private ServerSocket server; private Button disconnectButton; private String activeSection="Transfer"; private volatile boolean sending=false; private volatile boolean transferActive=false; private volatile String connectedToken=null; private volatile boolean connectionActive=false; private volatile String connectedHost=null; private boolean waitingForWifi=false; private String transferScreen="home"; private boolean waitingForLocation=false; private String pendingAction=null; private volatile String transferId=null; private boolean transferFlowOpen=false; private boolean receiverMode=false; private boolean wifiWasOff=false; private boolean locationWasOff=false; private String receiverToken=null; private volatile String localTransferToken=null; private volatile String remoteTransferToken=null; private BroadcastReceiver installReceiver; private String activeCategory="Apps"; private final HashMap<String,ArrayList<Item>> exportedApps=new HashMap<>(); private final ArrayList<TextView> categoryButtons=new ArrayList<>();
 
     private static final class Item {
         final Uri uri; final String name; final long size;
@@ -70,7 +70,7 @@ public class AemTransferActivity extends Activity {
     }
 
     @Override public void onCreate(Bundle b){
-        super.onCreate(b); buildUi();
+        super.onCreate(b); initTheme(getIntent()); buildUi();
         manager=(WifiP2pManager)getSystemService(WIFI_P2P_SERVICE);
         channel=manager==null?null:manager.initialize(this,getMainLooper(),null);
         receiver=new BroadcastReceiver(){@Override public void onReceive(Context c,Intent i){
@@ -102,6 +102,24 @@ public class AemTransferActivity extends Activity {
         if(Build.VERSION.SDK_INT>=33) registerReceiver(installReceiver,installFilter,Context.RECEIVER_NOT_EXPORTED); else registerReceiver(installReceiver,installFilter);
     }
 
+    private void initTheme(Intent intent){
+        String appearance=intent==null?null:intent.getStringExtra("appearance");
+        if("light".equalsIgnoreCase(appearance)) lightTheme=true;
+        else if("dark".equalsIgnoreCase(appearance)) lightTheme=false;
+        else {
+            int mode=getResources().getConfiguration().uiMode & android.content.res.Configuration.UI_MODE_NIGHT_MASK;
+            lightTheme=mode==android.content.res.Configuration.UI_MODE_NIGHT_NO;
+        }
+    }
+    private int pageBackground(){return lightTheme?Color.rgb(243,243,245):Color.rgb(9,9,12);}
+    private int surface(){return lightTheme?Color.WHITE:Color.rgb(24,26,32);}
+    private int surfaceAlt(){return lightTheme?Color.rgb(236,238,242):Color.rgb(27,29,35);}
+    private int textColor(){return lightTheme?Color.rgb(18,18,22):Color.rgb(245,245,247);}
+    private int secondaryTextColor(){return lightTheme?Color.rgb(92,97,108):Color.rgb(170,175,185);}
+    private int mutedTextColor(){return lightTheme?Color.rgb(112,117,128):Color.rgb(130,135,145);}
+    private int accent(){return Color.rgb(50,92,210);}
+    private int accentSoft(){return lightTheme?Color.rgb(45,82,185):Color.rgb(130,170,255);}
+    private int mutedButton(){return lightTheme?Color.rgb(218,221,227):Color.rgb(50,52,60);}
     private int dp(int v){return (int)(v*getResources().getDisplayMetrics().density+0.5f);}
     private GradientDrawable bg(int color,int radius){GradientDrawable g=new GradientDrawable();g.setColor(color);g.setCornerRadius(dp(radius));return g;}
     private Button actionButton(String text){Button b=new Button(this);b.setText(text);b.setTextSize(15);b.setAllCaps(false);b.setTextColor(Color.WHITE);b.setMinHeight(dp(52));b.setPadding(dp(12),0,dp(12),0);return b;}
@@ -109,8 +127,8 @@ public class AemTransferActivity extends Activity {
     private void buildUi(){
         root=new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
-        root.setPadding(dp(20),dp(18),dp(20),dp(16));
-        root.setBackgroundColor(Color.rgb(8,9,12));
+        root.setPadding(dp(24),dp(20),dp(24),dp(20));
+        root.setBackgroundColor(pageBackground());
 
         LinearLayout top=new LinearLayout(this);
         top.setGravity(Gravity.CENTER_VERTICAL);
@@ -133,48 +151,49 @@ public class AemTransferActivity extends Activity {
         sub.setText("Direct phone-to-phone transfer • no internet or cloud");
         sub.setTextSize(13);
         sub.setTextColor(Color.rgb(170,175,185));
-        root.addView(sub,new LinearLayout.LayoutParams(-1,dp(30)));
+        root.addView(sub,new LinearLayout.LayoutParams(-1,dp(36)));
 
-        deviceNameLabel=label("This device: "+transferName()+"  •  Edit",13,Color.rgb(130,170,255));
+        deviceNameLabel=label("This device: "+transferName()+"  •  Edit",13,accentSoft());
         deviceNameLabel.setPadding(2,0,2,4);
         deviceNameLabel.setOnClickListener(v->showTransferNameDialog());
-        root.addView(deviceNameLabel,new LinearLayout.LayoutParams(-1,dp(34)));
+        root.addView(deviceNameLabel,new LinearLayout.LayoutParams(-1,dp(38)));
         LinearLayout nav=new LinearLayout(this);
         nav.setPadding(0,dp(4),0,dp(8));
         TextView transferNav=label("Transfer",14,Color.WHITE);
         TextView downloadsNav=label("Downloads",14,Color.LTGRAY);
         TextView historyNav=label("History",14,Color.LTGRAY);
+        sectionButtons.clear(); sectionButtons.add(transferNav); sectionButtons.add(downloadsNav); sectionButtons.add(historyNav);
         for(TextView n:new TextView[]{transferNav,downloadsNav,historyNav}){n.setGravity(Gravity.CENTER);n.setTypeface(Typeface.DEFAULT,Typeface.BOLD);n.setPadding(dp(8),0,dp(8),0);nav.addView(n,new LinearLayout.LayoutParams(0,dp(42),1));}
         transferNav.setBackground(bg(Color.rgb(50,92,210),12));
         transferNav.setOnClickListener(v->setSection("Transfer"));
         downloadsNav.setOnClickListener(v->setSection("Downloads"));
         historyNav.setOnClickListener(v->setSection("History"));
-        root.addView(nav,new LinearLayout.LayoutParams(-1,dp(50)));
+        root.addView(nav,new LinearLayout.LayoutParams(-1,dp(56)));
         
 
         LinearLayout modes=new LinearLayout(this); modesView=modes;
-        modes.setPadding(0,dp(8),0,dp(8));
+        modes.setPadding(0,dp(12),0,dp(12));
         Button send=actionButton("Send");
         Button receive=actionButton("Receive");
         send.setTextSize(16);receive.setTextSize(16);
         send.setTextColor(Color.WHITE);receive.setTextColor(Color.WHITE);
-        send.setBackground(bg(Color.rgb(50,92,210),14));
-        receive.setBackground(bg(Color.rgb(31,34,41),14));
-        LinearLayout.LayoutParams mp=new LinearLayout.LayoutParams(0,dp(62),1);mp.setMargins(0,0,dp(6),0);modes.addView(send,mp);
-        LinearLayout.LayoutParams rp=new LinearLayout.LayoutParams(0,dp(62),1);rp.setMargins(dp(6),0,0,0);modes.addView(receive,rp);
-        root.addView(modes,new LinearLayout.LayoutParams(-1,dp(74)));
+        send.setBackground(bg(accent(),16));
+        receive.setBackground(bg(surfaceAlt(),16));
+        LinearLayout.LayoutParams mp=new LinearLayout.LayoutParams(0,dp(66),1);mp.setMargins(0,0,dp(8),0);modes.addView(send,mp);
+        LinearLayout.LayoutParams rp=new LinearLayout.LayoutParams(0,dp(66),1);rp.setMargins(dp(8),0,0,0);modes.addView(receive,rp);
+        root.addView(modes,new LinearLayout.LayoutParams(-1,dp(90)));
 
         modeHint=label("Choose what to send, then select a nearby phone.",13,Color.rgb(170,175,185));
-        modeHint.setPadding(2,2,2,8);
-        root.addView(modeHint,new LinearLayout.LayoutParams(-1,dp(38)));
+        modeHint.setPadding(dp(2),dp(4),dp(2),dp(10));
+        root.addView(modeHint,new LinearLayout.LayoutParams(-1,dp(46)));
 
         categoryTitle=new TextView(this);
         categoryTitle.setText("Apps");
         categoryTitle.setTextSize(19);
         categoryTitle.setTextColor(Color.WHITE);
         categoryTitle.setTypeface(null,1);
-        categoryTitle.setPadding(0,dp(8),0,dp(8));
-        root.addView(categoryTitle,new LinearLayout.LayoutParams(-1,dp(50)));
+        categoryTitle.setPadding(0,dp(12),0,dp(10));
+        root.addView(categoryTitle,new LinearLayout.LayoutParams(-1,dp(58)));
 
         HorizontalScrollView tabsScroll=new HorizontalScrollView(this); tabsView=tabsScroll;
         tabsScroll.setHorizontalScrollBarEnabled(false);
@@ -186,12 +205,12 @@ public class AemTransferActivity extends Activity {
             categoryButtons.add(b);
             b.setText(c);b.setTextSize(14);b.setGravity(Gravity.CENTER);b.setTextColor(Color.LTGRAY);
             b.setPadding(dp(18),0,dp(18),0);
-            b.setBackground(bg(Color.rgb(27,29,35),22));
+            b.setBackground(bg(surfaceAlt(),22));
             b.setOnClickListener(v->{activeCategory=c;renderCategory();});
-            LinearLayout.LayoutParams tp=new LinearLayout.LayoutParams(-2,dp(42));tp.setMargins(0,0,dp(8),0);tabs.addView(b,tp);
+            LinearLayout.LayoutParams tp=new LinearLayout.LayoutParams(-2,dp(46));tp.setMargins(0,0,dp(10),0);tabs.addView(b,tp);
         }
         tabsScroll.addView(tabs);
-        root.addView(tabsScroll,new LinearLayout.LayoutParams(-1,dp(52)));
+        root.addView(tabsScroll,new LinearLayout.LayoutParams(-1,dp(58)));
         appSearch=new EditText(this);
         appSearch.setSingleLine(true);
         appSearch.setHint("Search apps on this device…");
@@ -199,9 +218,9 @@ public class AemTransferActivity extends Activity {
         appSearch.setTextColor(Color.WHITE);
         appSearch.setTextSize(13);
         appSearch.setPadding(dp(12),0,dp(12),0);
-        appSearch.setBackground(bg(Color.rgb(24,26,32),12));
-        LinearLayout.LayoutParams sp=new LinearLayout.LayoutParams(-1,dp(46));
-        sp.setMargins(0,dp(2),0,dp(4));
+        appSearch.setBackground(bg(surface(),14));
+        LinearLayout.LayoutParams sp=new LinearLayout.LayoutParams(-1,dp(48));
+        sp.setMargins(0,dp(6),0,dp(8));
         root.addView(appSearch,sp);
         appSearch.setVisibility(View.VISIBLE);
         appSearch.addTextChangedListener(new android.text.TextWatcher(){
@@ -212,7 +231,7 @@ public class AemTransferActivity extends Activity {
 
         contentGrid=new LinearLayout(this);
         contentGrid.setOrientation(LinearLayout.VERTICAL);
-        contentGrid.setPadding(0,dp(8),0,dp(8));
+        contentGrid.setPadding(0,dp(10),0,dp(14));
         ScrollView contentScroll=new ScrollView(this);
         contentScroll.setFillViewport(true);
         contentScroll.setOverScrollMode(View.OVER_SCROLL_IF_CONTENT_SCROLLS);
@@ -221,29 +240,29 @@ public class AemTransferActivity extends Activity {
 
         LinearLayout selectedBar=new LinearLayout(this); selectedBarView=selectedBar;
         selectedBar.setGravity(Gravity.CENTER_VERTICAL);
-        selectedBar.setPadding(dp(14),0,dp(14),0);
-        selectedBar.setBackground(bg(Color.rgb(24,26,32),14));
+        selectedBar.setPadding(dp(16),0,dp(16),0);
+        selectedBar.setBackground(bg(surface(),16));
         selectedText=new TextView(this);
         selectedText.setTextColor(Color.WHITE);selectedText.setTextSize(13);
         selectedBar.addView(selectedText,new LinearLayout.LayoutParams(0,dp(48),1));
-        TextView clear=new TextView(this);clear.setText("Clear");clear.setTextColor(Color.rgb(130,170,255));clear.setGravity(Gravity.CENTER);
+        TextView clear=new TextView(this);clear.setText("Clear");clear.setTextColor(accentSoft());clear.setGravity(Gravity.CENTER);
         clear.setOnClickListener(v->{selected.clear();exportedApps.clear();refreshSelectedText();});
         selectedBar.addView(clear,new LinearLayout.LayoutParams(dp(60),dp(48)));
-        root.addView(selectedBar,new LinearLayout.LayoutParams(-1,dp(58)));
+        root.addView(selectedBar,new LinearLayout.LayoutParams(-1,dp(60)));
 
         status=new TextView(this);
-        status.setTextColor(Color.rgb(190,195,205));status.setTextSize(12);
+        status.setTextColor(secondaryTextColor());status.setTextSize(12);
         status.setPadding(dp(2),dp(6),dp(2),dp(4));
-        root.addView(status,new LinearLayout.LayoutParams(-1,dp(34)));
+        root.addView(status,new LinearLayout.LayoutParams(-1,dp(32)));
 
         progress=new ProgressBar(this,null,android.R.attr.progressBarStyleHorizontal);
         progress.setMax(100);
-        root.addView(progress,new LinearLayout.LayoutParams(-1,dp(6)));
+        root.addView(progress,new LinearLayout.LayoutParams(-1,dp(4)));
 
         peerBox=new LinearLayout(this);
         peerBox.setOrientation(LinearLayout.VERTICAL);
         peerBox.setPadding(0,dp(4),0,0);
-        LinearLayout activityCard=new LinearLayout(this); activityCard.setOrientation(LinearLayout.VERTICAL); activityCard.setPadding(dp(12),dp(10),dp(12),dp(10)); activityCard.setBackground(bg(Color.rgb(24,26,32),14));
+        LinearLayout activityCard=new LinearLayout(this); activityCard.setOrientation(LinearLayout.VERTICAL); activityCard.setPadding(dp(12),dp(10),dp(12),dp(10)); activityCard.setBackground(bg(surface(),18));
         transferActivityTitle=label("Transfer activity",14,Color.WHITE); transferActivityTitle.setTypeface(Typeface.DEFAULT,Typeface.BOLD);
         transferActivityItems=label("No active transfer",12,Color.LTGRAY); transferActivityItems.setPadding(0,dp(5),0,0); transferActivityItems.setMaxLines(6);
         activityCard.addView(transferActivityTitle); activityCard.addView(transferActivityItems);
@@ -255,10 +274,10 @@ public class AemTransferActivity extends Activity {
         Button chooseFolder=actionButton("Add folder");
         LinearLayout.LayoutParams bp=new LinearLayout.LayoutParams(0,dp(50),1);bp.setMargins(0,dp(6),dp(5),0);bottom.addView(chooseFiles,bp);
         LinearLayout.LayoutParams fp=new LinearLayout.LayoutParams(0,dp(50),1);fp.setMargins(dp(5),dp(6),0,0);bottom.addView(chooseFolder,fp);
-        root.addView(bottom,new LinearLayout.LayoutParams(-1,dp(62)));
+        root.addView(bottom,new LinearLayout.LayoutParams(-1,dp(68)));
 
         disconnectButton=actionButton("Disconnect");
-        disconnectButton.setBackground(bg(Color.rgb(60,62,70),12));
+        disconnectButton.setBackground(bg(mutedButton(),12));
         disconnectButton.setEnabled(false);
         disconnectButton.setOnClickListener(v->disconnectTransfer());
         root.addView(disconnectButton,new LinearLayout.LayoutParams(-1,dp(50)));
@@ -312,6 +331,7 @@ public class AemTransferActivity extends Activity {
 
     private void setSection(String section){
         activeSection=section;
+        updateSectionButtons();
         if("Transfer".equals(section)){showTransferHome();return;}
         transferScreen="home";
         modesView.setVisibility(View.GONE);
@@ -325,18 +345,20 @@ public class AemTransferActivity extends Activity {
         categoryTitle.setVisibility(View.VISIBLE);
         if("Downloads".equals(section)){categoryTitle.setText("Downloads");renderDownloads();}
         else {categoryTitle.setText("Transfer history");renderHistory();}
+        updateSectionButtons();
     }
 
     private void showTransferHome(){
         activeSection="Transfer"; transferScreen="home";
+        updateSectionButtons();
         modesView.setVisibility(View.VISIBLE);
         tabsView.setVisibility(View.VISIBLE);
         appSearch.setVisibility("Apps".equals(activeCategory)?View.VISIBLE:View.GONE);
-        selectedBarView.setVisibility(View.VISIBLE);
-        bottomActionsView.setVisibility(View.VISIBLE);
+        selectedBarView.setVisibility(selected.isEmpty()?View.GONE:View.VISIBLE);
+        bottomActionsView.setVisibility("Files".equals(activeCategory)?View.VISIBLE:View.GONE);
         peerBox.setVisibility(connectionActive ? View.VISIBLE : View.GONE);
-        status.setVisibility(View.VISIBLE);
-        progress.setVisibility(View.VISIBLE);
+        status.setVisibility(transferActive?View.VISIBLE:View.GONE);
+        progress.setVisibility(transferActive?View.VISIBLE:View.GONE);
         categoryTitle.setVisibility(View.VISIBLE);
         categoryTitle.setText(activeCategory);
         renderCategory();
@@ -511,7 +533,7 @@ public class AemTransferActivity extends Activity {
         File dir=transferDir();ArrayList<File> files=new ArrayList<>();collectTransferFiles(dir,files);
         Collections.sort(files,(a,b)->Long.compare(b.lastModified(),a.lastModified()));
         contentGrid.addView(section("DOWNLOADED FILES"));
-        if(files.isEmpty()){contentGrid.addView(label("No downloaded or received files yet.",14,Color.GRAY));return;}
+        if(files.isEmpty()){contentGrid.addView(label("No downloaded or received files yet.",14,mutedTextColor()));return;}
         for(File f:files){
             LinearLayout card=new LinearLayout(this);card.setOrientation(LinearLayout.VERTICAL);
             card.setPadding(dp(14),dp(12),dp(12),dp(12));card.setBackground(bg(Color.rgb(24,26,32),16));
@@ -520,7 +542,7 @@ public class AemTransferActivity extends Activity {
             head.addView(icon,new LinearLayout.LayoutParams(dp(42),dp(42)));
             LinearLayout info=new LinearLayout(this);info.setOrientation(LinearLayout.VERTICAL);info.setPadding(dp(10),0,0,0);
             TextView name=label(f.getName(),15,Color.WHITE);name.setTypeface(Typeface.DEFAULT,Typeface.BOLD);name.setMaxLines(2);
-            info.addView(name);info.addView(label(format(f.length())+" • "+new Date(f.lastModified()).toString(),11,Color.GRAY));
+            info.addView(name);info.addView(label(format(f.length())+" • "+new Date(f.lastModified()).toString(),11,mutedTextColor()));
             head.addView(info,new LinearLayout.LayoutParams(0,-2,1));card.addView(head);
             LinearLayout actions=new LinearLayout(this);actions.setGravity(Gravity.CENTER_VERTICAL);actions.setPadding(0,dp(10),0,0);
             if(isPackageFile(f)){
@@ -536,7 +558,7 @@ public class AemTransferActivity extends Activity {
             Button del=actionButton("Delete");del.setTextSize(12);del.setOnClickListener(v->deleteTransferredFile(f));
             LinearLayout.LayoutParams dpv=new LinearLayout.LayoutParams(0,dp(44),1);dpv.setMargins(dp(6),0,0,0);actions.addView(del,dpv);
             card.addView(actions);
-            LinearLayout.LayoutParams cp=new LinearLayout.LayoutParams(-1,-2);cp.setMargins(0,0,0,dp(10));contentGrid.addView(card,cp);
+            LinearLayout.LayoutParams cp=new LinearLayout.LayoutParams(-1,-2);cp.setMargins(0,0,0,dp(16));contentGrid.addView(card,cp);
         }
     }
     private void renderHistory(){
@@ -544,18 +566,19 @@ public class AemTransferActivity extends Activity {
         TextView clear=label("CLEAR HISTORY",12,Color.rgb(130,170,255));clear.setGravity(Gravity.CENTER_VERTICAL);clear.setPadding(dp(8),0,dp(8),0);clear.setOnClickListener(v->{getSharedPreferences("aem_transfer_history",MODE_PRIVATE).edit().clear().apply();renderHistory();});
         contentGrid.addView(clear,new LinearLayout.LayoutParams(-1,dp(40)));
         String raw=getSharedPreferences("aem_transfer_history",MODE_PRIVATE).getString("items","");
-        if(raw.trim().isEmpty()){contentGrid.addView(label("No transfer history yet.",14,Color.GRAY));return;}
+        if(raw.trim().isEmpty()){contentGrid.addView(label("No transfer history yet.",14,mutedTextColor()));return;}
         for(String line:raw.split("\\n")){
             String[] p=line.split("\\|",-1);if(p.length<5)continue;
             String when;try{when=new Date(Long.parseLong(p[0])).toString();}catch(Exception e){when="Unknown time";}
             LinearLayout row=new LinearLayout(this);row.setOrientation(LinearLayout.VERTICAL);row.setPadding(dp(10),dp(8),dp(10),dp(8));row.setBackground(bg(Color.rgb(24,26,31),14));
-            row.addView(label(p[1]+" • "+p[2],13,Color.WHITE));row.addView(label(when+" • "+(Long.parseLong(p[3])>0?format(Long.parseLong(p[3]))+" • ":"")+p[4],10,Color.GRAY));
+            row.addView(label(p[1]+" • "+p[2],13,Color.WHITE));row.addView(label(when+" • "+(Long.parseLong(p[3])>0?format(Long.parseLong(p[3]))+" • ":"")+p[4],10,mutedTextColor()));
             contentGrid.addView(row,new LinearLayout.LayoutParams(-1,-2));
         }
     }
 
     private void renderCategory(){
         if(contentGrid==null)return;
+        if(bottomActionsView!=null)bottomActionsView.setVisibility("Files".equals(activeCategory)?View.VISIBLE:View.GONE);
         contentGrid.removeAllViews();
         categoryTitle.setText(activeCategory);
         updateCategoryButtons();
@@ -690,6 +713,17 @@ public class AemTransferActivity extends Activity {
         }
     }
 
+    private void updateSectionButtons(){
+        if(sectionButtons.size()<3)return;
+        String[] names={"Transfer","Downloads","History"};
+        for(int i=0;i<sectionButtons.size()&&i<names.length;i++){
+            TextView b=sectionButtons.get(i); boolean active=names[i].equals(activeSection);
+            b.setTextColor(Color.WHITE);
+            b.setBackground(bg(active?accent():surfaceAlt(),12));
+            b.setAlpha(active?1f:.78f);
+        }
+    }
+
     private TextView section(String text){
         TextView v=label(text,14,Color.rgb(170,175,185));
         v.setTypeface(Typeface.DEFAULT,Typeface.BOLD);
@@ -724,7 +758,7 @@ public class AemTransferActivity extends Activity {
         addAppGrid(userApps,pm);
         contentGrid.addView(section("PREINSTALLED / SYSTEM APPLICATIONS ("+systemApps.size()+")"));
         addAppGrid(systemApps,pm);
-        if(all.isEmpty())contentGrid.addView(label("No matching applications found.",13,Color.GRAY));
+        if(all.isEmpty())contentGrid.addView(label("No matching applications found.",13,mutedTextColor()));
     }
 
     private void addAppGrid(ArrayList<ApplicationInfo> apps,PackageManager pm){
@@ -742,7 +776,7 @@ public class AemTransferActivity extends Activity {
             TextView name=label(String.valueOf(pm.getApplicationLabel(app)),11,Color.WHITE);
             name.setTypeface(Typeface.DEFAULT,Typeface.BOLD);name.setGravity(Gravity.CENTER);name.setMaxLines(2);
             card.addView(name,new LinearLayout.LayoutParams(-1,dp(30)));
-            TextView pkg=label(app.packageName,7,Color.GRAY);pkg.setGravity(Gravity.CENTER);pkg.setMaxLines(1);card.addView(pkg,new LinearLayout.LayoutParams(-1,dp(18)));
+            TextView pkg=label(app.packageName,7,mutedTextColor());pkg.setGravity(Gravity.CENTER);pkg.setMaxLines(1);card.addView(pkg,new LinearLayout.LayoutParams(-1,dp(18)));
             CheckBox box=new CheckBox(this);box.setText("SELECT");box.setTextColor(Color.LTGRAY);box.setTextSize(8);box.setGravity(Gravity.CENTER);
             box.setOnCheckedChangeListener((button,checked)->{
                 button.setEnabled(false);
@@ -763,11 +797,11 @@ public class AemTransferActivity extends Activity {
             card.addView(box);
             GridLayout.LayoutParams gp=new GridLayout.LayoutParams();
             gp.width=0;gp.height=GridLayout.LayoutParams.WRAP_CONTENT;
-            gp.columnSpec=GridLayout.spec(GridLayout.UNDEFINED,1f);gp.setMargins(dp(3),dp(3),dp(3),dp(3));
+            gp.columnSpec=GridLayout.spec(GridLayout.UNDEFINED,1f);gp.setMargins(dp(5),dp(5),dp(5),dp(5));
             grid.addView(card,gp);
         }
         contentGrid.addView(grid,new LinearLayout.LayoutParams(-1,-2));
-        if(apps.size()>limit)contentGrid.addView(label("Showing the first "+limit+" apps in this section.",11,Color.GRAY));
+        if(apps.size()>limit)contentGrid.addView(label("Showing the first "+limit+" apps in this section.",11,mutedTextColor()));
     }
 
     private void filterRenderedApps(String query){
@@ -817,14 +851,14 @@ public class AemTransferActivity extends Activity {
             LinearLayout row=new LinearLayout(this);row.setGravity(Gravity.CENTER_VERTICAL);row.setPadding(dp(10),dp(8),dp(10),dp(8));row.setBackground(bg(Color.rgb(24,26,31),14));
             ImageView thumb=new ImageView(this); thumb.setScaleType(ImageView.ScaleType.CENTER_CROP); thumb.setImageResource(android.R.drawable.ic_menu_gallery); row.addView(thumb,new LinearLayout.LayoutParams(dp(70),dp(70))); if(!category.equals("Music"))loadThumbnail(thumb,x.uri);
             LinearLayout textBox=new LinearLayout(this);textBox.setOrientation(LinearLayout.VERTICAL);
-            textBox.addView(label(x.name,14,Color.WHITE));textBox.addView(label(format(x.size),11,Color.GRAY));
+            textBox.addView(label(x.name,14,Color.WHITE));textBox.addView(label(format(x.size),11,mutedTextColor()));
             row.addView(textBox,new LinearLayout.LayoutParams(0,-2,1));
             CheckBox box=new CheckBox(this);box.setText("SELECT");box.setTextColor(Color.LTGRAY);
             box.setOnCheckedChangeListener((b,checked)->{if(checked){if(!containsItem(x))selected.add(x);}else removeItem(x);refreshSelectedText();});
             row.addView(box);
             contentGrid.addView(row,new LinearLayout.LayoutParams(-1,-2));
         }
-        if(items.isEmpty())contentGrid.addView(label("No "+category.toLowerCase()+" found on this device.",14,Color.GRAY));
+        if(items.isEmpty())contentGrid.addView(label("No "+category.toLowerCase()+" found on this device.",14,mutedTextColor()));
     }
 
     private boolean containsItem(Item x){for(Item y:selected)if(String.valueOf(y.uri).equals(String.valueOf(x.uri)))return true;return false;}
@@ -845,7 +879,7 @@ public class AemTransferActivity extends Activity {
         contentGrid.addView(label("Documents, ZIPs, APKs and folders are transferred directly. AEM does not open or play them.",13,Color.LTGRAY));
         Button b=new Button(this);b.setText("BROWSE FILES");b.setOnClickListener(v->pickFiles());contentGrid.addView(b);
         Button f=new Button(this);f.setText("BROWSE FOLDER");f.setOnClickListener(v->pickFolder());contentGrid.addView(f);
-        contentGrid.addView(label("Selected files stay in the transfer list below.",11,Color.GRAY));
+        contentGrid.addView(label("Selected files stay in the transfer list below.",11,mutedTextColor()));
     }
 
     private int exportInstalledApp(ApplicationInfo app,ArrayList<Item> made){
@@ -901,7 +935,7 @@ public class AemTransferActivity extends Activity {
         }catch(Exception e){update("Folder selection failed: "+e.getMessage(),0);}finally{if(c!=null)c.close();}}
     private String displayName(Uri u){Cursor c=null;try{c=getContentResolver().query(u,new String[]{OpenableColumns.DISPLAY_NAME},null,null,null);return c!=null&&c.moveToFirst()&&!c.isNull(0)?c.getString(0):"AEM-file";}catch(Exception e){return u.getLastPathSegment()==null?"AEM-file":u.getLastPathSegment();}finally{if(c!=null)c.close();}}
     private long size(Uri u){Cursor c=null;try{c=getContentResolver().query(u,new String[]{OpenableColumns.SIZE},null,null,null);return c!=null&&c.moveToFirst()&&!c.isNull(0)?c.getLong(0):0;}catch(Exception e){return 0;}finally{if(c!=null)c.close();}}
-    private void refreshSelectedText(){long total=0;for(Item x:selected)total+=x.size;selectedText.setText(selected.size()+" item"+(selected.size()==1?"":"s")+" selected · "+format(total));}
+    private void refreshSelectedText(){long total=0;for(Item x:selected)total+=x.size;selectedText.setText(selected.size()+" item"+(selected.size()==1?"":"s")+" selected · "+format(total));if(selectedBarView!=null&&"Transfer".equals(activeSection))selectedBarView.setVisibility(selected.isEmpty()?View.GONE:View.VISIBLE);}
     private String format(long n){double x=n;if(x<1024)return n+" B";if(x<1048576)return String.format(Locale.US,"%.1f KB",x/1024);if(x<1073741824)return String.format(Locale.US,"%.1f MB",x/1048576);return String.format(Locale.US,"%.2f GB",x/1073741824);}
 
     private void pickInstalledApps(){
