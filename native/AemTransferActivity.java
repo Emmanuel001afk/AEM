@@ -1247,7 +1247,7 @@ public class AemTransferActivity extends Activity {
             String id=in.readUTF();
             String handshake=in.readUTF();
             String peerReturnToken=in.readUTF();
-            String expectedLocalToken=receiverMode?receiverToken:localTransferToken;
+            String expectedLocalToken=localTransferToken;
             if(expectedLocalToken==null||!expectedLocalToken.equals(handshake))throw new IOException("Transfer handshake rejected");
             if(peerReturnToken==null||peerReturnToken.trim().isEmpty())throw new IOException("Peer return handshake missing");
             remoteTransferToken=peerReturnToken;
