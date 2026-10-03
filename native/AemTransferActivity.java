@@ -389,7 +389,7 @@ public class AemTransferActivity extends Activity {
         String old=p.getString("items","");
         String combined=line+"\n"+old;
         String[] lines=combined.split("\\n");
-        if(lines.length>100)combined=String.join("\\n",Arrays.copyOf(lines,100));
+        if(lines.length>100)combined=String.join("\n",Arrays.copyOf(lines,100));
         p.edit().putString("items",combined).apply();
     }
     private void renderDownloads(){
