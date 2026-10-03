@@ -159,7 +159,7 @@ public class AemTransferActivity extends Activity {
         root.addView(deviceNameLabel,new LinearLayout.LayoutParams(-1,dp(34)));
         LinearLayout nav=new LinearLayout(this);
         nav.setPadding(0,dp(2),0,dp(6));
-        TextView transferNav=label("Transfer",14,Color.WHITE);
+        TextView transferNav=label("Transfer",14,textColor());
         TextView downloadsNav=label("Downloads",14,secondaryTextColor());
         TextView historyNav=label("History",14,secondaryTextColor());
         sectionButtons.clear(); sectionButtons.add(transferNav); sectionButtons.add(downloadsNav); sectionButtons.add(historyNav);
@@ -851,7 +851,7 @@ public class AemTransferActivity extends Activity {
             LinearLayout row=new LinearLayout(this);row.setGravity(Gravity.CENTER_VERTICAL);row.setPadding(dp(10),dp(8),dp(10),dp(8));row.setBackground(bg(surface(),14));
             ImageView thumb=new ImageView(this); thumb.setScaleType(ImageView.ScaleType.CENTER_CROP); thumb.setImageResource(android.R.drawable.ic_menu_gallery); row.addView(thumb,new LinearLayout.LayoutParams(dp(70),dp(70))); if(!category.equals("Music"))loadThumbnail(thumb,x.uri);
             LinearLayout textBox=new LinearLayout(this);textBox.setOrientation(LinearLayout.VERTICAL);
-            textBox.addView(label(x.name,14,Color.WHITE));textBox.addView(label(format(x.size),11,mutedTextColor()));
+            textBox.addView(label(x.name,14,textColor()));textBox.addView(label(format(x.size),11,mutedTextColor()));
             row.addView(textBox,new LinearLayout.LayoutParams(0,-2,1));
             CheckBox box=new CheckBox(this);box.setText("SELECT");box.setTextColor(secondaryTextColor());
             box.setOnCheckedChangeListener((b,checked)->{if(checked){if(!containsItem(x))selected.add(x);}else removeItem(x);refreshSelectedText();});
@@ -1029,7 +1029,7 @@ public class AemTransferActivity extends Activity {
 
     private void showSystemRequirement(String title,String message,boolean wifi){
         peerBox.removeAllViews();
-        peerBox.addView(label(title,16,Color.WHITE));
+        peerBox.addView(label(title,16,textColor()));
         TextView body=label(message,13,secondaryTextColor());body.setPadding(0,dp(8),0,dp(12));peerBox.addView(body);
         Button open=actionButton(wifi?"OPEN WI-FI PANEL":"OPEN LOCATION SETTINGS");
         open.setBackground(bg(accent(),12));
@@ -1073,7 +1073,7 @@ public class AemTransferActivity extends Activity {
     private void showPostTransferOptions(){
         peerBox.removeAllViews();
         radar=null;
-        TextView h=label("Transfer complete",16,Color.WHITE);
+        TextView h=label("Transfer complete",16,textColor());
         h.setTypeface(Typeface.DEFAULT,Typeface.BOLD);
         peerBox.addView(h);
         TextView info=label("The transfer is complete. Open Downloads to install, open, or delete received files.",13,secondaryTextColor());
@@ -1171,7 +1171,7 @@ public class AemTransferActivity extends Activity {
                     peerBox.removeAllViews();
                     radar=new RadarView(this);
                     peerBox.addView(radar,new LinearLayout.LayoutParams(-1,dp(168)));
-                    TextView h=label("Connected device",15,Color.WHITE);h.setTypeface(Typeface.DEFAULT,Typeface.BOLD);peerBox.addView(h);
+                    TextView h=label("Connected device",15,textColor());h.setTypeface(Typeface.DEFAULT,Typeface.BOLD);peerBox.addView(h);
                     for(WifiP2pDevice d:connected)peerBox.addView(label((d.deviceName==null||d.deviceName.isEmpty()?"Nearby phone":d.deviceName)+" • connected",14,secondaryTextColor()));
                     TextView ready=label("Waiting for transfer…",13,Color.rgb(110,210,150));ready.setPadding(0,dp(8),0,dp(4));peerBox.addView(ready);
                 });
@@ -1240,7 +1240,7 @@ public class AemTransferActivity extends Activity {
             String displayName=peerNames.get(d.deviceAddress);
             if(displayName==null||displayName.trim().isEmpty())
                 displayName=(d.deviceName==null||d.deviceName.isEmpty()?"Nearby phone":d.deviceName);
-            TextView device=label(displayName,15,Color.WHITE);
+            TextView device=label(displayName,15,textColor());
             device.setTypeface(Typeface.DEFAULT,Typeface.BOLD);
             card.addView(device,new LinearLayout.LayoutParams(0,dp(50),1));
             Button b=actionButton("Send");
