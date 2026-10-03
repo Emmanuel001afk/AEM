@@ -78,7 +78,22 @@ public class InstallConfirmationActivity extends Activity {
                 intent.getStringExtra("aem_download_path")
         );
         sendBroadcast(result);
-        finish();
+        if (status == PackageInstaller.STATUS_SUCCESS) {
+            new android.app.AlertDialog.Builder(this)
+                    .setTitle("Installation complete")
+                    .setMessage("AEM finished installing the downloaded package.")
+                    .setPositiveButton("OK", (d, w) -> finish())
+                    .setOnCancelListener(d -> finish())
+                    .show();
+        } else {
+            String message = intent.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE);
+            new android.app.AlertDialog.Builder(this)
+                    .setTitle("Installation failed")
+                    .setMessage(message == null || message.trim().isEmpty() ? "Android could not complete the installation." : message)
+                    .setPositiveButton("OK", (d, w) -> finish())
+                    .setOnCancelListener(d -> finish())
+                    .show();
+        }
     }
 
     @SuppressWarnings("deprecation")
