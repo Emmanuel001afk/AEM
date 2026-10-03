@@ -109,7 +109,7 @@ public class AemTransferActivity extends Activity {
     private void buildUi(){
         root=new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
-        root.setPadding(dp(16),dp(14),dp(16),dp(12));
+        root.setPadding(dp(20),dp(18),dp(20),dp(16));
         root.setBackgroundColor(Color.rgb(8,9,12));
 
         LinearLayout top=new LinearLayout(this);
@@ -160,13 +160,13 @@ public class AemTransferActivity extends Activity {
         send.setTextColor(Color.WHITE);receive.setTextColor(Color.WHITE);
         send.setBackground(bg(Color.rgb(50,92,210),14));
         receive.setBackground(bg(Color.rgb(31,34,41),14));
-        LinearLayout.LayoutParams mp=new LinearLayout.LayoutParams(0,dp(58),1);mp.setMargins(0,0,dp(6),0);modes.addView(send,mp);
-        LinearLayout.LayoutParams rp=new LinearLayout.LayoutParams(0,dp(58),1);rp.setMargins(dp(6),0,0,0);modes.addView(receive,rp);
-        root.addView(modes);
+        LinearLayout.LayoutParams mp=new LinearLayout.LayoutParams(0,dp(62),1);mp.setMargins(0,0,dp(6),0);modes.addView(send,mp);
+        LinearLayout.LayoutParams rp=new LinearLayout.LayoutParams(0,dp(62),1);rp.setMargins(dp(6),0,0,0);modes.addView(receive,rp);
+        root.addView(modes,new LinearLayout.LayoutParams(-1,dp(74)));
 
         modeHint=label("Choose what to send, then select a nearby phone.",13,Color.rgb(170,175,185));
         modeHint.setPadding(2,2,2,8);
-        root.addView(modeHint,new LinearLayout.LayoutParams(-1,dp(30)));
+        root.addView(modeHint,new LinearLayout.LayoutParams(-1,dp(38)));
 
         categoryTitle=new TextView(this);
         categoryTitle.setText("Apps");
@@ -174,7 +174,7 @@ public class AemTransferActivity extends Activity {
         categoryTitle.setTextColor(Color.WHITE);
         categoryTitle.setTypeface(null,1);
         categoryTitle.setPadding(0,dp(8),0,dp(8));
-        root.addView(categoryTitle,new LinearLayout.LayoutParams(-1,dp(42)));
+        root.addView(categoryTitle,new LinearLayout.LayoutParams(-1,dp(50)));
 
         HorizontalScrollView tabsScroll=new HorizontalScrollView(this); tabsView=tabsScroll;
         tabsScroll.setHorizontalScrollBarEnabled(false);
@@ -191,7 +191,7 @@ public class AemTransferActivity extends Activity {
             LinearLayout.LayoutParams tp=new LinearLayout.LayoutParams(-2,dp(42));tp.setMargins(0,0,dp(8),0);tabs.addView(b,tp);
         }
         tabsScroll.addView(tabs);
-        root.addView(tabsScroll,new LinearLayout.LayoutParams(-1,dp(46)));
+        root.addView(tabsScroll,new LinearLayout.LayoutParams(-1,dp(52)));
         appSearch=new EditText(this);
         appSearch.setSingleLine(true);
         appSearch.setHint("Search apps on this device…");
@@ -200,7 +200,7 @@ public class AemTransferActivity extends Activity {
         appSearch.setTextSize(13);
         appSearch.setPadding(dp(12),0,dp(12),0);
         appSearch.setBackground(bg(Color.rgb(24,26,32),12));
-        LinearLayout.LayoutParams sp=new LinearLayout.LayoutParams(-1,dp(42));
+        LinearLayout.LayoutParams sp=new LinearLayout.LayoutParams(-1,dp(46));
         sp.setMargins(0,dp(2),0,dp(4));
         root.addView(appSearch,sp);
         appSearch.setVisibility(View.VISIBLE);
@@ -229,16 +229,16 @@ public class AemTransferActivity extends Activity {
         TextView clear=new TextView(this);clear.setText("Clear");clear.setTextColor(Color.rgb(130,170,255));clear.setGravity(Gravity.CENTER);
         clear.setOnClickListener(v->{selected.clear();exportedApps.clear();refreshSelectedText();});
         selectedBar.addView(clear,new LinearLayout.LayoutParams(dp(60),dp(48)));
-        root.addView(selectedBar,new LinearLayout.LayoutParams(-1,dp(52)));
+        root.addView(selectedBar,new LinearLayout.LayoutParams(-1,dp(58)));
 
         status=new TextView(this);
         status.setTextColor(Color.rgb(190,195,205));status.setTextSize(12);
         status.setPadding(dp(2),dp(6),dp(2),dp(4));
-        root.addView(status,new LinearLayout.LayoutParams(-1,dp(28)));
+        root.addView(status,new LinearLayout.LayoutParams(-1,dp(34)));
 
         progress=new ProgressBar(this,null,android.R.attr.progressBarStyleHorizontal);
         progress.setMax(100);
-        root.addView(progress,new LinearLayout.LayoutParams(-1,dp(5)));
+        root.addView(progress,new LinearLayout.LayoutParams(-1,dp(6)));
 
         peerBox=new LinearLayout(this);
         peerBox.setOrientation(LinearLayout.VERTICAL);
@@ -255,13 +255,13 @@ public class AemTransferActivity extends Activity {
         Button chooseFolder=actionButton("Add folder");
         LinearLayout.LayoutParams bp=new LinearLayout.LayoutParams(0,dp(50),1);bp.setMargins(0,dp(6),dp(5),0);bottom.addView(chooseFiles,bp);
         LinearLayout.LayoutParams fp=new LinearLayout.LayoutParams(0,dp(50),1);fp.setMargins(dp(5),dp(6),0,0);bottom.addView(chooseFolder,fp);
-        root.addView(bottom,new LinearLayout.LayoutParams(-1,dp(56)));
+        root.addView(bottom,new LinearLayout.LayoutParams(-1,dp(62)));
 
         disconnectButton=actionButton("Disconnect");
         disconnectButton.setBackground(bg(Color.rgb(60,62,70),12));
         disconnectButton.setEnabled(false);
         disconnectButton.setOnClickListener(v->disconnectTransfer());
-        root.addView(disconnectButton,new LinearLayout.LayoutParams(-1,dp(46)));
+        root.addView(disconnectButton,new LinearLayout.LayoutParams(-1,dp(50)));
 
         setContentView(root);
 
@@ -334,7 +334,7 @@ public class AemTransferActivity extends Activity {
         appSearch.setVisibility("Apps".equals(activeCategory)?View.VISIBLE:View.GONE);
         selectedBarView.setVisibility(View.VISIBLE);
         bottomActionsView.setVisibility(View.VISIBLE);
-        peerBox.setVisibility(View.VISIBLE);
+        peerBox.setVisibility(connectionActive ? View.VISIBLE : View.GONE);
         status.setVisibility(View.VISIBLE);
         progress.setVisibility(View.VISIBLE);
         categoryTitle.setVisibility(View.VISIBLE);
@@ -999,7 +999,7 @@ public class AemTransferActivity extends Activity {
         sending=false;
         modeHint.setText("Receive mode: keep this screen open. The sender will appear when nearby.");
         if(manager==null||channel==null){status.setText("Wi-Fi Direct is unavailable on this phone.");return;}
-        showRadar();
+        showDiscoveryScreen(false);
         status.setText("Preparing receiver…");
         cleanupGroupThenCreate();
     }
@@ -1138,7 +1138,7 @@ public class AemTransferActivity extends Activity {
             Button b=actionButton("Send");
             b.setBackground(bg(Color.rgb(50,92,210),12));
             card.addView(b,new LinearLayout.LayoutParams(dp(100),dp(50)));
-            LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(-1,dp(66));
+            LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(-1,dp(74));
             p.setMargins(0,dp(4),0,dp(4));
             peerBox.addView(card,p);
             b.setOnClickListener(v->connect(d));
@@ -1231,6 +1231,10 @@ public class AemTransferActivity extends Activity {
         boolean completed=false;
         ArrayList<Header> hs=new ArrayList<>();
         try(Socket sock=s){
+            connectedHost=sock.getInetAddress()==null?connectedHost:sock.getInetAddress().getHostAddress();
+            connectedToken=receiverToken;
+            connectionActive=true;
+            receiverMode=true;
             sock.setTcpNoDelay(true);sock.setReceiveBufferSize(1024*1024);sock.setSoTimeout(60000);
             DataInputStream in=new DataInputStream(new BufferedInputStream(sock.getInputStream(),256*1024));
             int protocol=in.readInt();if(protocol!=PROTOCOL)throw new IOException("Unsupported transfer protocol");
