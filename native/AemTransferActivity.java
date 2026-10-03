@@ -1105,6 +1105,7 @@ public class AemTransferActivity extends Activity {
     private void receiveFiles(Socket s){io.execute(()->{
         beginTransferSession();
         boolean completed=false;
+        ArrayList<Header> hs=new ArrayList<>();
         try(Socket sock=s){
             sock.setTcpNoDelay(true);sock.setReceiveBufferSize(1024*1024);sock.setSoTimeout(60000);
             DataInputStream in=new DataInputStream(new BufferedInputStream(sock.getInputStream(),256*1024));
@@ -1114,7 +1115,7 @@ public class AemTransferActivity extends Activity {
             if(receiverToken==null||!receiverToken.equals(handshake))throw new IOException("Receiver handshake rejected");if(!id.matches("[A-Za-z0-9-]{8,64}"))throw new IOException("Invalid transfer id");
             int count=in.readInt();if(count<0||count>1000)throw new IOException("Invalid item count");
             long declaredTotal=in.readLong();if(declaredTotal<0)throw new IOException("Invalid total size");
-            ArrayList<Header> hs=new ArrayList<>();long total=0;
+            long total=0;
             for(int i=0;i<count;i++){
                 int nl=in.readInt();if(nl<1||nl>16384)throw new IOException("Invalid file name");
                 byte[] nb=new byte[nl];in.readFully(nb);String name=safePath(new String(nb,"UTF-8"));long size=in.readLong();if(size<0)throw new IOException("Invalid file size");
