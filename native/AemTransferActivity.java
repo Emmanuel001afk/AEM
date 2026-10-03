@@ -351,6 +351,13 @@ public class AemTransferActivity extends Activity {
             startActivity(i);
         }catch(Exception e){status.setVisibility(View.VISIBLE);status.setText("Cannot open "+f.getName()+": "+safe(e));}
     }
+    private void shareTransferredFile(File f){
+        try{
+            Uri u=FileProvider.getUriForFile(this,getPackageName()+".fileprovider",f);
+            Intent i=new Intent(Intent.ACTION_SEND);i.setType(mimeFor(f));i.putExtra(Intent.EXTRA_STREAM,u);i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            startActivity(Intent.createChooser(i,"Share "+f.getName()));
+        }catch(Exception e){status.setVisibility(View.VISIBLE);status.setText("Cannot share "+f.getName()+": "+safe(e));}
+    }
     private void deleteTransferredFile(File f){
         if(f.delete()){recordHistory("DELETED",f.getName(),0,"Deleted");renderDownloads();status.setVisibility(View.VISIBLE);status.setText("Deleted "+f.getName());}
         else{status.setVisibility(View.VISIBLE);status.setText("Could not delete "+f.getName());}
@@ -406,7 +413,8 @@ public class AemTransferActivity extends Activity {
             if(f.getName().toLowerCase(Locale.US).endsWith(".apk")||f.getName().toLowerCase(Locale.US).endsWith(".apks")){
                 Button install=actionButton("Install");install.setTextSize(11);install.setBackground(bg(Color.rgb(50,92,210),10));install.setOnClickListener(v->installTransferredPackage(f));row.addView(install,new LinearLayout.LayoutParams(dp(74),dp(42)));
             }
-            Button open=actionButton("Open");open.setTextSize(11);open.setOnClickListener(v->openTransferredFile(f));row.addView(open,new LinearLayout.LayoutParams(dp(68),dp(42)));
+            Button open=actionButton("Open");open.setTextSize(11);open.setOnClickListener(v->openTransferredFile(f));row.addView(open,new LinearLayout.LayoutParams(dp(64),dp(42)));
+            Button share=actionButton("Share");share.setTextSize(11);share.setOnClickListener(v->shareTransferredFile(f));row.addView(share,new LinearLayout.LayoutParams(dp(64),dp(42)));
             Button del=actionButton("Delete");del.setTextSize(11);del.setOnClickListener(v->deleteTransferredFile(f));row.addView(del,new LinearLayout.LayoutParams(dp(68),dp(42)));
             LinearLayout.LayoutParams rp=new LinearLayout.LayoutParams(-1,-2);rp.setMargins(0,dp(4),0,dp(4));contentGrid.addView(row,rp);
         }
@@ -1090,7 +1098,7 @@ public class AemTransferActivity extends Activity {
                 try{Thread.sleep(Math.min(5000L,500L*attempt));}catch(InterruptedException ie){Thread.currentThread().interrupt();break;}
             }
         }
-        if(transferActive)update("Transfer stopped after repeated connection loss",0);
+        if(transferActive){update("Transfer stopped after repeated connection loss",0);for(Item x:selected)recordHistory("FAILED",x.name,x.size,"Connection lost");}
         finishTransferSession();
     }
 
@@ -1155,6 +1163,7 @@ public class AemTransferActivity extends Activity {
         }catch(Exception e){
             try{DataOutputStream ack=new DataOutputStream(new BufferedOutputStream(s.getOutputStream(),64*1024));ack.writeInt(0);ack.flush();}catch(Exception ignored){}
             update("Connection interrupted • partial data saved for resume",0);
+            for(Header h:hs)recordHistory("FAILED",h.name,h.size,"Interrupted • resumable");
         }finally{
             if(completed)finishTransferSession();
         }
