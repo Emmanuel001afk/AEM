@@ -127,14 +127,14 @@ public class AemTransferActivity extends Activity {
     private void buildUi(){
         root=new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
-        root.setPadding(dp(24),dp(20),dp(24),dp(20));
+        root.setPadding(dp(18),dp(16),dp(18),dp(16));
         root.setBackgroundColor(pageBackground());
 
         LinearLayout top=new LinearLayout(this);
         top.setGravity(Gravity.CENTER_VERTICAL);
         TextView title=new TextView(this);
         title.setText("Transfer");
-        title.setTextSize(26);
+        title.setTextSize(24);
         title.setTextColor(textColor());
         title.setTypeface(Typeface.DEFAULT,Typeface.BOLD);
         top.addView(title,new LinearLayout.LayoutParams(0,dp(44),1));
@@ -145,55 +145,55 @@ public class AemTransferActivity extends Activity {
         close.setTextColor(textColor());
         close.setOnClickListener(v->finish());
         top.addView(close,new LinearLayout.LayoutParams(dp(44),dp(44)));
-        root.addView(top);
+        root.addView(top,new LinearLayout.LayoutParams(-1,dp(42)));
 
         TextView sub=new TextView(this);
         sub.setText("Direct phone-to-phone transfer • no internet or cloud");
         sub.setTextSize(13);
         sub.setTextColor(secondaryTextColor());
-        root.addView(sub,new LinearLayout.LayoutParams(-1,dp(36)));
+        root.addView(sub,new LinearLayout.LayoutParams(-1,dp(32)));
 
         deviceNameLabel=label("This device: "+transferName()+"  •  Edit",13,accentSoft());
         deviceNameLabel.setPadding(2,0,2,4);
         deviceNameLabel.setOnClickListener(v->showTransferNameDialog());
-        root.addView(deviceNameLabel,new LinearLayout.LayoutParams(-1,dp(38)));
+        root.addView(deviceNameLabel,new LinearLayout.LayoutParams(-1,dp(34)));
         LinearLayout nav=new LinearLayout(this);
-        nav.setPadding(0,dp(4),0,dp(8));
+        nav.setPadding(0,dp(2),0,dp(6));
         TextView transferNav=label("Transfer",14,Color.WHITE);
         TextView downloadsNav=label("Downloads",14,secondaryTextColor());
         TextView historyNav=label("History",14,secondaryTextColor());
         sectionButtons.clear(); sectionButtons.add(transferNav); sectionButtons.add(downloadsNav); sectionButtons.add(historyNav);
-        for(TextView n:new TextView[]{transferNav,downloadsNav,historyNav}){n.setGravity(Gravity.CENTER);n.setTypeface(Typeface.DEFAULT,Typeface.BOLD);n.setPadding(dp(8),0,dp(8),0);nav.addView(n,new LinearLayout.LayoutParams(0,dp(42),1));}
+        for(TextView n:new TextView[]{transferNav,downloadsNav,historyNav}){n.setGravity(Gravity.CENTER);n.setTypeface(Typeface.DEFAULT,Typeface.BOLD);n.setPadding(dp(8),0,dp(8),0);nav.addView(n,new LinearLayout.LayoutParams(0,dp(40),1));}
         transferNav.setBackground(bg(accent(),12));
         transferNav.setOnClickListener(v->setSection("Transfer"));
         downloadsNav.setOnClickListener(v->setSection("Downloads"));
         historyNav.setOnClickListener(v->setSection("History"));
-        root.addView(nav,new LinearLayout.LayoutParams(-1,dp(56)));
+        root.addView(nav,new LinearLayout.LayoutParams(-1,dp(50)));
         
 
         LinearLayout modes=new LinearLayout(this); modesView=modes;
-        modes.setPadding(0,dp(12),0,dp(12));
+        modes.setPadding(0,dp(8),0,dp(8));
         Button send=actionButton("Send");
         Button receive=actionButton("Receive");
-        send.setTextSize(16);receive.setTextSize(16);
+        send.setTextSize(15);receive.setTextSize(15);
         send.setTextColor(Color.WHITE);receive.setTextColor(textColor());
         send.setBackground(bg(accent(),16));
         receive.setBackground(bg(surfaceAlt(),16));
-        LinearLayout.LayoutParams mp=new LinearLayout.LayoutParams(0,dp(66),1);mp.setMargins(0,0,dp(8),0);modes.addView(send,mp);
-        LinearLayout.LayoutParams rp=new LinearLayout.LayoutParams(0,dp(66),1);rp.setMargins(dp(8),0,0,0);modes.addView(receive,rp);
-        root.addView(modes,new LinearLayout.LayoutParams(-1,dp(90)));
+        LinearLayout.LayoutParams mp=new LinearLayout.LayoutParams(0,dp(54),1);mp.setMargins(0,0,dp(8),0);modes.addView(send,mp);
+        LinearLayout.LayoutParams rp=new LinearLayout.LayoutParams(0,dp(54),1);rp.setMargins(dp(8),0,0,0);modes.addView(receive,rp);
+        root.addView(modes,new LinearLayout.LayoutParams(-1,dp(70)));
 
         modeHint=label("Choose what to send, then select a nearby phone.",13,secondaryTextColor());
         modeHint.setPadding(dp(2),dp(4),dp(2),dp(10));
-        root.addView(modeHint,new LinearLayout.LayoutParams(-1,dp(46)));
+        root.addView(modeHint,new LinearLayout.LayoutParams(-1,dp(40)));
 
         categoryTitle=new TextView(this);
         categoryTitle.setText("Apps");
-        categoryTitle.setTextSize(19);
+        categoryTitle.setTextSize(18);
         categoryTitle.setTextColor(textColor());
         categoryTitle.setTypeface(null,1);
         categoryTitle.setPadding(0,dp(12),0,dp(10));
-        root.addView(categoryTitle,new LinearLayout.LayoutParams(-1,dp(58)));
+        root.addView(categoryTitle,new LinearLayout.LayoutParams(-1,dp(50)));
 
         HorizontalScrollView tabsScroll=new HorizontalScrollView(this); tabsView=tabsScroll;
         tabsScroll.setHorizontalScrollBarEnabled(false);
@@ -207,10 +207,10 @@ public class AemTransferActivity extends Activity {
             b.setPadding(dp(18),0,dp(18),0);
             b.setBackground(bg(surfaceAlt(),22));
             b.setOnClickListener(v->{activeCategory=c;renderCategory();});
-            LinearLayout.LayoutParams tp=new LinearLayout.LayoutParams(-2,dp(46));tp.setMargins(0,0,dp(10),0);tabs.addView(b,tp);
+            LinearLayout.LayoutParams tp=new LinearLayout.LayoutParams(-2,dp(42));tp.setMargins(0,0,dp(10),0);tabs.addView(b,tp);
         }
         tabsScroll.addView(tabs);
-        root.addView(tabsScroll,new LinearLayout.LayoutParams(-1,dp(58)));
+        root.addView(tabsScroll,new LinearLayout.LayoutParams(-1,dp(50)));
         appSearch=new EditText(this);
         appSearch.setSingleLine(true);
         appSearch.setHint("Search apps on this device…");
@@ -219,8 +219,8 @@ public class AemTransferActivity extends Activity {
         appSearch.setTextSize(13);
         appSearch.setPadding(dp(12),0,dp(12),0);
         appSearch.setBackground(bg(surface(),14));
-        LinearLayout.LayoutParams sp=new LinearLayout.LayoutParams(-1,dp(48));
-        sp.setMargins(0,dp(6),0,dp(8));
+        LinearLayout.LayoutParams sp=new LinearLayout.LayoutParams(-1,dp(44));
+        sp.setMargins(0,dp(4),0,dp(6));
         root.addView(appSearch,sp);
         appSearch.setVisibility(View.VISIBLE);
         appSearch.addTextChangedListener(new android.text.TextWatcher(){
@@ -231,7 +231,7 @@ public class AemTransferActivity extends Activity {
 
         contentGrid=new LinearLayout(this);
         contentGrid.setOrientation(LinearLayout.VERTICAL);
-        contentGrid.setPadding(0,dp(10),0,dp(14));
+        contentGrid.setPadding(0,dp(8),0,dp(12));
         ScrollView contentScroll=new ScrollView(this);
         contentScroll.setFillViewport(true);
         contentScroll.setOverScrollMode(View.OVER_SCROLL_IF_CONTENT_SCROLLS);
@@ -248,12 +248,12 @@ public class AemTransferActivity extends Activity {
         TextView clear=new TextView(this);clear.setText("Clear");clear.setTextColor(accentSoft());clear.setGravity(Gravity.CENTER);
         clear.setOnClickListener(v->{selected.clear();exportedApps.clear();refreshSelectedText();});
         selectedBar.addView(clear,new LinearLayout.LayoutParams(dp(60),dp(48)));
-        root.addView(selectedBar,new LinearLayout.LayoutParams(-1,dp(60)));
+        root.addView(selectedBar,new LinearLayout.LayoutParams(-1,dp(54)));
 
         status=new TextView(this);
         status.setTextColor(secondaryTextColor());status.setTextSize(12);
         status.setPadding(dp(2),dp(6),dp(2),dp(4));
-        root.addView(status,new LinearLayout.LayoutParams(-1,dp(32)));
+        root.addView(status,new LinearLayout.LayoutParams(-1,dp(30)));
 
         progress=new ProgressBar(this,null,android.R.attr.progressBarStyleHorizontal);
         progress.setMax(100);
@@ -263,7 +263,7 @@ public class AemTransferActivity extends Activity {
         peerBox.setOrientation(LinearLayout.VERTICAL);
         peerBox.setPadding(0,dp(4),0,0);
         LinearLayout activityCard=new LinearLayout(this); activityCard.setOrientation(LinearLayout.VERTICAL); activityCard.setPadding(dp(12),dp(10),dp(12),dp(10)); activityCard.setBackground(bg(surface(),18));
-        transferActivityTitle=label("Transfer activity",14,Color.WHITE); transferActivityTitle.setTypeface(Typeface.DEFAULT,Typeface.BOLD);
+        transferActivityTitle=label("Transfer activity",14,textColor()); transferActivityTitle.setTypeface(Typeface.DEFAULT,Typeface.BOLD);
         transferActivityItems=label("No active transfer",12,secondaryTextColor()); transferActivityItems.setPadding(0,dp(5),0,0); transferActivityItems.setMaxLines(6);
         activityCard.addView(transferActivityTitle); activityCard.addView(transferActivityItems);
         peerBox.addView(activityCard);
@@ -274,13 +274,13 @@ public class AemTransferActivity extends Activity {
         Button chooseFolder=actionButton("Add folder");
         LinearLayout.LayoutParams bp=new LinearLayout.LayoutParams(0,dp(50),1);bp.setMargins(0,dp(6),dp(5),0);bottom.addView(chooseFiles,bp);
         LinearLayout.LayoutParams fp=new LinearLayout.LayoutParams(0,dp(50),1);fp.setMargins(dp(5),dp(6),0,0);bottom.addView(chooseFolder,fp);
-        root.addView(bottom,new LinearLayout.LayoutParams(-1,dp(68)));
+        root.addView(bottom,new LinearLayout.LayoutParams(-1,dp(60)));
 
         disconnectButton=actionButton("Disconnect");
         disconnectButton.setBackground(bg(mutedButton(),12));
         disconnectButton.setEnabled(false);
         disconnectButton.setOnClickListener(v->disconnectTransfer());
-        root.addView(disconnectButton,new LinearLayout.LayoutParams(-1,dp(50)));
+        root.addView(disconnectButton,new LinearLayout.LayoutParams(-1,dp(46)));
 
         setContentView(root);
 
@@ -368,7 +368,7 @@ public class AemTransferActivity extends Activity {
         card.setOrientation(LinearLayout.VERTICAL);
         card.setPadding(dp(14),dp(12),dp(14),dp(12));
         card.setBackground(bg(surface(),16));
-        TextView h=label(connectionActive?"Connection ready":"Transfer ready",16,Color.WHITE);
+        TextView h=label(connectionActive?"Connection ready":"Transfer ready",16,textColor());
         h.setTypeface(Typeface.DEFAULT,Typeface.BOLD);
         card.addView(h);
         String message=connectionActive
@@ -422,7 +422,7 @@ public class AemTransferActivity extends Activity {
         back.setPadding(0,0,0,dp(10));
         back.setOnClickListener(v->returnToItems());
         peerBox.addView(back);
-        TextView title=label(sender?"Find a device":"Waiting for a device",23,Color.WHITE);
+        TextView title=label(sender?"Find a device":"Waiting for a device",22,textColor());
         title.setTypeface(Typeface.DEFAULT,Typeface.BOLD); peerBox.addView(title);
         TextView desc=label(sender
                 ?"This is a temporary discovery screen. Select a receiver when it appears."
@@ -541,7 +541,7 @@ public class AemTransferActivity extends Activity {
             ImageView icon=new ImageView(this);icon.setImageResource(isPackageFile(f)?android.R.drawable.sym_def_app_icon:android.R.drawable.ic_menu_save);
             head.addView(icon,new LinearLayout.LayoutParams(dp(42),dp(42)));
             LinearLayout info=new LinearLayout(this);info.setOrientation(LinearLayout.VERTICAL);info.setPadding(dp(10),0,0,0);
-            TextView name=label(f.getName(),15,Color.WHITE);name.setTypeface(Typeface.DEFAULT,Typeface.BOLD);name.setMaxLines(2);
+            TextView name=label(f.getName(),15,textColor());name.setTypeface(Typeface.DEFAULT,Typeface.BOLD);name.setMaxLines(2);
             info.addView(name);info.addView(label(format(f.length())+" • "+new Date(f.lastModified()).toString(),11,mutedTextColor()));
             head.addView(info,new LinearLayout.LayoutParams(0,-2,1));card.addView(head);
             LinearLayout actions=new LinearLayout(this);actions.setGravity(Gravity.CENTER_VERTICAL);actions.setPadding(0,dp(10),0,0);
@@ -571,7 +571,7 @@ public class AemTransferActivity extends Activity {
             String[] p=line.split("\\|",-1);if(p.length<5)continue;
             String when;try{when=new Date(Long.parseLong(p[0])).toString();}catch(Exception e){when="Unknown time";}
             LinearLayout row=new LinearLayout(this);row.setOrientation(LinearLayout.VERTICAL);row.setPadding(dp(10),dp(8),dp(10),dp(8));row.setBackground(bg(surface(),14));
-            row.addView(label(p[1]+" • "+p[2],13,Color.WHITE));row.addView(label(when+" • "+(Long.parseLong(p[3])>0?format(Long.parseLong(p[3]))+" • ":"")+p[4],10,mutedTextColor()));
+            row.addView(label(p[1]+" • "+p[2],13,textColor()));row.addView(label(when+" • "+(Long.parseLong(p[3])>0?format(Long.parseLong(p[3]))+" • ":"")+p[4],10,mutedTextColor()));
             contentGrid.addView(row,new LinearLayout.LayoutParams(-1,-2));
         }
     }
@@ -773,7 +773,7 @@ public class AemTransferActivity extends Activity {
             final ImageView iconView=icon;
             io.execute(()->{try{Drawable d=pm.getApplicationIcon(app);runOnUiThread(()->iconView.setImageDrawable(d));}catch(Exception ignored){}});
             card.addView(icon,new LinearLayout.LayoutParams(-1,dp(34)));
-            TextView name=label(String.valueOf(pm.getApplicationLabel(app)),11,Color.WHITE);
+            TextView name=label(String.valueOf(pm.getApplicationLabel(app)),11,textColor());
             name.setTypeface(Typeface.DEFAULT,Typeface.BOLD);name.setGravity(Gravity.CENTER);name.setMaxLines(2);
             card.addView(name,new LinearLayout.LayoutParams(-1,dp(30)));
             TextView pkg=label(app.packageName,7,mutedTextColor());pkg.setGravity(Gravity.CENTER);pkg.setMaxLines(1);card.addView(pkg,new LinearLayout.LayoutParams(-1,dp(18)));
@@ -1018,7 +1018,7 @@ public class AemTransferActivity extends Activity {
             openLocation.setBackground(bg(!wifi?surfaceAlt():accent(),12));
             openLocation.setTextColor(!wifi?textColor():Color.WHITE);
             openLocation.setOnClickListener(v->{try{startActivity(new Intent(android.provider.Settings.ACTION_LOCATION_SOURCE_SETTINGS));}catch(Exception ignored){try{startActivity(new Intent(android.provider.Settings.ACTION_SETTINGS));}catch(Exception ignored2){}}});
-            LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(-1,dp(48));
+            LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(-1,dp(44));
             if(!wifi)lp.setMargins(0,dp(8),0,0);
             peerBox.addView(openLocation,lp);
         }
@@ -1180,7 +1180,7 @@ public class AemTransferActivity extends Activity {
     }
     private void showConnectionGuide(boolean sender){
         if(radar==null){radar=new RadarView(this);peerBox.addView(radar,new LinearLayout.LayoutParams(-1,dp(168)));}
-        TextView h=label(sender?"Nearby receivers":"Waiting for a sender",15,Color.WHITE);
+        TextView h=label(sender?"Nearby receivers":"Waiting for a sender",15,textColor());
         h.setTypeface(Typeface.DEFAULT,Typeface.BOLD);peerBox.addView(h);
         peerBox.addView(label(sender
             ?"1. On the other phone, open AEM → Transfer → Receive."
@@ -1207,12 +1207,12 @@ public class AemTransferActivity extends Activity {
         peerBox.removeAllViews();
         TextView back=label("‹  Back to Transfer",14,accentSoft());
         back.setPadding(0,0,0,dp(10)); back.setOnClickListener(v->returnToItems()); peerBox.addView(back);
-        TextView title=label(sending?"Find a receiver":"Nearby devices",23,Color.WHITE);
+        TextView title=label(sending?"Find a receiver":"Nearby devices",22,textColor());
         title.setTypeface(Typeface.DEFAULT,Typeface.BOLD); peerBox.addView(title);
         radar=new RadarView(this);
         peerBox.addView(radar,new LinearLayout.LayoutParams(-1,dp(168)));
         if(peers.isEmpty()){
-            TextView empty=label(sending?"Scanning for nearby receivers…":"No receiver found yet",15,Color.WHITE);
+            TextView empty=label(sending?"Scanning for nearby receivers…":"No receiver found yet",15,textColor());
             empty.setTypeface(Typeface.DEFAULT,Typeface.BOLD);
             peerBox.addView(empty);
             if(sending){
