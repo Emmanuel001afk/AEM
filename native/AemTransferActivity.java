@@ -40,7 +40,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 public class AemTransferActivity extends Activity {
     private static final int PORT=38177, PERM=7001, PICK=7002, FOLDER=7003;
-    private static final int PROTOCOL=4;
+    private static final int PROTOCOL=5;
     private WifiP2pManager manager; private WifiP2pManager.Channel channel; private BroadcastReceiver receiver;
     private WifiP2pDnsSdServiceInfo localService; private WifiP2pDnsSdServiceRequest serviceRequest;
     private final HashMap<String,String> peerNames=new HashMap<>();
@@ -48,7 +48,7 @@ public class AemTransferActivity extends Activity {
     private final ExecutorService io=Executors.newCachedThreadPool();
     private final AtomicBoolean transferRunning=new AtomicBoolean(false);
     private final ArrayList<Item> selected=new ArrayList<>(); private final ArrayList<WifiP2pDevice> peers=new ArrayList<>();
-    private LinearLayout root,peerBox,contentGrid; private LinearLayout modesView,selectedBarView,bottomActionsView; private View tabsView; private TextView status,selectedText,categoryTitle,modeHint,deviceNameLabel,transferActivityTitle,transferActivityItems; private EditText appSearch; private ProgressBar progress; private RadarView radar; private ServerSocket server; private Button disconnectButton; private String activeSection="Transfer"; private volatile boolean sending=false; private volatile boolean transferActive=false; private volatile String connectedToken=null; private volatile boolean connectionActive=false; private volatile String connectedHost=null; private boolean waitingForWifi=false; private String transferScreen="home"; private boolean waitingForLocation=false; private String pendingAction=null; private volatile String transferId=null; private boolean transferFlowOpen=false; private boolean receiverMode=false; private boolean wifiWasOff=false; private boolean locationWasOff=false; private String receiverToken=null; private BroadcastReceiver installReceiver; private String activeCategory="Apps"; private final HashMap<String,ArrayList<Item>> exportedApps=new HashMap<>(); private final ArrayList<TextView> categoryButtons=new ArrayList<>();
+    private LinearLayout root,peerBox,contentGrid; private LinearLayout modesView,selectedBarView,bottomActionsView; private View tabsView; private TextView status,selectedText,categoryTitle,modeHint,deviceNameLabel,transferActivityTitle,transferActivityItems; private EditText appSearch; private ProgressBar progress; private RadarView radar; private ServerSocket server; private Button disconnectButton; private String activeSection="Transfer"; private volatile boolean sending=false; private volatile boolean transferActive=false; private volatile String connectedToken=null; private volatile boolean connectionActive=false; private volatile String connectedHost=null; private boolean waitingForWifi=false; private String transferScreen="home"; private boolean waitingForLocation=false; private String pendingAction=null; private volatile String transferId=null; private boolean transferFlowOpen=false; private boolean receiverMode=false; private boolean wifiWasOff=false; private boolean locationWasOff=false; private String receiverToken=null; private volatile String localTransferToken=null; private volatile String remoteTransferToken=null; private BroadcastReceiver installReceiver; private String activeCategory="Apps"; private final HashMap<String,ArrayList<Item>> exportedApps=new HashMap<>(); private final ArrayList<TextView> categoryButtons=new ArrayList<>();
 
     private static final class Item {
         final Uri uri; final String name; final long size;
@@ -994,6 +994,8 @@ public class AemTransferActivity extends Activity {
 
     private void startReceive(){
         receiverMode=true; transferFlowOpen=true;
+        if(receiverToken==null)receiverToken=UUID.randomUUID().toString().replace("-","");
+        localTransferToken=receiverToken;
         if(!hasPermission()){pendingAction="receive";requestPermissions(requiredPermissions(),PERM);return;}
         if(!wifiEnabled()){wifiWasOff=true;waitingForWifi=true;status.setText("Wi-Fi is off • turn it on, then return to AEM. Receiver setup will resume automatically.");showSystemRequirement("Wi-Fi is required","AEM Transfer uses Wi-Fi Direct for the local phone-to-phone connection.",true);return;}
         sending=false;
@@ -1144,12 +1146,15 @@ public class AemTransferActivity extends Activity {
             b.setOnClickListener(v->connect(d));
         }
     }
-    private void connect(WifiP2pDevice d){if(selected.isEmpty()){status.setText("Select at least one item first.");return;}String token=peerTokens.get(d.deviceAddress);if(token==null||token.trim().isEmpty()){status.setText("Receiver handshake not available yet. Scan again.");return;}sending=true;connectedHost=null;connectedToken=token;beginTransferSession();status.setText("Connecting to "+d.deviceName+"…");WifiP2pConfig c=new WifiP2pConfig();c.deviceAddress=d.deviceAddress;c.wps.setup=WpsInfo.PBC;
+    private void connect(WifiP2pDevice d){if(selected.isEmpty()){status.setText("Select at least one item first.");return;}String token=peerTokens.get(d.deviceAddress);if(token==null||token.trim().isEmpty()){status.setText("Receiver handshake not available yet. Scan again.");return;}sending=true;connectedHost=null;connectedToken=token;
+        localTransferToken=UUID.randomUUID().toString().replace("-","");
+        beginTransferSession();status.setText("Connecting to "+d.deviceName+"…");WifiP2pConfig c=new WifiP2pConfig();c.deviceAddress=d.deviceAddress;c.wps.setup=WpsInfo.PBC;
         manager.connect(channel,c,new WifiP2pManager.ActionListener(){public void onSuccess(){status.setText("Connection requested...");}public void onFailure(int r){sending=false;finishTransferSession();runOnUiThread(()->{status.setText("Connection failed: "+r);showTransferHome();});}});
     }
     private void requestConnection(){if(!hasPermission()||manager==null||channel==null)return;manager.requestConnectionInfo(channel,info->{
         if(info.groupFormed){
             connectionActive=true;
+            startServer();
             transferFlowOpen=true;
             runOnUiThread(()->{if(status!=null)status.setText("Connected • ready to transfer."); showTransferHome();});
             disconnectButton.setEnabled(true);
@@ -1182,7 +1187,9 @@ public class AemTransferActivity extends Activity {
             try(Socket s=new Socket()){
                 s.setTcpNoDelay(true);s.setSendBufferSize(1024*1024);s.connect(new InetSocketAddress(host,PORT),15000);s.setSoTimeout(60000);
                 DataOutputStream out=new DataOutputStream(new BufferedOutputStream(s.getOutputStream(),256*1024));
-                out.writeInt(PROTOCOL);out.writeUTF(transferId);out.writeUTF(connectedToken==null?"":connectedToken);out.writeInt(selected.size());
+                out.writeInt(PROTOCOL);out.writeUTF(transferId);out.writeUTF(connectedToken==null?"":connectedToken);
+                out.writeUTF(localTransferToken==null?"":localTransferToken);
+                out.writeInt(selected.size());
                 long total=0;for(Item x:selected)total+=x.size;out.writeLong(total);
                 for(Item x:selected){byte[] nb=x.name.getBytes("UTF-8");out.writeInt(nb.length);out.write(nb);out.writeLong(x.size);}
                 out.flush();
@@ -1232,7 +1239,6 @@ public class AemTransferActivity extends Activity {
         ArrayList<Header> hs=new ArrayList<>();
         try(Socket sock=s){
             connectedHost=sock.getInetAddress()==null?connectedHost:sock.getInetAddress().getHostAddress();
-            connectedToken=receiverToken;
             connectionActive=true;
             receiverMode=true;
             sock.setTcpNoDelay(true);sock.setReceiveBufferSize(1024*1024);sock.setSoTimeout(60000);
@@ -1240,7 +1246,13 @@ public class AemTransferActivity extends Activity {
             int protocol=in.readInt();if(protocol!=PROTOCOL)throw new IOException("Unsupported transfer protocol");
             String id=in.readUTF();
             String handshake=in.readUTF();
-            if(receiverToken==null||!receiverToken.equals(handshake))throw new IOException("Receiver handshake rejected");if(!id.matches("[A-Za-z0-9-]{8,64}"))throw new IOException("Invalid transfer id");
+            String peerReturnToken=in.readUTF();
+            String expectedLocalToken=receiverMode?receiverToken:localTransferToken;
+            if(expectedLocalToken==null||!expectedLocalToken.equals(handshake))throw new IOException("Transfer handshake rejected");
+            if(peerReturnToken==null||peerReturnToken.trim().isEmpty())throw new IOException("Peer return handshake missing");
+            remoteTransferToken=peerReturnToken;
+            connectedToken=peerReturnToken;
+            if(!id.matches("[A-Za-z0-9-]{8,64}"))throw new IOException("Invalid transfer id");
             int count=in.readInt();if(count<0||count>1000)throw new IOException("Invalid item count");
             long declaredTotal=in.readLong();if(declaredTotal<0)throw new IOException("Invalid total size");
             long total=0;
@@ -1312,6 +1324,8 @@ public class AemTransferActivity extends Activity {
         waitingForWifi=false;
         waitingForLocation=false;
         receiverToken=null;
+        localTransferToken=null;
+        remoteTransferToken=null;
         peerTokens.clear();
         peerNames.clear();
         try{if(manager!=null&&channel!=null)manager.stopPeerDiscovery(channel,new WifiP2pManager.ActionListener(){public void onSuccess(){}public void onFailure(int r){}});}catch(Exception ignored){}
