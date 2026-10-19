@@ -56,7 +56,7 @@ Deno.serve(async (req) => {
     const notes = body.notes == null ? null : String(body.notes).slice(0, 20000);
     const publishChannel = channel(String(body.channel || tag));
 
-    if (!/^Emmanuel001afk\/[A-Za-z0-9_.-]+$/.test(repo)) return json({ error: "repo must be a repository owned by Emmanuel001afk." }, 400);
+    if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repo)) return json({ error: "repo must be in owner/repository format." }, 400);
     if (!tag || tag.length > 200 || !/^[A-Za-z0-9._+-]+$/.test(tag)) return json({ error: "A valid GitHub release tag is required." }, 400);
     if (!filename || !/\.apk$/i.test(filename) || filename.length > 240) return json({ error: "A valid .apk filename is required." }, 400);
     if (!Number.isSafeInteger(versionCode) || versionCode <= 0 || !packageIdentity || packageIdentity.length > 255) return json({ error: "Valid version_code and package_identity are required." }, 400);
