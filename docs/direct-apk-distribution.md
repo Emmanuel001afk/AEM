@@ -39,7 +39,7 @@ The APK must already be signed with the source app's intended signing key. This 
 
 ## Limits and security
 
-- The URL must be the exact HTTPS GitHub Release asset URL for a release in a repository owned by `Emmanuel001afk`; arbitrary URLs are rejected.
+- The URL must be the exact HTTPS GitHub Release asset URL for the supplied owner/repository, tag, and filename; arbitrary URLs are rejected. The repository must already be represented in AEM’s catalogue, so this can support other apps as well as EMA/OEA/Phormi.
 - Only an already-registered AEM GitHub catalogue entry can publish through this endpoint.
 - The source APK remains hosted by GitHub Releases. If the release/asset is deleted or made inaccessible, AEM's download link will stop working.
 - This path avoids the Supabase Storage file-size limit, but not GitHub's own release/storage policies or download availability.
