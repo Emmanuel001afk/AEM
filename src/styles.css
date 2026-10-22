@@ -6,3 +6,29 @@
 .active-downloads{max-width:1220px;margin:14px auto 0;padding:10px 12px;border:1px solid #ffffff12;border-radius:16px;background:#ffffff08;display:grid;gap:8px}.active-downloads-head{display:flex;justify-content:space-between;align-items:center;font-size:.75rem}.active-downloads-head span{opacity:.55}.active-download{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:10px;padding:8px;border-radius:12px;background:#ffffff05}.active-download .download-main{min-width:0}.active-download .download-main>strong,.active-download .download-main>span,.active-download .download-main>small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.active-download .download-actions{display:flex;gap:5px;justify-content:flex-end}.active-download .choice{padding:.38rem .55rem;font-size:.65rem}@media(max-width:750px){.active-downloads{margin-top:10px;padding:8px}.active-download{grid-template-columns:auto minmax(0,1fr);gap:8px}.active-download .download-actions{grid-column:1/-1;justify-content:flex-start}.active-download .download-main>strong,.active-download .download-main>span,.active-download .download-main>small{white-space:normal}.active-download .download-inline{grid-template-columns:minmax(60px,1fr) auto}.active-download .app-icon.tiny{width:38px;height:38px;border-radius:10px}}
 
 .store-filters{display:flex;gap:7px;flex-wrap:wrap;margin:-6px 0 20px}.filter-chip{padding:.45rem .72rem;border-radius:999px;font-size:.76rem;opacity:.72}.filter-chip.active{background:#f04444;color:#fff;border-color:#f04444;opacity:1}.detail-section{margin-top:22px;padding-top:18px;border-top:1px solid #ffffff12}.detail-section h3{margin:0 0 12px;font-size:1rem}.screenshot-strip{display:flex;gap:10px;overflow-x:auto;padding-bottom:4px;scrollbar-width:thin}.screenshot-strip img{width:min(300px,72vw);height:180px;object-fit:cover;border-radius:14px;border:1px solid #ffffff12;flex:0 0 auto;background:#ffffff08}.permission-list{display:flex;gap:7px;flex-wrap:wrap}.permission-list span{padding:6px 9px;border-radius:9px;background:#ffffff08;border:1px solid #ffffff10;font-size:.75rem;opacity:.8}
+/* AEM Transfer: same card language as the Store, with a dedicated local-only accent. */
+.transfer-page{max-width:1020px}
+.transfer-pill{display:inline-flex;align-items:center;padding:6px 11px;border:1px solid #ffffff1f;border-radius:999px;font-size:.7rem;font-weight:800;letter-spacing:.05em;opacity:.8;white-space:nowrap}
+.transfer-hero{display:grid;grid-template-columns:auto minmax(0,1fr);gap:20px;padding:24px;border:1px solid #ffffff14;border-radius:24px;background:radial-gradient(circle at 88% 0,#3a1d24,#ffffff07 46%)}
+.transfer-mark{display:grid;place-items:center;gap:4px;width:64px;height:64px;border-radius:20px;background:#f04444;color:#fff;font-size:1.15rem;font-weight:900;line-height:1}
+.transfer-hero h3{margin:6px 0 8px;font-size:1.55rem;letter-spacing:-.03em}
+.transfer-hero p{margin:0;max-width:62ch;opacity:.7;line-height:1.55}
+.transfer-badges{display:flex;flex-wrap:wrap;gap:6px;margin-top:14px}
+.transfer-badges span{padding:5px 9px;border-radius:999px;border:1px solid #ffffff14;background:#ffffff08;font-size:.7rem;opacity:.8}
+.transfer-steps{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin-top:14px}
+.transfer-steps article{padding:20px;border:1px solid #ffffff12;border-radius:20px;background:#ffffff06}
+.transfer-steps b{display:inline-grid;place-items:center;width:30px;height:30px;border-radius:9px;background:#f044441a;color:#f04444;font-size:.72rem;letter-spacing:.08em}
+.transfer-steps h4{margin:12px 0 6px;font-size:1rem}
+.transfer-steps p{margin:0;font-size:.85rem;line-height:1.5;opacity:.64}
+.transfer-note{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-top:14px;padding:18px 20px;border:1px solid #f0444433;border-radius:18px;background:#f044440f}
+.transfer-note strong{font-size:.95rem}
+.transfer-note p{margin:5px 0 0;font-size:.82rem;line-height:1.5;opacity:.68;max-width:70ch}
+.transfer-fine{display:flex;flex-wrap:wrap;gap:8px 18px;margin-top:16px;font-size:.72rem;opacity:.5}
+.transfer-page .eyebrow{margin:0}
+.store:not(.dark) .transfer-hero{background:radial-gradient(circle at 88% 0,#ffe4e6,#ffffff 46%);border-color:#12121616}
+.store:not(.dark) .transfer-steps article{background:#ffffff;border-color:#12121612}
+.store:not(.dark) .transfer-steps b{background:#f0444414;color:#c62a30}
+.store:not(.dark) .transfer-badges span{background:#12121608;border-color:#12121612}
+.store:not(.dark) .transfer-note{background:#f044440d;border-color:#f0444433}
+.store:not(.dark) .transfer-pill{border-color:#1212161c}
+@media(max-width:820px){.transfer-steps{grid-template-columns:1fr}.transfer-hero{grid-template-columns:1fr;padding:20px}.transfer-note{align-items:flex-start;flex-direction:column}.transfer-mark{width:52px;height:52px;border-radius:16px}.transfer-fine{flex-direction:column;gap:5px}}

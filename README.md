@@ -22,6 +22,13 @@ The Store catalog is provider-backed. GitHub is the current provider, with priva
 ### Android client hardening
 The Android wrapper uses the AEM launcher mark, Android package visibility limited to catalog package checks, a secure FileProvider for system installer handoff, and an AEM PackageInstaller session for APK-family packages.
 
-Installer progress and cancellation are emitted by the native Android layer so the Store can show live transfer state instead of raw byte counters.
+Installer progress and cancellation are emitted by the native Android layer so the Store can show live file state instead of raw byte counters.
+
+### AEM Transfer
+AEM Transfer is the Store's direct phone-to-phone channel. Two Android phones build a Wi-Fi Direct link, the receiver explicitly accepts the request, and every file is SHA-256 verified before it is saved to `Downloads/AEM Transfer`. Nothing is uploaded and no catalog row is written.
+
+The screen uses the same visual language as the Store (red `#F04444` accent, radial dark backdrop, 20–22 dp cards, eyebrow labels) and is organised as **Transfer**, **Downloads** and **History**. A foreground service keeps receive sessions alive in the background.
+
+Protocol version 6 adds receiver consent, a declared sender token, replay protection (a retried transfer id cannot create duplicates), path sanitisation, size/count bounds, resume from receiver offsets, and an honest decline path. See [`docs/transfer.md`](docs/transfer.md) for the wire format, permissions, storage layout, troubleshooting and the security model.
 
 Final verification trigger: Android client and installer changes are built from the same main source tree.

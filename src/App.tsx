@@ -65,7 +65,28 @@ export default function App(){
 
   {tab==="Updates"&&<section className="content"><div className="section-head"><div><span>UPDATES</span><h2>Available releases</h2></div><span>{updateApps.length} available</span></div><div className="grid">{updateApps.map(a=><AppCard key={a.id.project} app={a} onOpen={()=>openApp(a)} onInstall={()=>install(a)} onOpenInstalled={(p)=>Capacitor.isNativePlatform()?AemInstaller.openInstalled({packageName:p}):window.open(a.sourceUrl,"_blank")} installed={a.packageIdentity?installed[a.packageIdentity]:undefined}/>)}</div></section>}
 
-  {tab==="Transfer"&&!Capacitor.isNativePlatform()&&<section className="content"><div className="section-head"><div><span>TRANSFER</span><h2>Transfer</h2></div></div><div className="card"><div className="card-main"><h3>Android transfer</h3><p>Direct phone-to-phone transfer is available in the AEM Android app. It does not use the Store database or cloud storage for the file payload.</p></div></div></section>}
+  {tab==="Transfer"&&!Capacitor.isNativePlatform()&&<section className="content transfer-page">
+    <div className="section-head"><div><span>TRANSFER</span><h2>Local transfer</h2></div><span className="transfer-pill">Android app</span></div>
+    <div className="transfer-hero">
+      <div className="transfer-mark" aria-hidden="true"><span>↑</span><span>↓</span></div>
+      <div className="transfer-hero-copy">
+        <p className="eyebrow">PHONE TO PHONE · NO CLOUD</p>
+        <h3>Move files to the phone beside you.</h3>
+        <p>AEM Transfer opens a direct Wi-Fi link between two Android phones. The Store database, your account and the internet are never part of the file path.</p>
+        <div className="transfer-badges"><span>No upload</span><span>No account</span><span>SHA-256 verified</span><span>Resumable</span></div>
+      </div>
+    </div>
+    <div className="transfer-steps">
+      <article><b>01</b><h4>Pick what travels</h4><p>Installed apps, photos, videos, music, individual files or a whole folder — with the folder structure kept intact.</p></article>
+      <article><b>02</b><h4>Let the phones meet</h4><p>One phone shows Receive, the other scans. Wi-Fi Direct does the rest: no router, no mobile data, no server.</p></article>
+      <article><b>03</b><h4>Accept, verify, done</h4><p>The receiver approves the transfer. Every file is hash-checked and lands in Downloads/AEM Transfer, ready to open, install or share.</p></article>
+    </div>
+    <div className="transfer-note">
+      <div><strong>Open AEM Transfer on your Android phone</strong><p>This screen is informative in a browser. Install or open the AEM Android app, then tap Transfer to start a real transfer.</p></div>
+      <span className="transfer-pill">Transfer opens in the Android app</span>
+    </div>
+    <div className="transfer-fine"><span>Nothing is stored in Supabase.</span><span>Nothing leaves the two phones.</span><span>Leaving AEM keeps an active receive session alive.</span></div>
+  </section>}
 
 
 
