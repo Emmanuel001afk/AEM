@@ -66,8 +66,29 @@ if "AemTransferService" not in s:
 if "AemTransferActivity" not in s:
     s = s.replace(
         "</application>",
-        '    <activity android:name=".AemTransferActivity" android:exported="false" />\n</application>',
+        '    <activity android:name=".AemTransferActivity" android:exported="false" '
+        'android:launchMode="singleTop" '
+        'android:configChanges="orientation|screenSize|smallestScreenSize|keyboardHidden|uiMode" />\n</application>',
         1,
+    )
+else:
+    # Keep the transfer activity alive across rotation and re-entry.
+    activity_re = re.compile(r'<activity\b[^>]*android:name="[^"]*AemTransferActivity"[^>]*>')
+    match = activity_re.search(s)
+    if match:
+        tag = match.group(0)
+        if "configChanges" not in tag:
+            tag = tag[:-1].rstrip() + ' android:configChanges="orientation|screenSize|smallestScreenSize|keyboardHidden|uiMode">'
+        if "launchMode" not in tag:
+            tag = tag[:-1].rstrip() + ' android:launchMode="singleTop">'
+        s = s[:match.start()] + tag + s[match.end():]
+
+if "POST_NOTIFICATIONS" not in s:
+    s = re.sub(
+        manifest_open,
+        r'\1\n    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />',
+        s,
+        count=1,
     )
 
 if "QUERY_ALL_PACKAGES" not in s:
@@ -128,3 +149,4 @@ res = p.parent / "res"
 source_dir = Path(__file__).resolve().parent
 (res / "drawable" / "aem_launcher.xml").write_text((source_dir / "aem_launcher.xml").read_text())
 (res / "xml" / "aem_file_paths.xml").write_text((source_dir / "aem_file_paths.xml").read_text())
+(res / "drawable" / "aem_notification.xml").write_text((source_dir / "aem_notification.xml").read_text())
