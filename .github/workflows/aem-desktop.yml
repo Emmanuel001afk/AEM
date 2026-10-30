@@ -7,7 +7,9 @@ on:
       - "electron/**"
       - "src/**"
       - "resources/**"
+      - "scripts/**"
       - "package.json"
+      - "package-lock.json"
       - "vite.config.ts"
       - ".github/workflows/aem-desktop.yml"
   pull_request:
@@ -28,7 +30,7 @@ jobs:
       - run: npm ci || npm install
       - run: npm run typecheck
       - run: npm run typecheck:electron
-      - run: npm run build   # renderer + electron main compile
+      - run: npm run build   # renderer + Electron main compile and module marker
       - run: npm run verify
       - run: npm run verify:emulator
 
@@ -49,22 +51,20 @@ jobs:
           npm run typecheck
           npm run typecheck:electron
           npm run build
-      - name: Build Windows Installer
+      - name: Build Windows Installer and Portable EXE
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: npm run build:win
-        # electron-builder will create release/AEM-Store-*-Setup-x64.exe
       - name: Verify artifacts are genuine
         shell: pwsh
         run: |
           $files = Get-ChildItem release -Filter *.exe
-          if ($files.Count -eq 0) { throw "No Windows installer produced" }
+          if ($files.Count -lt 2) { throw "Expected both Windows Setup and Portable EXE outputs; found $($files.Count)" }
           foreach ($f in $files) {
             Write-Host "Artifact: $($f.Name) size=$($f.Length) bytes"
             if ($f.Length -lt 10000000) { throw "Artifact too small — likely not a genuine Electron build: $($f.Name)" }
           }
-          # Also check unpacked exists
-          if (!(Test-Path release/win-unpacked/AEM-Store.exe)) { Write-Host "Unpacked exe not at expected path, listing:"; Get-ChildItem release -Recurse | Format-Table }
+          if (!(Test-Path release/win-unpacked/AEM-Store.exe)) { Write-Host "Unpacked EXE not at expected path, listing:"; Get-ChildItem release -Recurse | Format-Table }
       - uses: actions/upload-artifact@v4
         with:
           name: aem-store-windows
@@ -82,8 +82,9 @@ jobs:
             logs/**
             dist-electron/**
             release/**
+          if-no-files-found: warn
 
-  # Future platforms — kept disabled until Windows is green, architecture preserves slots
+  # Future platforms — kept disabled until Windows is green.
   build-mac:
     runs-on: macos-latest
     if: false
