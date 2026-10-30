@@ -31,7 +31,7 @@ public final class ProbeActivity extends Activity {
         title.setText("AEM Android runtime probe");
         title.setTextSize(26);
         title.setTextColor(0xff17171c);
-        TextView detail = new TextView(this);
+        final TextView detail = new TextView(this);
         detail.setText("Real Android activity\nLocal storage: ready\nHost network: checking…");
         detail.setTextSize(18);
         detail.setPadding(0, 32, 0, 0);
@@ -40,25 +40,32 @@ public final class ProbeActivity extends Activity {
         setContentView(layout);
         write("storage.txt", "storage-ok");
         write("camera-permission.txt", checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED ? "granted" : "denied");
-        new Thread(() -> {
-            HttpURLConnection connection = null;
-            try {
-                connection = (HttpURLConnection) new URL("http://10.0.2.2:8765/probe").openConnection();
-                connection.setConnectTimeout(5000);
-                connection.setReadTimeout(5000);
-                int status = connection.getResponseCode();
-                InputStream input = connection.getInputStream();
-                byte[] buffer = new byte[64];
-                int count = input.read(buffer);
-                input.close();
-                String body = count > 0 ? new String(buffer, 0, count, "UTF-8") : "";
-                if (status == 200 && body.equals("aem-network-ok")) {
-                    write("network.txt", "network-ok");
-                    runOnUiThread(() -> detail.setText("Real Android activity\nLocal storage: verified\nHost network: verified\nAndroid permissions: managed by AEM"));
-                } else { write("network.txt", "unexpected-response"); }
-            } catch (Exception error) {
-                write("network.txt", "failed: " + error.getClass().getSimpleName());
-            } finally { if (connection != null) connection.disconnect(); }
+        // Anonymous classes avoid javac's LambdaMetafactory dependency when compiling against android.jar.
+        new Thread(new Runnable() {
+            @Override public void run() {
+                HttpURLConnection connection = null;
+                try {
+                    connection = (HttpURLConnection) new URL("http://10.0.2.2:8765/probe").openConnection();
+                    connection.setConnectTimeout(5000);
+                    connection.setReadTimeout(5000);
+                    int status = connection.getResponseCode();
+                    InputStream input = connection.getInputStream();
+                    byte[] buffer = new byte[64];
+                    int count = input.read(buffer);
+                    input.close();
+                    String body = count > 0 ? new String(buffer, 0, count, "UTF-8") : "";
+                    if (status == 200 && body.equals("aem-network-ok")) {
+                        write("network.txt", "network-ok");
+                        runOnUiThread(new Runnable() {
+                            @Override public void run() {
+                                detail.setText("Real Android activity\nLocal storage: verified\nHost network: verified\nAndroid permissions: managed by AEM");
+                            }
+                        });
+                    } else { write("network.txt", "unexpected-response"); }
+                } catch (Exception error) {
+                    write("network.txt", "failed: " + error.getClass().getSimpleName());
+                } finally { if (connection != null) connection.disconnect(); }
+            }
         }, "aem-network-probe").start();
     }
 }

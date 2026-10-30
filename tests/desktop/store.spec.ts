@@ -1,7 +1,7 @@
 import { test, expect, _electron as electron } from "@playwright/test";
 import type { ElectronApplication, Page } from "@playwright/test";
-import AxeBuilder from "@axe-core/playwright";
 import fs from "node:fs/promises";
+import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
 
@@ -39,6 +39,7 @@ test("installed Windows identity, existing discovery, filters and app details wo
   await expect(page.getByRole("heading", { name: "Phormi", exact: true })).toHaveCount(0);
   await page.getByRole("textbox", { name: "Search applications" }).fill("browser");
   await page.getByRole("heading", { name: "Phormi", exact: true }).click();
+  await page.locator("details.version-pocket summary").click();
   await expect(page.getByText("com.example.phormi", { exact: false })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Permissions", exact: true })).toBeVisible();
   await page.getByRole("button", { name: "← Back to Apps" }).click();
@@ -70,13 +71,16 @@ test("renderer is sandboxed and the native bridge rejects non-HTTPS external lin
   const traversal = await page.evaluate(async () => (await fetch("aem://store/%2e%2e%2fpackage.json")).status);
   expect([400, 403, 404]).toContain(traversal);
   await page.evaluate(() => window.location.assign("https://example.com"));
-  await expect(page).toHaveURL(/^aem:\/\/store\//);
+  await expect.poll(() => page.url()).toMatch(/^aem:\/\/store\//);
 });
 test("new Android interface has no serious accessibility violations", async () => {
   await page.getByRole("button", { name: "Emulator", exact: true }).click();
   await expect(page.getByRole("heading", { name: "AEM Android", exact: true })).toBeVisible();
-  const results = await new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa", "wcag21aa"]).analyze();
-  const serious = results.violations.filter((v) => ["serious", "critical"].includes(v.impact || ""));
+  const require = createRequire(import.meta.url);
+  const axeSource = await fs.readFile(require.resolve("axe-core/axe.min.js"), "utf8");
+  await page.evaluate(axeSource);
+  const results = await page.evaluate(async () => (window as any).axe.run(document, { runOnly: { type: "tag", values: ["wcag2a", "wcag2aa", "wcag21aa"] } }));
+  const serious = results.violations.filter((v: any) => ["serious", "critical"].includes(v.impact || ""));
   await test.info().attach("accessibility", { body: JSON.stringify(serious, null, 2), contentType: "application/json" });
   expect(serious).toEqual([]);
 });
