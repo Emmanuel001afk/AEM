@@ -2,7 +2,7 @@ name: AEM Store Self Publish V2
 
 on:
   workflow_run:
-    workflows: ["AEM Store Android APK Final"]
+    workflows: ["AEM Store Combined Release"]
     types: [completed]
 
 permissions:
