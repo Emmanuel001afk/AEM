@@ -21,10 +21,15 @@ const selectedFiles = new Map();
 const CSP = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self'; connect-src 'self' https://*.supabase.co wss://*.supabase.co; object-src 'none'; base-uri 'self'; form-action 'none'; frame-src 'none'";
 const runtimeRoot = process.env.AEM_RUNTIME_ROOT || (process.platform === "win32" ? path.join(process.env.LOCALAPPDATA || app.getPath("appData"), "AEM Store", "android-runtime") : path.join(app.getPath("userData"), "android-runtime"));
 
+function isTrustedAppUrl(value) {
+  try {
+    const url = new URL(value);
+    return (url.protocol === "aem:" && url.host === "store" && !url.username && !url.password) || Boolean(devUrl && url.origin === devUrl);
+  } catch { return false; }
+}
 function assertSender(event) {
   if (!window || event.sender !== window.webContents || !event.senderFrame || event.senderFrame !== window.webContents.mainFrame) throw new Error("Untrusted desktop bridge caller.");
-  const origin = new URL(event.senderFrame.url).origin;
-  if (origin !== APP_ORIGIN && !(devUrl && origin === devUrl)) throw new Error("Untrusted desktop bridge origin.");
+  if (!isTrustedAppUrl(event.senderFrame.url)) throw new Error("Untrusted desktop bridge origin.");
 }
 function handle(channel, action) {
   ipcMain.handle(`aem:${channel}`, async (event, ...args) => { assertSender(event); return action(...args); });
@@ -140,7 +145,7 @@ function createMenu() {
 async function createWindow() {
   window = new BrowserWindow({ title: "AEM Store", width: 1280, height: 860, minWidth: 900, minHeight: 640, backgroundColor: "#0b0b0f", autoHideMenuBar: true, show: false, icon: path.join(directory, "assets", "icon.png"), webPreferences: { preload: path.join(directory, "preload.cjs"), contextIsolation: true, nodeIntegration: false, sandbox: true, webSecurity: true, webviewTag: false, spellcheck: true } });
   window.webContents.setWindowOpenHandler(({ url }) => { void openHttps(url).catch(() => {}); return { action: "deny" }; });
-  window.webContents.on("will-navigate", (event, url) => { const origin = new URL(url).origin; if (origin !== APP_ORIGIN && origin !== devUrl) event.preventDefault(); });
+  window.webContents.on("will-navigate", (event, url) => { if (!isTrustedAppUrl(url)) event.preventDefault(); });
   window.webContents.on("will-attach-webview", (event) => event.preventDefault());
   window.on("page-title-updated", (event) => event.preventDefault());
   
