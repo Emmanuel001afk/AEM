@@ -70,7 +70,7 @@ test("renderer is sandboxed and the native bridge rejects non-HTTPS external lin
   await expect(page.evaluate(() => window.aemDesktop!.openExternal("javascript:alert(1)"))).rejects.toThrow(/HTTPS/);
   const traversal = await page.evaluate(async () => (await fetch("aem://store/%2e%2e%2fpackage.json")).status);
   expect([400, 403, 404]).toContain(traversal);
-  await page.evaluate(() => window.location.assign("https://example.com"));
+  await page.evaluate(() => window.open("https://example.com", "_blank"));
   await expect.poll(() => page.url()).toMatch(/^aem:\/\/store\//);
 });
 test("new Android interface has no serious accessibility violations", async () => {
