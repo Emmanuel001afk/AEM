@@ -106,9 +106,9 @@ jobs:
       - name: Verify normal installed startup before UI automation
         shell: pwsh
         run: |
-          New-Item -ItemType Directory -Force test-results | Out-Null
+          New-Item -ItemType Directory -Force verification | Out-Null
           try {
-            $process = Start-Process -FilePath $env:AEM_TEST_EXECUTABLE -PassThru -RedirectStandardOutput test-results/startup-out.txt -RedirectStandardError test-results/startup-err.txt
+            $process = Start-Process -FilePath $env:AEM_TEST_EXECUTABLE -PassThru -RedirectStandardOutput verification/startup-out.txt -RedirectStandardError verification/startup-err.txt
             $deadline = (Get-Date).AddSeconds(30)
             do {
               Start-Sleep -Milliseconds 500
@@ -120,10 +120,10 @@ jobs:
             $title = $windows[0].MainWindowTitle
             Write-Host "Startup window: $title"
             if ($title -ne 'AEM Store') { throw "Unexpected startup window: $title" }
-            @{ passed = $true; title = $title; pid = $process.Id; windowPids = @($windows | ForEach-Object { $_.Id }) } | ConvertTo-Json | Set-Content test-results/startup.json
+            @{ passed = $true; title = $title; pid = $process.Id; windowPids = @($windows | ForEach-Object { $_.Id }) } | ConvertTo-Json | Set-Content verification/startup.json
           } catch {
-            $_ | Out-String | Set-Content test-results/startup-error.txt
-            Get-Process -Name 'AEM Store' -ErrorAction SilentlyContinue | Select-Object Id,MainWindowTitle,Responding | ConvertTo-Json | Add-Content test-results/startup-error.txt
+            $_ | Out-String | Set-Content verification/startup-error.txt
+            Get-Process -Name 'AEM Store' -ErrorAction SilentlyContinue | Select-Object Id,MainWindowTitle,Responding | ConvertTo-Json | Add-Content verification/startup-error.txt
             throw
           } finally {
             Get-Process -Name 'AEM Store' -ErrorAction SilentlyContinue | Stop-Process -Force
@@ -138,6 +138,7 @@ jobs:
           path: |
             playwright-report/**
             test-results/**
+            verification/**
           if-no-files-found: warn
           retention-days: 14
       - name: Verify silent uninstall and retained user data
@@ -167,8 +168,8 @@ jobs:
             const visit = suite => { for (const spec of suite.specs || []) for (const test of spec.tests || []) for (const result of test.results || []) if (result.error) errors.push(`${spec.title}: ${result.error.message}\n${(result.error.stack || "").split("\n").slice(0,5).join("\n")}`); for (const child of suite.suites || []) visit(child); };
             if (report) for (const suite of report.suites || []) visit(suite);
             const artifacts = fs.existsSync('release') ? fs.readdirSync('release').filter(f => f.endsWith('.verification.json')).map(f => JSON.parse(fs.readFileSync(`release/${f}`, 'utf8'))) : [];
-            const startup = fs.existsSync('test-results/startup.json') ? JSON.parse(fs.readFileSync('test-results/startup.json', 'utf8')) : null;
-            const startupError = ['test-results/startup-error.txt', 'test-results/startup-err.txt'].filter(f => fs.existsSync(f)).map(f => fs.readFileSync(f, 'utf8')).join('\n');
+            const startup = fs.existsSync('verification/startup.json') ? JSON.parse(fs.readFileSync('verification/startup.json', 'utf8')) : null;
+            const startupError = ['verification/startup-error.txt', 'verification/startup-err.txt'].filter(f => fs.existsSync(f)).map(f => fs.readFileSync(f, 'utf8')).join('\n');
             const success = startup?.passed === true && report?.stats?.unexpected === 0 && report?.stats?.expected > 0 && artifacts.length > 0;
             const summary = `## Installed Windows application verification\n\nResult: **${success ? 'PASS' : 'FAIL'}**\n\nStartup: ${startup?.passed ? 'PASS' : 'FAIL'}\n${startupError ? `\`\`\`\n${startupError.slice(0, 4000)}\n\`\`\`\n` : ''}\n${JSON.stringify(report?.stats || {}, null, 2)}\n\n\`\`\`json\n${JSON.stringify(artifacts, null, 2)}\n\`\`\`\n\n${errors.map(e => `- ${e.replace(/\u001b\[[0-9;]*m/g, '')}`).join('\n')}`.slice(0, 64000);
             await github.rest.checks.create({ owner: context.repo.owner, repo: context.repo.repo, name: 'Windows installation evidence', head_sha: context.sha, status: 'completed', conclusion: success ? 'success' : 'failure', output: { title: 'Installer, startup, store, bridge and accessibility checks', summary } });

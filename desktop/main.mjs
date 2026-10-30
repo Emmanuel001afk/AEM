@@ -1,9 +1,9 @@
-import { app, BrowserWindow, dialog, ipcMain, Menu, net, protocol, session, shell } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, Menu, protocol, session, shell } from "electron";
 import electronUpdater from "electron-updater";
 const { autoUpdater } = electronUpdater;
 import path from "node:path";
 import fs from "node:fs/promises";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
 import { AndroidRuntime } from "./runtime/service.mjs";
 
@@ -154,12 +154,16 @@ else {
   app.whenReady().then(async () => {
     protocol.handle("aem", async (request) => {
       const url = new URL(request.url);
-      if (url.origin !== APP_ORIGIN) return new Response("Not found", { status: 404 });
+      if (url.protocol !== "aem:" || url.host !== "store") return new Response("Not found", { status: 404 });
       let pathname;
       try { pathname = decodeURIComponent(url.pathname); } catch { return new Response("Bad request", { status: 400 }); }
       const target = path.resolve(rendererRoot, "." + (pathname === "/" ? "/index.html" : pathname));
       if (!target.startsWith(rendererRoot + path.sep)) return new Response("Forbidden", { status: 403 });
-      try { return await net.fetch(pathToFileURL(target).href); } catch { return new Response("Not found", { status: 404 }); }
+      const types = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".json": "application/json", ".png": "image/png", ".svg": "image/svg+xml", ".ico": "image/x-icon", ".woff2": "font/woff2" };
+      try {
+        const body = await fs.readFile(target);
+        return new Response(body, { headers: { "Content-Type": types[path.extname(target).toLowerCase()] || "application/octet-stream", "Content-Security-Policy": CSP } });
+      } catch { return new Response("Not found", { status: 404 }); }
     });
     session.defaultSession.webRequest.onHeadersReceived((details, callback) => callback({ responseHeaders: { ...details.responseHeaders, "Content-Security-Policy": [CSP] } }));
     session.defaultSession.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
