@@ -85,8 +85,12 @@ export class AndroidRuntime extends EventEmitter {
     return null;
   }
   async javaTool(java, tool, args, options = {}) {
-    const main = tool === "sdkmanager" ? "com.android.sdklib.tool.sdkmanager.SdkManagerCli" : "com.android.sdklib.tool.AvdManagerCli";
-    return runCommand(java, [`-Dcom.android.sdklib.toolsdir=${this.toolsRoot()}`, "-classpath", path.join(this.toolsRoot(), "lib", "*"), main, `--sdk_root=${this.sdkRoot}`, ...args], { env: this.env(), timeoutMs: 1800000, ...options });
+    const sdkmanager = tool === "sdkmanager";
+    const main = sdkmanager ? "com.android.sdklib.tool.sdkmanager.SdkManagerCli" : "com.android.sdklib.tool.AvdManagerCli";
+    // Match the official launcher scripts. AvdManagerCli uses the legacy sdkmanager property name.
+    const property = sdkmanager ? "com.android.sdklib.toolsdir" : "com.android.sdkmanager.toolsdir";
+    const classpath = path.join(this.toolsRoot(), "lib", sdkmanager ? "sdkmanager-classpath.jar" : "avdmanager-classpath.jar");
+    return runCommand(java, [`-D${property}=${this.toolsRoot()}`, "-classpath", classpath, main, `--sdk_root=${this.sdkRoot}`, ...args], { env: this.env(), timeoutMs: 1800000, ...options });
   }
   env(extra = {}) {
     return { ...process.env, ANDROID_HOME: this.sdkRoot, ANDROID_SDK_ROOT: this.sdkRoot, ANDROID_AVD_HOME: this.avdHome, ANDROID_SDK_HOME: this.root, ANDROID_EMULATOR_HOME: path.join(this.root, "android"), ...extra };
