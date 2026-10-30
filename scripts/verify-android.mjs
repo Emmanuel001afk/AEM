@@ -99,11 +99,15 @@ try {
   console.error(error);
   process.exitCode = 1;
 } finally {
-  if (started) await runtime.stop().catch((error) => { report.error += `\nShutdown: ${error.message}`; });
-  await runtime.dispose();
-  if (server) await new Promise((resolve) => server.close(resolve));
   report.finishedAt = new Date().toISOString();
   await fs.mkdir(root, { recursive: true });
   await fs.writeFile(reportFile, JSON.stringify(report, null, 2) + "\n");
   console.log(`Verification report: ${reportFile}`);
+  const cleanup = (async () => {
+    if (started) await runtime.stop().catch((error) => console.error(`Shutdown: ${error.message}`));
+    await runtime.dispose();
+    if (server) { server.closeAllConnections?.(); await new Promise((resolve) => server.close(resolve)); }
+  })();
+  await Promise.race([cleanup, wait(20000)]);
+  process.exit(report.success ? 0 : 1);
 }

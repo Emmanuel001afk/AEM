@@ -1,9 +1,6 @@
 name: Windows host capability probe
 on:
   workflow_dispatch:
-  push:
-    branches: [arena/32bd333b-aem]
-    paths: [.github/workflows/windows-host-probe.yml]
 permissions:
   contents: read
   checks: write
@@ -13,7 +10,7 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Inspect virtualization and publish evidence
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const { execFileSync } = require('node:child_process');

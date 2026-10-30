@@ -1,5 +1,6 @@
 import { app, BrowserWindow, dialog, ipcMain, Menu, net, protocol, session, shell } from "electron";
-import { autoUpdater } from "electron-updater";
+import electronUpdater from "electron-updater";
+const { autoUpdater } = electronUpdater;
 import path from "node:path";
 import fs from "node:fs/promises";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -12,11 +13,7 @@ const APP_ORIGIN = "aem://store";
 const devUrl = !app.isPackaged && process.env.AEM_DEV_SERVER === "http://127.0.0.1:5173" ? process.env.AEM_DEV_SERVER : null;
 app.setName("AEM Store");
 app.setAppUserModelId("com.aem.store.desktop");
-// Explicit E2E-only Chromium debugging transport; normal installed startup never enables it.
-if (process.env.AEM_E2E === "1") {
-  app.commandLine.appendSwitch("remote-debugging-port", "0");
-  app.commandLine.appendSwitch("remote-allow-origins", "*");
-}
+
 protocol.registerSchemesAsPrivileged([{ scheme: "aem", privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true } }]);
 
 let window = null, runtime = null, quitting = false, updateCheck = false;
@@ -146,8 +143,7 @@ async function createWindow() {
   window.webContents.on("will-navigate", (event, url) => { const origin = new URL(url).origin; if (origin !== APP_ORIGIN && origin !== devUrl) event.preventDefault(); });
   window.webContents.on("will-attach-webview", (event) => event.preventDefault());
   window.on("page-title-updated", (event) => event.preventDefault());
-  // Some Windows CI sessions only enumerate Electron targets after DevTools is opened.
-  if (process.env.AEM_E2E === "1") window.webContents.once("did-finish-load", () => window.webContents.openDevTools({ mode: "detach" }));
+  
   window.once("ready-to-show", () => window.show());
   window.on("closed", () => { window = null; });
   await window.loadURL(devUrl || `${APP_ORIGIN}/index.html`);

@@ -108,7 +108,7 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force test-results | Out-Null
           try {
-            $process = Start-Process -FilePath $env:AEM_TEST_EXECUTABLE -PassThru
+            $process = Start-Process -FilePath $env:AEM_TEST_EXECUTABLE -PassThru -RedirectStandardOutput test-results/startup-out.txt -RedirectStandardError test-results/startup-err.txt
             $deadline = (Get-Date).AddSeconds(30)
             do { Start-Sleep -Milliseconds 500; $process.Refresh(); if ($process.HasExited) { throw "AEM exited during startup with $($process.ExitCode)" } } while (!$process.MainWindowHandle -and (Get-Date) -lt $deadline)
             if (!$process.MainWindowHandle) { throw 'AEM did not create a startup window.' }
@@ -162,7 +162,7 @@ jobs:
             if (report) for (const suite of report.suites || []) visit(suite);
             const artifacts = fs.existsSync('release') ? fs.readdirSync('release').filter(f => f.endsWith('.verification.json')).map(f => JSON.parse(fs.readFileSync(`release/${f}`, 'utf8'))) : [];
             const startup = fs.existsSync('test-results/startup.json') ? JSON.parse(fs.readFileSync('test-results/startup.json', 'utf8')) : null;
-            const startupError = fs.existsSync('test-results/startup-error.txt') ? fs.readFileSync('test-results/startup-error.txt', 'utf8') : '';
+            const startupError = ['test-results/startup-error.txt', 'test-results/startup-err.txt'].filter(f => fs.existsSync(f)).map(f => fs.readFileSync(f, 'utf8')).join('\n');
             const success = startup?.passed === true && report?.stats?.unexpected === 0 && report?.stats?.expected > 0 && artifacts.length > 0;
             const summary = `## Installed Windows application verification\n\nResult: **${success ? 'PASS' : 'FAIL'}**\n\nStartup: ${startup?.passed ? 'PASS' : 'FAIL'}\n${startupError ? `\`\`\`\n${startupError.slice(0, 4000)}\n\`\`\`\n` : ''}\n${JSON.stringify(report?.stats || {}, null, 2)}\n\n\`\`\`json\n${JSON.stringify(artifacts, null, 2)}\n\`\`\`\n\n${errors.map(e => `- ${e.replace(/\u001b\[[0-9;]*m/g, '')}`).join('\n')}`.slice(0, 64000);
             await github.rest.checks.create({ owner: context.repo.owner, repo: context.repo.repo, name: 'Windows installation evidence', head_sha: context.sha, status: 'completed', conclusion: success ? 'success' : 'failure', output: { title: 'Installer, startup, store, bridge and accessibility checks', summary } });
