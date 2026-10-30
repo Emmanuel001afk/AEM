@@ -6,6 +6,7 @@ on:
     paths: [.github/workflows/windows-host-probe.yml]
 permissions:
   contents: read
+  checks: write
 jobs:
   probe:
     runs-on: windows-2025-vs2026
@@ -13,15 +14,21 @@ jobs:
     steps:
       - name: Inspect virtualization and Android tooling
         shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           $ErrorActionPreference = 'Continue'
-          Get-CimInstance Win32_OperatingSystem | Select-Object Caption, Version, BuildNumber | Format-List
-          Get-CimInstance Win32_Processor | Select-Object Name, NumberOfCores, NumberOfLogicalProcessors, VirtualizationFirmwareEnabled, SecondLevelAddressTranslationExtensions | Format-List
-          Get-CimInstance Win32_ComputerSystem | Select-Object HypervisorPresent, TotalPhysicalMemory | Format-List
-          Get-WindowsOptionalFeature -Online | Where-Object { $_.FeatureName -match 'Hypervisor|VirtualMachine' } | Select-Object FeatureName, State | Format-Table
-          java -version
-          $sdk = $env:ANDROID_HOME
-          Write-Host "SDK: $sdk"
-          if (Test-Path "$sdk/emulator/emulator.exe") { & "$sdk/emulator/emulator.exe" -accel-check }
-          if (Test-Path "$sdk/cmdline-tools/latest/bin/sdkmanager.bat") { & "$sdk/cmdline-tools/latest/bin/sdkmanager.bat" --list_installed }
-          exit 0
+          $report = & {
+            Get-CimInstance Win32_OperatingSystem | Select-Object Caption, Version, BuildNumber | Format-List
+            Get-CimInstance Win32_Processor | Select-Object Name, NumberOfCores, NumberOfLogicalProcessors, VirtualizationFirmwareEnabled, SecondLevelAddressTranslationExtensions | Format-List
+            Get-CimInstance Win32_ComputerSystem | Select-Object HypervisorPresent, TotalPhysicalMemory | Format-List
+            Get-WindowsOptionalFeature -Online | Where-Object { $_.FeatureName -match 'Hypervisor|VirtualMachine' } | Select-Object FeatureName, State | Format-Table
+            java -version
+            $sdk = $env:ANDROID_HOME
+            Write-Output "SDK: $sdk"
+            if (Test-Path "$sdk/emulator/emulator.exe") { & "$sdk/emulator/emulator.exe" -accel-check }
+            if (Test-Path "$sdk/cmdline-tools/latest/bin/sdkmanager.bat") { & "$sdk/cmdline-tools/latest/bin/sdkmanager.bat" --list_installed }
+          } | Out-String
+          Write-Host $report
+          $body = @{ name='Windows capability evidence'; head_sha=$env:GITHUB_SHA; status='completed'; conclusion='neutral'; output=@{ title='Hosted Windows virtualization probe'; summary=('```text' + "`n" + $report.Substring(0, [Math]::Min(60000, $report.Length)) + "`n```") } } | ConvertTo-Json -Depth 5
+          Invoke-RestMethod -Method Post -Uri "$env:GITHUB_API_URL/repos/$env:GITHUB_REPOSITORY/check-runs" -Headers @{ Authorization="Bearer $env:GH_TOKEN"; Accept='application/vnd.github+json' } -ContentType 'application/json' -Body $body
