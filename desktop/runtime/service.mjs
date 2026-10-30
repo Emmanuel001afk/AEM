@@ -275,7 +275,7 @@ export class AndroidRuntime extends EventEmitter {
         }
       });
       try {
-        const deadline = Date.now() + 300000;
+        const deadline = Date.now() + 600000;
         let booted = false;
         while (Date.now() < deadline) {
           if (exitInfo) throw new Error(`Android exited before boot. ${this.logs.slice(-8).join("\n")}`);
@@ -286,7 +286,7 @@ export class AndroidRuntime extends EventEmitter {
           }
           await delay(2000);
         }
-        if (!booted) throw new Error("Android did not finish booting within five minutes. Check virtualization, available RAM and the runtime log.");
+        if (!booted) throw new Error("Android did not finish booting within ten minutes. Check virtualization, available RAM and the runtime log.");
         await writeJsonAtomic(this.lockFile, { pid: child.pid, serial: this.serial, startedAt: new Date().toISOString() });
         return this.publish({ phase: "running", ready: true, serial: this.serial, bootSeconds: Math.round((Date.now() - started) / 1000), lastError: null });
       } catch (error) {

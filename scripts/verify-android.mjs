@@ -96,6 +96,7 @@ try {
   report.success = true;
 } catch (error) {
   report.success = false; report.error = error.stack || String(error);
+  report.runtimeLogs = runtime.logs.slice(-60);
   console.error(error);
   process.exitCode = 1;
 } finally {
