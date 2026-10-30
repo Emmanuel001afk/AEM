@@ -21,7 +21,7 @@ test.beforeEach(async () => {
   const rendererErrors: string[] = [];
   page.on("pageerror", (error) => rendererErrors.push(error.message));
   page.on("console", (message) => { if (message.type() === "error") rendererErrors.push(message.text()); });
-  await page.reload({ waitUntil: "domcontentloaded" });
+  await page.evaluate(() => { setTimeout(() => window.location.reload(), 0); });
   try { await expect(page.getByRole("heading", { name: "Phormi", exact: true })).toBeVisible({ timeout: 20000 }); }
   catch (error) {
     const state = await page.evaluate(() => ({ url: location.href, title: document.title, text: document.body?.innerText?.slice(0, 3000), secure: window.isSecureContext, uuid: typeof crypto.randomUUID, bridge: typeof window.aemDesktop }));

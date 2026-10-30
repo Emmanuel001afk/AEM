@@ -20,6 +20,7 @@ export class AndroidRuntime extends EventEmitter {
     this.root = path.resolve(options.root);
     this.sdkRoot = path.resolve(options.sdkRoot || process.env.AEM_ANDROID_HOME || path.join(this.root, "sdk"));
     this.avdHome = path.join(this.root, "avd");
+    this.emulatorHome = path.join(this.root, "android");
     this.downloads = path.join(this.root, "downloads");
     this.staging = path.join(this.root, "staging");
     this.logFile = path.join(this.root, "logs", "android-runtime.log");
@@ -36,7 +37,7 @@ export class AndroidRuntime extends EventEmitter {
     this.state = { phase: "idle", installed: false, ready: false, settings: defaultSettings(), setup: null, serial: null, lastError: null, bootSeconds: null, logs: [] };
   }
   async initialize() {
-    await Promise.all([this.root, this.avdHome, this.downloads, this.staging, path.dirname(this.logFile)].map((dir) => fs.mkdir(dir, { recursive: true })));
+    await Promise.all([this.root, this.avdHome, this.emulatorHome, this.downloads, this.staging, path.dirname(this.logFile)].map((dir) => fs.mkdir(dir, { recursive: true })));
     const saved = await readJson(this.configFile, {});
     try { this.state.settings = validateSettings(saved); } catch { this.state.settings = defaultSettings(); }
     this.state.installed = await this.isInstalled();
@@ -94,7 +95,7 @@ export class AndroidRuntime extends EventEmitter {
     return runCommand(java, [`-D${property}=${this.toolsRoot()}`, "-classpath", classpath, main, ...rootFlag, ...args], { env: this.env(), timeoutMs: 1800000, ...options });
   }
   env(extra = {}) {
-    return { ...process.env, ANDROID_HOME: this.sdkRoot, ANDROID_SDK_ROOT: this.sdkRoot, ANDROID_AVD_HOME: this.avdHome, ANDROID_SDK_HOME: this.root, ANDROID_EMULATOR_HOME: path.join(this.root, "android"), ...extra };
+    return { ...process.env, ANDROID_HOME: this.sdkRoot, ANDROID_SDK_ROOT: this.sdkRoot, ANDROID_AVD_HOME: this.avdHome, ANDROID_SDK_HOME: this.root, ANDROID_EMULATOR_HOME: this.emulatorHome, ...extra };
   }
   async exclusive(name, action) {
     if (this.operation) throw new Error(`${this.operation} is already in progress. Wait for it to finish.`);
