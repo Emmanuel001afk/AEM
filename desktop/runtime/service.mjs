@@ -382,7 +382,7 @@ export class AndroidRuntime extends EventEmitter {
   }
   async launchApp(packageName) {
     assertPackage(packageName);
-    const resolved = await this.adb(["shell", "cmd", "package", "resolve-activity", "--brief", "-a", "android.intent.action.MAIN", "-c", "android.intent.category.LAUNCHER", packageName], { check: false });
+    const resolved = await this.adb(["shell", "cmd", "package", "resolve-activity", "--brief", "-a", "android.intent.action.MAIN", "-c", "android.intent.category.LAUNCHER", "-p", packageName], { check: false });
     const component = resolved.stdout.trim().split(/\r?\n/).filter(Boolean).pop();
     const result = component && component.includes("/")
       ? await this.adb(["shell", "am", "start", "-W", "-n", component])
