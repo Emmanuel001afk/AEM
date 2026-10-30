@@ -1,0 +1,24 @@
+name: Windows host capability probe
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  probe:
+    runs-on: windows-2025-vs2026
+    timeout-minutes: 10
+    steps:
+      - name: Inspect virtualization and Android tooling
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Continue'
+          Get-CimInstance Win32_OperatingSystem | Select-Object Caption, Version, BuildNumber | Format-List
+          Get-CimInstance Win32_Processor | Select-Object Name, NumberOfCores, NumberOfLogicalProcessors, VirtualizationFirmwareEnabled, SecondLevelAddressTranslationExtensions | Format-List
+          Get-CimInstance Win32_ComputerSystem | Select-Object HypervisorPresent, TotalPhysicalMemory | Format-List
+          Get-WindowsOptionalFeature -Online | Where-Object { $_.FeatureName -match 'Hypervisor|VirtualMachine' } | Select-Object FeatureName, State | Format-Table
+          java -version
+          $sdk = $env:ANDROID_HOME
+          Write-Host "SDK: $sdk"
+          if (Test-Path "$sdk/emulator/emulator.exe") { & "$sdk/emulator/emulator.exe" -accel-check }
+          if (Test-Path "$sdk/cmdline-tools/latest/bin/sdkmanager.bat") { & "$sdk/cmdline-tools/latest/bin/sdkmanager.bat" --list_installed }
+          exit 0
