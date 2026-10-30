@@ -1,0 +1,63 @@
+name: AEM Android runtime verification
+on:
+  push:
+    branches: [main, arena/32bd333b-aem]
+    paths:
+      - desktop/runtime/**
+      - scripts/verify-android.mjs
+      - scripts/build-test-apk.py
+      - tests/fixtures/android/**
+      - package-lock.json
+      - .github/workflows/android-runtime-verification.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: aem-android-runtime-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  windows-android:
+    # This job deliberately fails if CPU acceleration or any real Android operation fails.
+    # A software-GPU emulator is still a real VM; -no-accel is not an acceptance fallback.
+    runs-on: windows-2025-vs2026
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: npm ci
+      - name: Record host virtualization before provisioning
+        shell: pwsh
+        run: |
+          Get-CimInstance Win32_Processor | Select-Object Name,NumberOfCores,VirtualizationFirmwareEnabled,SecondLevelAddressTranslationExtensions | Format-List
+          Get-CimInstance Win32_ComputerSystem | Select-Object HypervisorPresent,TotalPhysicalMemory | Format-List
+          $emulator = Join-Path $env:ANDROID_HOME 'emulator/emulator.exe'
+          if (Test-Path $emulator) { & $emulator -accel-check }
+          exit 0
+      - name: Install licensed runtime and verify real Android end to end
+        run: node scripts/verify-android.mjs --accept-licenses --headless
+        env:
+          AEM_RUNTIME_ROOT: ${{ runner.temp }}\aem-runtime-verification
+          PYTHON: python
+      - name: Upload actual runtime evidence or failure diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-runtime-verification
+          path: |
+            ${{ runner.temp }}/aem-runtime-verification/verification-report.json
+            ${{ runner.temp }}/aem-runtime-verification/android-probe.png
+            ${{ runner.temp }}/aem-runtime-verification/aem-runtime-probe.apk
+            ${{ runner.temp }}/aem-runtime-verification/runtime-lock.json
+            ${{ runner.temp }}/aem-runtime-verification/logs/*.log
+          if-no-files-found: warn
+          retention-days: 14

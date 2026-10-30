@@ -31,4 +31,9 @@ jobs:
           } | Out-String
           Write-Host $report
           $body = @{ name='Windows capability evidence'; head_sha=$env:GITHUB_SHA; status='completed'; conclusion='neutral'; output=@{ title='Hosted Windows virtualization probe'; summary=('```text' + "`n" + $report.Substring(0, [Math]::Min(60000, $report.Length)) + "`n```") } } | ConvertTo-Json -Depth 5
-          Invoke-RestMethod -Method Post -Uri "$env:GITHUB_API_URL/repos/$env:GITHUB_REPOSITORY/check-runs" -Headers @{ Authorization="Bearer $env:GH_TOKEN"; Accept='application/vnd.github+json' } -ContentType 'application/json' -Body $body
+          try {
+            Invoke-RestMethod -Method Post -Uri "$env:GITHUB_API_URL/repos/$env:GITHUB_REPOSITORY/check-runs" -Headers @{ Authorization="Bearer $env:GH_TOKEN"; Accept='application/vnd.github+json' } -ContentType 'application/json' -Body $body -ErrorAction Stop
+          } catch {
+            Write-Host "::error::Check publication failed: $($_.Exception.Message) $($_.ErrorDetails.Message)"
+            exit 1
+          }

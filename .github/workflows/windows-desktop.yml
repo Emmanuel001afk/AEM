@@ -1,0 +1,151 @@
+name: AEM Store Windows release
+on:
+  push:
+    branches: [main, arena/32bd333b-aem]
+    paths:
+      - src/**
+      - desktop/**
+      - tests/desktop/**
+      - tests/unit/**
+      - package.json
+      - package-lock.json
+      - electron-builder.yml
+      - vite.desktop.config.ts
+      - .github/workflows/windows-desktop.yml
+  pull_request:
+    paths:
+      - src/**
+      - desktop/**
+      - tests/desktop/**
+      - tests/unit/**
+      - package.json
+      - package-lock.json
+      - electron-builder.yml
+      - vite.desktop.config.ts
+      - .github/workflows/windows-desktop.yml
+  workflow_dispatch:
+    inputs:
+      publish_draft:
+        description: Publish a draft GitHub release (main only)
+        type: boolean
+        default: false
+permissions:
+  contents: read
+concurrency:
+  group: aem-windows-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  windows:
+    runs-on: windows-2025-vs2026
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Unit tests and production dependency audit
+        run: |
+          npm run test:unit
+          npm audit --omit=dev
+      - name: Preserve web and Android client builds
+        run: |
+          npm run build
+          npm run build:mobile
+      - name: Build Windows installer
+        run: npm run dist:win
+        env:
+          CSC_LINK: ${{ secrets.WINDOWS_CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.WINDOWS_CSC_KEY_PASSWORD }}
+      - name: Inspect genuine installer and update metadata
+        shell: pwsh
+        run: |
+          $installer = Get-ChildItem release -Filter '*Setup.exe' | Select-Object -First 1
+          if (!$installer -or $installer.Length -lt 40MB) { throw 'Missing or suspiciously small Windows installer.' }
+          if (!(Test-Path release/latest.yml)) { throw 'Missing desktop update metadata.' }
+          Get-Content release/latest.yml
+          Get-Content "$($installer.FullName).verification.json"
+          $signature = Get-AuthenticodeSignature $installer.FullName
+          Write-Host "Authenticode status: $($signature.Status)"
+          if ($env:WINDOWS_CSC_LINK -and $signature.Status -ne 'Valid') { throw 'Signing was requested but the installer is not validly signed.' }
+          "AEM_INSTALLER=$($installer.FullName)" | Out-File $env:GITHUB_ENV -Append utf8
+        env:
+          WINDOWS_CSC_LINK: ${{ secrets.WINDOWS_CSC_LINK }}
+      - name: Install silently as the current user
+        shell: pwsh
+        run: |
+          $process = Start-Process -FilePath $env:AEM_INSTALLER -ArgumentList '/S' -Wait -PassThru
+          if ($process.ExitCode -ne 0) { throw "Installer exited with $($process.ExitCode)" }
+          $exe = Join-Path $env:LOCALAPPDATA 'Programs\AEM Store\AEM Store.exe'
+          if (!(Test-Path $exe)) { throw "Installed executable not found at $exe" }
+          $version = (Get-Item $exe).VersionInfo
+          if ($version.ProductName -ne 'AEM Store') { throw "Unexpected application identity: $($version.ProductName)" }
+          $shortcut = Get-ChildItem "$env:APPDATA\Microsoft\Windows\Start Menu\Programs" -Recurse -Filter 'AEM Store.lnk' | Select-Object -First 1
+          if (!$shortcut) { throw 'Start Menu shortcut was not installed.' }
+          $uninstall = Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*' | Where-Object DisplayName -eq 'AEM Store' | Select-Object -First 1
+          if (!$uninstall) { throw 'Per-user uninstall registration is missing.' }
+          "AEM_TEST_EXECUTABLE=$exe" | Out-File $env:GITHUB_ENV -Append utf8
+          "AEM_UNINSTALLER=$($uninstall.UninstallString)" | Out-File $env:GITHUB_ENV -Append utf8
+          $version | Format-List
+      - name: Test the installed application, store and Android UI
+        run: npm run test:desktop
+      - name: Upload Windows installer and update feed
+        uses: actions/upload-artifact@v4
+        with:
+          name: aem-store-windows-installer
+          path: |
+            release/*Setup.exe
+            release/*Setup.exe.blockmap
+            release/*Setup.exe.verification.json
+            release/latest.yml
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0
+      - name: Upload Windows UI verification evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-desktop-verification
+          path: |
+            playwright-report/**
+            test-results/**
+          if-no-files-found: warn
+          retention-days: 14
+      - name: Verify silent uninstall and retained user data
+        if: always()
+        shell: pwsh
+        run: |
+          if (!$env:AEM_UNINSTALLER) { Write-Host 'Installation did not complete; no uninstaller to run.'; exit 0 }
+          $uninstaller = $env:AEM_UNINSTALLER.Trim('"')
+          if (Test-Path $uninstaller) {
+            $process = Start-Process -FilePath $uninstaller -ArgumentList '/S' -Wait -PassThru
+            if ($process.ExitCode -ne 0) { throw "Uninstaller exited with $($process.ExitCode)" }
+            $deadline = (Get-Date).AddSeconds(30)
+            while ((Test-Path $env:AEM_TEST_EXECUTABLE) -and (Get-Date) -lt $deadline) { Start-Sleep -Seconds 1 }
+            if (Test-Path $env:AEM_TEST_EXECUTABLE) { throw 'Installed executable survived uninstall.' }
+            Write-Host 'Silent uninstall passed. Android data and user preferences are intentionally retained.'
+          }
+  publish_draft:
+    needs: windows
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.publish_draft && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: aem-store-windows-installer
+          path: release
+      - name: Create a draft, never an unreviewed public release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version="$(node -p "require('./package.json').version")"
+          tag="desktop-v$version"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release upload "$tag" release/* --clobber
+          else
+            gh release create "$tag" release/* --draft --target "$GITHUB_SHA" --title "AEM Store $version for Windows" --notes "Windows x64 desktop release with the existing AEM catalog and an integrated local Android 15 test device. Review docs/windows-desktop.md and the verification reports before publishing. The Android SDK and system images are downloaded separately after license acceptance. Unsigned builds are explicitly identified by Windows; signing requires the repository's Windows certificate secrets."
+          fi

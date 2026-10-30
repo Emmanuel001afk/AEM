@@ -1,11 +1,19 @@
 name: AEM checks
 on: [push, pull_request]
+permissions:
+  contents: read
 jobs:
   web:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
-        with: { node-version: 22 }
-      - run: npm install
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run test:unit
       - run: npm run build
+      - run: npm run build:mobile
+      - run: npm run build:desktop
+      - run: npm audit --omit=dev
