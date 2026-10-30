@@ -382,8 +382,12 @@ export class AndroidRuntime extends EventEmitter {
   }
   async launchApp(packageName) {
     assertPackage(packageName);
-    const result = await this.adb(["shell", "am", "start", "-W", "-a", "android.intent.action.MAIN", "-c", "android.intent.category.LAUNCHER", "-p", packageName]);
-    if (/Error:|Exception/.test(result.stdout + result.stderr)) throw new Error(`Android could not launch this app: ${result.stdout.slice(-1500)}`);
+    const resolved = await this.adb(["shell", "cmd", "package", "resolve-activity", "--brief", "-a", "android.intent.action.MAIN", "-c", "android.intent.category.LAUNCHER", packageName], { check: false });
+    const component = resolved.stdout.trim().split(/\r?\n/).filter(Boolean).pop();
+    const result = component && component.includes("/")
+      ? await this.adb(["shell", "am", "start", "-W", "-n", component])
+      : await this.adb(["shell", "monkey", "-p", packageName, "-c", "android.intent.category.LAUNCHER", "1"]);
+    if (/Error:|Exception|No activities found/.test(result.stdout + result.stderr)) throw new Error(`Android could not launch this app: ${result.stdout.slice(-1500)}`);
     return { launched: true, packageName };
   }
   async uninstallApp(packageName) {
