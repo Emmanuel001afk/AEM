@@ -12,6 +12,7 @@ on:
   workflow_dispatch:
 permissions:
   contents: read
+  checks: write
 concurrency:
   group: aem-android-runtime-${{ github.ref }}
   cancel-in-progress: true
@@ -61,3 +62,13 @@ jobs:
             ${{ runner.temp }}/aem-runtime-verification/logs/*.log
           if-no-files-found: warn
           retention-days: 14
+      - name: Publish readable verification evidence
+        if: always()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('node:fs');
+            const file = `${process.env.RUNNER_TEMP}\\aem-runtime-verification\\verification-report.json`;
+            const report = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')) : { success: false, error: 'Verifier did not produce a report.' };
+            const summary = `## Real Android runtime verification\n\nResult: **${report.success ? 'PASS' : 'FAIL'}**\n\n${(report.checks || []).map(c => `- ${c.passed ? 'PASS' : 'FAIL'}: ${c.name}`).join('\n')}\n\n\`\`\`json\n${JSON.stringify(report, null, 2).slice(0, 55000)}\n\`\`\``;
+            await github.rest.checks.create({ owner: context.repo.owner, repo: context.repo.repo, name: 'Android runtime evidence', head_sha: context.sha, status: 'completed', conclusion: report.success ? 'success' : 'failure', output: { title: report.success ? 'Android boot, APK, permissions, network and storage passed' : 'Android runtime verification failed', summary } });

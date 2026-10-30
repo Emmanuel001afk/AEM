@@ -12,28 +12,28 @@ jobs:
     runs-on: windows-2025-vs2026
     timeout-minutes: 10
     steps:
-      - name: Inspect virtualization and Android tooling
-        shell: pwsh
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          $ErrorActionPreference = 'Continue'
-          $report = & {
-            Get-CimInstance Win32_OperatingSystem | Select-Object Caption, Version, BuildNumber | Format-List
-            Get-CimInstance Win32_Processor | Select-Object Name, NumberOfCores, NumberOfLogicalProcessors, VirtualizationFirmwareEnabled, SecondLevelAddressTranslationExtensions | Format-List
-            Get-CimInstance Win32_ComputerSystem | Select-Object HypervisorPresent, TotalPhysicalMemory | Format-List
-            Get-WindowsOptionalFeature -Online | Where-Object { $_.FeatureName -match 'Hypervisor|VirtualMachine' } | Select-Object FeatureName, State | Format-Table
-            java -version
-            $sdk = $env:ANDROID_HOME
-            Write-Output "SDK: $sdk"
-            if (Test-Path "$sdk/emulator/emulator.exe") { & "$sdk/emulator/emulator.exe" -accel-check }
-            if (Test-Path "$sdk/cmdline-tools/latest/bin/sdkmanager.bat") { & "$sdk/cmdline-tools/latest/bin/sdkmanager.bat" --list_installed }
-          } | Out-String
-          Write-Host $report
-          $body = @{ name='Windows capability evidence'; head_sha=$env:GITHUB_SHA; status='completed'; conclusion='neutral'; output=@{ title='Hosted Windows virtualization probe'; summary=('```text' + "`n" + $report.Substring(0, [Math]::Min(60000, $report.Length)) + "`n```") } } | ConvertTo-Json -Depth 5
-          try {
-            Invoke-RestMethod -Method Post -Uri "$env:GITHUB_API_URL/repos/$env:GITHUB_REPOSITORY/check-runs" -Headers @{ Authorization="Bearer $env:GH_TOKEN"; Accept='application/vnd.github+json' } -ContentType 'application/json' -Body $body -ErrorAction Stop
-          } catch {
-            Write-Host "::error::Check publication failed: $($_.Exception.Message) $($_.ErrorDetails.Message)"
-            exit 1
-          }
+      - name: Inspect virtualization and publish evidence
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { execFileSync } = require('node:child_process');
+            const sections = [];
+            const capture = (name, command, args) => {
+              try { sections.push(`## ${name}\n\`\`\`\n${execFileSync(command, args, { encoding: 'utf8', timeout: 60000, stdio: ['ignore', 'pipe', 'pipe'] })}\n\`\`\``); }
+              catch (error) { sections.push(`## ${name}\n\`\`\`\n${error.stdout || ''}\n${error.stderr || ''}\n${error.message}\n\`\`\``); }
+            };
+            const ps = (command) => capture(command, 'powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', command]);
+            ps('Get-CimInstance Win32_OperatingSystem | Select-Object Caption,Version,BuildNumber | Format-List | Out-String');
+            ps('Get-CimInstance Win32_Processor | Select-Object Name,NumberOfCores,NumberOfLogicalProcessors,VirtualizationFirmwareEnabled,SecondLevelAddressTranslationExtensions | Format-List | Out-String');
+            ps('Get-CimInstance Win32_ComputerSystem | Select-Object HypervisorPresent,TotalPhysicalMemory | Format-List | Out-String');
+            ps('Get-WindowsOptionalFeature -Online | Where-Object { $_.FeatureName -match "Hypervisor|VirtualMachine" } | Select-Object FeatureName,State | Format-Table | Out-String');
+            capture('Java', 'java', ['-version']);
+            const sdk = process.env.ANDROID_HOME;
+            sections.push(`SDK: ${sdk}`);
+            if (sdk) {
+              capture('Emulator acceleration', `${sdk}\\emulator\\emulator.exe`, ['-accel-check']);
+              capture('Installed SDK packages', 'java', ['-classpath', `${sdk}\\cmdline-tools\\latest\\lib\\*`, 'com.android.sdklib.tool.sdkmanager.SdkManagerCli', `--sdk_root=${sdk}`, '--list_installed']);
+            }
+            const summary = sections.join('\n\n').slice(0, 64000);
+            console.log(summary);
+            await github.rest.checks.create({ owner: context.repo.owner, repo: context.repo.repo, name: 'Windows capability evidence', head_sha: context.sha, status: 'completed', conclusion: 'neutral', output: { title: 'Hosted Windows virtualization probe', summary } });

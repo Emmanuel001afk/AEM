@@ -25,12 +25,28 @@ on:
       - .github/workflows/windows-desktop.yml
   workflow_dispatch:
     inputs:
-      publish_draft:
+          - name: Publish readable Windows verification evidence
+        if: always()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('node:fs');
+            const file = 'test-results/results.json';
+            const report = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')) : null;
+            const errors = [];
+            const visit = suite => { for (const spec of suite.specs || []) for (const test of spec.tests || []) for (const result of test.results || []) if (result.error) errors.push(`${spec.title}: ${result.error.message}`); for (const child of suite.suites || []) visit(child); };
+            if (report) for (const suite of report.suites || []) visit(suite);
+            const artifacts = fs.existsSync('release') ? fs.readdirSync('release').filter(f => f.endsWith('.verification.json')).map(f => JSON.parse(fs.readFileSync(`release/${f}`, 'utf8'))) : [];
+            const success = report?.stats?.unexpected === 0 && report?.stats?.expected > 0 && artifacts.length > 0;
+            const summary = `## Installed Windows application verification\n\nResult: **${success ? 'PASS' : 'FAIL'}**\n\n${JSON.stringify(report?.stats || {}, null, 2)}\n\n\`\`\`json\n${JSON.stringify(artifacts, null, 2)}\n\`\`\`\n\n${errors.map(e => `- ${e.replace(/\u001b\[[0-9;]*m/g, '')}`).join('\n')}`.slice(0, 64000);
+            await github.rest.checks.create({ owner: context.repo.owner, repo: context.repo.repo, name: 'Windows installation evidence', head_sha: context.sha, status: 'completed', conclusion: success ? 'success' : 'failure', output: { title: 'Installer, startup, store, bridge and accessibility checks', summary } });
+  publish_draft:
         description: Publish a draft GitHub release (main only)
         type: boolean
         default: false
 permissions:
   contents: read
+  checks: write
 concurrency:
   group: aem-windows-${{ github.ref }}
   cancel-in-progress: true
@@ -126,6 +142,21 @@ jobs:
             if (Test-Path $env:AEM_TEST_EXECUTABLE) { throw 'Installed executable survived uninstall.' }
             Write-Host 'Silent uninstall passed. Android data and user preferences are intentionally retained.'
           }
+      - name: Publish readable Windows verification evidence
+        if: always()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('node:fs');
+            const file = 'test-results/results.json';
+            const report = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')) : null;
+            const errors = [];
+            const visit = suite => { for (const spec of suite.specs || []) for (const test of spec.tests || []) for (const result of test.results || []) if (result.error) errors.push(`${spec.title}: ${result.error.message}`); for (const child of suite.suites || []) visit(child); };
+            if (report) for (const suite of report.suites || []) visit(suite);
+            const artifacts = fs.existsSync('release') ? fs.readdirSync('release').filter(f => f.endsWith('.verification.json')).map(f => JSON.parse(fs.readFileSync(`release/${f}`, 'utf8'))) : [];
+            const success = report?.stats?.unexpected === 0 && report?.stats?.expected > 0 && artifacts.length > 0;
+            const summary = `## Installed Windows application verification\n\nResult: **${success ? 'PASS' : 'FAIL'}**\n\n${JSON.stringify(report?.stats || {}, null, 2)}\n\n\`\`\`json\n${JSON.stringify(artifacts, null, 2)}\n\`\`\`\n\n${errors.map(e => `- ${e.replace(/\u001b\[[0-9;]*m/g, '')}`).join('\n')}`.slice(0, 64000);
+            await github.rest.checks.create({ owner: context.repo.owner, repo: context.repo.repo, name: 'Windows installation evidence', head_sha: context.sha, status: 'completed', conclusion: success ? 'success' : 'failure', output: { title: 'Installer, startup, store, bridge and accessibility checks', summary } });
   publish_draft:
     needs: windows
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.publish_draft && github.ref == 'refs/heads/main' }}
