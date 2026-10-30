@@ -5,3 +5,11 @@ build/
 local.properties
 *.iml
 .idea/
+dist-electron/
+release/
+# Local SDK & emulator runtime (never commit) — userData cache, not source
+/android-sdk/
+.android/
+# OS
+.DS_Store
+Thumbs.db

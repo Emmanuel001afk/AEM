@@ -3,10 +3,33 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
+  "description": "AEM Store \u2014 personal software distribution store with integrated Android emulator for Windows",
+  "author": "AEM Team <aem@aem.store>",
+  "license": "MIT",
+  "productName": "AEM Store",
+  "main": "dist-electron/main.js",
+  "homepage": "https://github.com/Emmanuel001afk/AEM",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Emmanuel001afk/AEM.git"
+  },
   "scripts": {
     "dev": "vite",
+    "dev:electron": "concurrently -k \"vite\" \"wait-on http://localhost:5173 && electron .\"",
+    "dev:desktop": "npm run build:renderer && electron dist-electron/main.js",
     "typecheck": "tsc --noEmit",
-    "build": "tsc --noEmit && vite build"
+    "typecheck:electron": "tsc --noEmit --project electron/tsconfig.json",
+    "build": "npm run build:renderer && npm run build:electron",
+    "build:renderer": "tsc --noEmit && vite build",
+    "build:electron": "tsc --project electron/tsconfig.json && node scripts/copy-electron-assets.mjs",
+    "build:win": "npm run build && electron-builder --win --publish never",
+    "build:win:portable": "npm run build && electron-builder --win portable --publish never",
+    "build:unpack": "npm run build && electron-builder --dir --publish never",
+    "verify": "node scripts/verify-build.mjs",
+    "verify:emulator": "node scripts/verify-emulator.mjs",
+    "test": "npm run typecheck && npm run verify",
+    "preview": "vite preview",
+    "postinstall": "electron-builder install-app-deps || true"
   },
   "dependencies": {
     "@capacitor/core": "7.4.4",
@@ -15,10 +38,136 @@
     "react-dom": "19.1.1"
   },
   "devDependencies": {
+    "@types/node": "22.13.0",
     "@types/react": "19.1.12",
     "@types/react-dom": "19.1.9",
     "@vitejs/plugin-react": "5.0.2",
+    "concurrently": "9.1.2",
+    "cross-env": "7.0.3",
+    "electron": "34.5.8",
+    "electron-builder": "25.1.8",
     "typescript": "5.9.2",
-    "vite": "7.1.5"
+    "vite": "7.1.5",
+    "wait-on": "8.0.3"
+  },
+  "build": {
+    "appId": "com.aem.store",
+    "productName": "AEM Store",
+    "copyright": "Copyright \u00a9 2025 AEM Team",
+    "directories": {
+      "output": "release",
+      "buildResources": "resources"
+    },
+    "files": [
+      "dist/**/*",
+      "dist-electron/**/*",
+      "resources/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "resources/icons",
+        "to": "icons",
+        "filter": [
+          "**/*"
+        ]
+      }
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "resources/icons/icon.ico",
+      "publisherName": "AEM Team",
+      "verifyUpdateCodeSignature": false,
+      "signAndEditExecutable": false
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "allowElevation": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "AEM Store",
+      "artifactName": "AEM-Store-${version}-Setup-${arch}.${ext}",
+      "deleteAppDataOnUninstall": false,
+      "include": "resources/installer.nsh",
+      "warningsAsErrors": false
+    },
+    "portable": {
+      "artifactName": "AEM-Store-${version}-Portable-${arch}.${ext}"
+    },
+    "mac": {
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "icon": "resources/icons/icon.icns",
+      "category": "public.app-category.developer-tools",
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false
+    },
+    "linux": {
+      "target": [
+        "AppImage",
+        "deb"
+      ],
+      "icon": "resources/icons/icon.png",
+      "category": "Development"
+    },
+    "fileAssociations": [
+      {
+        "ext": "apk",
+        "name": "Android Package",
+        "description": "Android application package",
+        "icon": "resources/icons/apk.ico",
+        "role": "Viewer"
+      },
+      {
+        "ext": "apks",
+        "name": "Android Split Package",
+        "description": "Android split APK bundle",
+        "role": "Viewer"
+      },
+      {
+        "ext": "xapk",
+        "name": "XAPK Package",
+        "description": "XAPK Android package",
+        "role": "Viewer"
+      },
+      {
+        "ext": "apkm",
+        "name": "APKM Package",
+        "description": "APKM Android package",
+        "role": "Viewer"
+      }
+    ],
+    "protocols": [
+      {
+        "name": "AEM Store Protocol",
+        "schemes": [
+          "aem"
+        ],
+        "role": "Viewer"
+      }
+    ],
+    "publish": {
+      "provider": "github",
+      "owner": "Emmanuel001afk",
+      "repo": "AEM",
+      "private": false
+    }
   }
 }
