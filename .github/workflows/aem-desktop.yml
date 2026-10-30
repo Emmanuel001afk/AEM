@@ -1,0 +1,105 @@
+name: AEM Desktop — Windows Build
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "electron/**"
+      - "src/**"
+      - "resources/**"
+      - "package.json"
+      - "vite.config.ts"
+      - ".github/workflows/aem-desktop.yml"
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: aem-desktop-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - run: npm ci || npm install
+      - run: npm run typecheck
+      - run: npm run typecheck:electron
+      - run: npm run build   # renderer + electron main compile
+      - run: npm run verify
+      - run: npm run verify:emulator
+
+  build-win:
+    runs-on: windows-latest
+    needs: verify
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - uses: actions/setup-python@v4
+        with: { python-version: "3.11" }
+      - run: npm ci || npm install
+      - name: Typecheck & Build
+        run: |
+          npm run typecheck
+          npm run typecheck:electron
+          npm run build
+      - name: Build Windows Installer
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npm run build:win
+        # electron-builder will create release/AEM-Store-*-Setup-x64.exe
+      - name: Verify artifacts are genuine
+        shell: pwsh
+        run: |
+          $files = Get-ChildItem release -Filter *.exe
+          if ($files.Count -eq 0) { throw "No Windows installer produced" }
+          foreach ($f in $files) {
+            Write-Host "Artifact: $($f.Name) size=$($f.Length) bytes"
+            if ($f.Length -lt 10000000) { throw "Artifact too small — likely not a genuine Electron build: $($f.Name)" }
+          }
+          # Also check unpacked exists
+          if (!(Test-Path release/win-unpacked/AEM-Store.exe)) { Write-Host "Unpacked exe not at expected path, listing:"; Get-ChildItem release -Recurse | Format-Table }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: aem-store-windows
+          path: |
+            release/*.exe
+            release/*.yml
+            release/*.blockmap
+          if-no-files-found: error
+      - name: Upload diagnostics bundle
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: aem-desktop-logs
+          path: |
+            logs/**
+            dist-electron/**
+            release/**
+
+  # Future platforms — kept disabled until Windows is green, architecture preserves slots
+  build-mac:
+    runs-on: macos-latest
+    if: false
+    needs: verify
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - run: npm install && npm run build
+
+  build-linux:
+    runs-on: ubuntu-latest
+    if: false
+    needs: verify
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - run: npm install && npm run build
