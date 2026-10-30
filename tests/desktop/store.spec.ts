@@ -17,7 +17,8 @@ test.beforeEach(async () => {
     if (url.pathname.endsWith("/applications")) body = [{ id: 1, provider: "github", project: "example/phormi", package_identity: "com.example.phormi", name: "Phormi", description: "A browser for testing.", source_url: "https://github.com/example/phormi", platforms: ["android"], category: "Browsers", functionality: ["Web browsing"], screenshots: [], permissions: ["Internet"], releases: [{ id: 10, version_name: "2.0", version_code: 2, channel: "stable", status: "published", title: "Phormi 2", published_at: "2026-10-01T00:00:00Z", source_release_id: "r2", artifacts: [{ id: 100, platform: "android", kind: "apk", filename: "phormi.apk", download_url: "https://wfvvmyixqcwosmuldxoq.supabase.co/storage/v1/object/public/aem-artifacts/phormi.apk", size_bytes: 2048, sha256: "a".repeat(64), package_identity: "com.example.phormi", signing_certificate_sha256: "b".repeat(64), version_code: 2, signing_status: "ready" }] }] }];
     await route.fulfill({ status: 200, contentType: "application/json", headers: { "access-control-allow-origin": "*", "access-control-allow-headers": "*" }, body: JSON.stringify(body) });
   });
-  await page.getByRole("button", { name: "Refresh catalog", exact: true }).or(page.locator('header button').first()).first().click();
+  // Install deterministic network fixtures before the renderer's first catalog request.
+  await page.reload();
   await expect(page.getByRole("heading", { name: "Phormi", exact: true })).toBeVisible();
 });
 test.afterEach(async () => { await application?.close(); if (root) await fs.rm(root, { recursive: true, force: true }); });
@@ -61,8 +62,8 @@ test("renderer is sandboxed and the native bridge rejects non-HTTPS external lin
   await expect(page.evaluate(() => window.aemDesktop!.openExternal("javascript:alert(1)"))).rejects.toThrow(/HTTPS/);
   const traversal = await page.evaluate(async () => (await fetch("aem://store/%2e%2e%2fpackage.json")).status);
   expect([400, 403, 404]).toContain(traversal);
-  await page.goto("https://example.com").catch(() => {});
-  expect(new URL(page.url()).origin).toBe("aem://store");
+  await page.evaluate(() => window.location.assign("https://example.com"));
+  await expect(page).toHaveURL(/^aem:\/\/store\//);
 });
 test("new Android interface has no serious accessibility violations", async () => {
   await page.getByRole("button", { name: "Emulator", exact: true }).click();

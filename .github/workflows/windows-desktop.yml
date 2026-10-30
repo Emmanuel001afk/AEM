@@ -40,8 +40,8 @@ jobs:
     runs-on: windows-2025-vs2026
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
@@ -74,7 +74,7 @@ jobs:
         env:
           WINDOWS_CSC_LINK: ${{ secrets.WINDOWS_CSC_LINK }}
       - name: Upload Windows installer and update feed
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: aem-store-windows-installer
           path: |
@@ -105,7 +105,7 @@ jobs:
         run: npm run test:desktop
       - name: Upload Windows UI verification evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: windows-desktop-verification
           path: |
@@ -129,14 +129,14 @@ jobs:
           }
       - name: Publish readable Windows verification evidence
         if: always()
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const fs = require('node:fs');
             const file = 'test-results/results.json';
             const report = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')) : null;
             const errors = [];
-            const visit = suite => { for (const spec of suite.specs || []) for (const test of spec.tests || []) for (const result of test.results || []) if (result.error) errors.push(`${spec.title}: ${result.error.message}`); for (const child of suite.suites || []) visit(child); };
+            const visit = suite => { for (const spec of suite.specs || []) for (const test of spec.tests || []) for (const result of test.results || []) if (result.error) errors.push(`${spec.title}: ${result.error.message}\n${(result.error.stack || "").split("\n").slice(0,5).join("\n")}`); for (const child of suite.suites || []) visit(child); };
             if (report) for (const suite of report.suites || []) visit(suite);
             const artifacts = fs.existsSync('release') ? fs.readdirSync('release').filter(f => f.endsWith('.verification.json')).map(f => JSON.parse(fs.readFileSync(`release/${f}`, 'utf8'))) : [];
             const success = report?.stats?.unexpected === 0 && report?.stats?.expected > 0 && artifacts.length > 0;
@@ -149,8 +149,8 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
         with:
           name: aem-store-windows-installer
           path: release

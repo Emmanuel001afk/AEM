@@ -132,7 +132,9 @@ export class AndroidRuntime extends EventEmitter {
           const entries = await fs.readdir(temporary, { withFileTypes: true });
           const home = entries.find((entry) => entry.isDirectory() && entry.name.startsWith("jdk-"));
           if (!home) throw new Error("Java archive has an unexpected layout.");
-          await fs.mkdir(path.join(this.root, "java"), { recursive: true });
+          // Windows cannot rename a directory onto an existing empty directory.
+          // Only this private, partially installed Java directory is removable here.
+          await fs.rm(path.join(this.root, "java"), { recursive: true, force: true });
           await fs.rename(path.join(temporary, home.name), path.join(this.root, "java"));
         } finally { await fs.rm(temporary, { recursive: true, force: true }); }
         java = await this.findJava();

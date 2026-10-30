@@ -1,5 +1,13 @@
 # AEM
 
+AEM is a personal software distribution store with a Windows desktop application and an integrated local Android test device. The Windows expansion preserves the existing web and Android clients.
+
+- [Windows installation, Android setup, requirements and limitations](docs/windows-desktop.md)
+- [Repository assessment and architecture decisions](docs/architecture.md)
+- [Build and runtime verification evidence](docs/verification.md)
+
+For development: `npm ci`, then `npm run dev` (web), `npm run desktop:dev` (desktop), or `npm run dist:win` on Windows x64 (installer). Android runtime components are downloaded separately after license acceptance; no cloud emulator is required.
+
 AEM is a personal software distribution store. It uses GitHub as its source provider, receives published APK artifacts, stores them in its own Supabase artifact storage, and distributes releases through the shared web + Android clients.
 
 Core pipeline: GitHub source -> published artifact -> AEM ingestion -> validation -> publication -> install/update.
