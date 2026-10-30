@@ -1,6 +1,9 @@
 name: Windows host capability probe
 on:
   workflow_dispatch:
+  push:
+    branches: [arena/32bd333b-aem]
+    paths: [.github/workflows/windows-host-probe.yml]
 permissions:
   contents: read
 jobs:
