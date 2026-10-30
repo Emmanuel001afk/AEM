@@ -1,0 +1,74 @@
+import { test, expect, _electron as electron } from "@playwright/test";
+import type { ElectronApplication, Page } from "@playwright/test";
+import AxeBuilder from "@axe-core/playwright";
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+
+let application: ElectronApplication, page: Page, root: string;
+test.beforeEach(async () => {
+  root = await fs.mkdtemp(path.join(os.tmpdir(), "aem-desktop-test-"));
+  const executablePath = process.env.AEM_TEST_EXECUTABLE;
+  application = await electron.launch({ executablePath: executablePath || undefined, args: executablePath ? ["--disable-gpu"] : [".", "--disable-gpu"], env: { ...process.env, AEM_RUNTIME_ROOT: root, AEM_DEV_SERVER: "" } });
+  page = await application.firstWindow();
+  await page.route("https://*.supabase.co/**", async (route) => {
+    const url = new URL(route.request().url());
+    let body: unknown = [];
+    if (url.pathname.endsWith("/applications")) body = [{ id: 1, provider: "github", project: "example/phormi", package_identity: "com.example.phormi", name: "Phormi", description: "A browser for testing.", source_url: "https://github.com/example/phormi", platforms: ["android"], category: "Browsers", functionality: ["Web browsing"], screenshots: [], permissions: ["Internet"], releases: [{ id: 10, version_name: "2.0", version_code: 2, channel: "stable", status: "published", title: "Phormi 2", published_at: "2026-10-01T00:00:00Z", source_release_id: "r2", artifacts: [{ id: 100, platform: "android", kind: "apk", filename: "phormi.apk", download_url: "https://wfvvmyixqcwosmuldxoq.supabase.co/storage/v1/object/public/aem-artifacts/phormi.apk", size_bytes: 2048, sha256: "a".repeat(64), package_identity: "com.example.phormi", signing_certificate_sha256: "b".repeat(64), version_code: 2, signing_status: "ready" }] }] }];
+    await route.fulfill({ status: 200, contentType: "application/json", headers: { "access-control-allow-origin": "*", "access-control-allow-headers": "*" }, body: JSON.stringify(body) });
+  });
+  await page.getByRole("button", { name: "Refresh catalog", exact: true }).or(page.locator('header button').first()).first().click();
+  await expect(page.getByRole("heading", { name: "Phormi", exact: true })).toBeVisible();
+});
+test.afterEach(async () => { await application?.close(); if (root) await fs.rm(root, { recursive: true, force: true }); });
+
+test("installed Windows identity, existing discovery, filters and app details work", async () => {
+  await expect(page).toHaveTitle("AEM Software Store");
+  const info = await page.evaluate(() => window.aemDesktop!.getAppInfo());
+  expect(info.platform).toBe("win32"); expect(info.arch).toBe("x64");
+  if (process.env.AEM_TEST_EXECUTABLE) expect(info.packaged).toBe(true);
+  await page.getByRole("textbox", { name: "Search applications" }).fill("not-present");
+  await expect(page.getByRole("heading", { name: "Phormi", exact: true })).toHaveCount(0);
+  await page.getByRole("textbox", { name: "Search applications" }).fill("browser");
+  await page.getByRole("heading", { name: "Phormi", exact: true }).click();
+  await expect(page.getByText("com.example.phormi", { exact: false })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Permissions", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "← Back to Apps" }).click();
+  await page.getByRole("button", { name: "Updates", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Available releases" })).toBeVisible();
+});
+test("Android is an honest integrated runtime, not a placeholder device", async () => {
+  await page.getByRole("button", { name: "Emulator", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "AEM Android", exact: true })).toBeVisible();
+  await expect(page.getByText("SETUP REQUIRED", { exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Start Android", exact: true })).toBeDisabled();
+  const download = page.getByRole("button", { name: "Download & install Android" });
+  await expect(download).toBeDisabled();
+  await page.getByRole("checkbox", { name: /I accept the Android SDK license/ }).check();
+  await expect(download).toBeEnabled(); // Consent is tested; CI's runtime verifier performs the actual large download.
+  for (const tab of ["Applications", "Permissions", "Files", "Diagnostics"]) {
+    await page.getByRole("tab", { name: tab, exact: true }).click();
+    await expect(page.getByRole("tabpanel")).toBeVisible();
+  }
+  await expect(page.getByRole("button", { name: "Run checks", exact: true })).toBeEnabled();
+  await page.getByRole("button", { name: "Run checks", exact: true }).click();
+  await expect(page.getByText("CPU virtualization", { exact: true })).toBeVisible();
+  await page.screenshot({ path: test.info().outputPath("aem-android-diagnostics.png"), fullPage: true });
+});
+test("renderer is sandboxed and the native bridge rejects non-HTTPS external links", async () => {
+  const isolation = await page.evaluate(() => ({ nodeRequire: typeof (window as any).require, nodeProcess: typeof (window as any).process, bridge: typeof window.aemDesktop?.getState }));
+  expect(isolation).toEqual({ nodeRequire: "undefined", nodeProcess: "undefined", bridge: "function" });
+  await expect(page.evaluate(() => window.aemDesktop!.openExternal("javascript:alert(1)"))).rejects.toThrow(/HTTPS/);
+  const traversal = await page.evaluate(async () => (await fetch("aem://store/%2e%2e%2fpackage.json")).status);
+  expect([400, 403, 404]).toContain(traversal);
+  await page.goto("https://example.com").catch(() => {});
+  expect(new URL(page.url()).origin).toBe("aem://store");
+});
+test("new Android interface has no serious accessibility violations", async () => {
+  await page.getByRole("button", { name: "Emulator", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "AEM Android", exact: true })).toBeVisible();
+  const results = await new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa", "wcag21aa"]).analyze();
+  const serious = results.violations.filter((v) => ["serious", "critical"].includes(v.impact || ""));
+  await test.info().attach("accessibility", { body: JSON.stringify(serious, null, 2), contentType: "application/json" });
+  expect(serious).toEqual([]);
+});

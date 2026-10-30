@@ -1,7 +1,16 @@
+
 node_modules/
 dist/
+desktop-dist/
+mobile-dist/
+release/
+artifacts/
+test-results/
+playwright-report/
+.aem-runtime/
 .gradle/
 build/
 local.properties
 *.iml
 .idea/
+*.partial

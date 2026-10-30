@@ -1,0 +1,43 @@
+appId: com.aem.store.desktop
+productName: AEM Store
+copyright: Copyright © 2026 AEM
+asar: true
+npmRebuild: false
+directories:
+  output: release
+  buildResources: desktop/assets
+files:
+  - desktop/**/*
+  - desktop-dist/**/*
+  - package.json
+  - "!**/*.map"
+extraMetadata:
+  main: desktop/main.mjs
+  productName: AEM Store
+publish:
+  provider: github
+  owner: Emmanuel001afk
+  repo: AEM
+  releaseType: draft
+win:
+  executableName: AEM Store
+  icon: desktop/assets/icon.ico
+  target:
+    - target: nsis
+      arch: [x64]
+  artifactName: AEM-Store-${version}-windows-${arch}-Setup.${ext}
+  # Release signing is opt-in through electron-builder's CSC_* environment.
+  # Never substitute a self-signed certificate for a public trust identity.
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  allowElevation: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: AEM Store
+  menuCategory: AEM
+  deleteAppDataOnUninstall: false
+  uninstallDisplayName: AEM Store
+  include: desktop/installer.nsh
+artifactBuildCompleted: desktop/verify-artifact.cjs
