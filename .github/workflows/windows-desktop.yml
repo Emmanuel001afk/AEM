@@ -110,11 +110,17 @@ jobs:
           try {
             $process = Start-Process -FilePath $env:AEM_TEST_EXECUTABLE -PassThru -RedirectStandardOutput test-results/startup-out.txt -RedirectStandardError test-results/startup-err.txt
             $deadline = (Get-Date).AddSeconds(30)
-            do { Start-Sleep -Milliseconds 500; $process.Refresh(); if ($process.HasExited) { throw "AEM exited during startup with $($process.ExitCode)" } } while (!$process.MainWindowHandle -and (Get-Date) -lt $deadline)
-            if (!$process.MainWindowHandle) { throw 'AEM did not create a startup window.' }
-            Write-Host "Startup window: $($process.MainWindowTitle)"
-            if ($process.MainWindowTitle -ne 'AEM Store') { throw "Unexpected startup window: $($process.MainWindowTitle)" }
-            @{ passed = $true; title = $process.MainWindowTitle; pid = $process.Id } | ConvertTo-Json | Set-Content test-results/startup.json
+            do {
+              Start-Sleep -Milliseconds 500
+              $windows = @(Get-Process -Name 'AEM Store' -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowHandle -ne 0 })
+              if ($windows.Count -gt 0) { break }
+              $process.Refresh(); if ($process.HasExited -and @(Get-Process -Name 'AEM Store' -ErrorAction SilentlyContinue).Count -eq 0) { throw "AEM exited during startup with $($process.ExitCode)" }
+            } while ((Get-Date) -lt $deadline)
+            if ($windows.Count -eq 0) { throw 'AEM did not create a startup window.' }
+            $title = $windows[0].MainWindowTitle
+            Write-Host "Startup window: $title"
+            if ($title -ne 'AEM Store') { throw "Unexpected startup window: $title" }
+            @{ passed = $true; title = $title; pid = $process.Id; windowPids = @($windows | ForEach-Object { $_.Id }) } | ConvertTo-Json | Set-Content test-results/startup.json
           } catch {
             $_ | Out-String | Set-Content test-results/startup-error.txt
             Get-Process -Name 'AEM Store' -ErrorAction SilentlyContinue | Select-Object Id,MainWindowTitle,Responding | ConvertTo-Json | Add-Content test-results/startup-error.txt
