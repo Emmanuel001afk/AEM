@@ -1,20 +1,7 @@
 name: AEM Desktop — Windows Build
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - "electron/**"
-      - "src/**"
-      - "resources/**"
-      - "scripts/**"
-      - "package.json"
-      - "package-lock.json"
-      - "vite.config.ts"
-      - ".github/workflows/aem-desktop.yml"
-  pull_request:
-    branches: [main]
-  workflow_dispatch:
+  workflow_call:
 
 concurrency:
   group: aem-desktop-${{ github.ref }}
@@ -37,7 +24,6 @@ jobs:
   build-win:
     runs-on: windows-latest
     needs: verify
-    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
