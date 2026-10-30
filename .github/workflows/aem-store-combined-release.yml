@@ -1,0 +1,74 @@
+name: AEM Store Combined Release
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: aem-store-combined-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  android:
+    name: Build and sign Android APK
+    uses: ./.github/workflows/aem-android-final.yml
+    secrets: inherit
+
+  windows:
+    name: Build and verify Windows EXEs
+    uses: ./.github/workflows/aem-desktop.yml
+    secrets: inherit
+
+  verify-and-package:
+    name: Verify both platforms and package release artifacts
+    runs-on: ubuntu-latest
+    needs: [android, windows]
+    steps:
+      - name: Download APK and Windows outputs from this run
+        uses: actions/download-artifact@v4
+        with:
+          pattern: aem-store-*
+          path: release
+          merge-multiple: true
+
+      - name: Verify all required deliverables
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s release/app-release.apk || { echo "Missing or empty signed Android APK"; exit 1; }
+          apk_size="$(stat -c '%s' release/app-release.apk)"
+          if [ "$apk_size" -lt 1000000 ]; then
+            echo "APK is unexpectedly small: $apk_size bytes"
+            exit 1
+          fi
+
+          mapfile -t exes < <(find release -maxdepth 1 -type f -name '*.exe' -size +9999999c | sort)
+          if [ "${#exes[@]}" -lt 2 ]; then
+            echo "Expected genuine Windows Setup and Portable EXE files (at least 10 MB each)."
+            find release -maxdepth 1 -type f -printf '%f (%s bytes)\n' | sort
+            exit 1
+          fi
+
+          echo "Verified APK: release/app-release.apk ($apk_size bytes)"
+          for exe in "${exes[@]}"; do
+            echo "Verified Windows executable: $exe ($(stat -c '%s' "$exe") bytes)"
+          done
+          (
+            cd release
+            sha256sum app-release.apk *.exe | tee SHA256SUMS.txt
+          )
+
+      - name: Upload unified APK and EXE release bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: aem-store-complete-release
+          path: release/**
+          if-no-files-found: error
+          retention-days: 30

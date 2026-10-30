@@ -2,9 +2,7 @@ name: AEM Store Android APK Final
 # Rebuild after native Android compile fix
 
 on:
-  push:
-    branches: [main]
-  workflow_dispatch:
+  workflow_call:
 
 concurrency:
   group: aem-store-android-build

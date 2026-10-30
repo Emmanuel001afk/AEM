@@ -2,7 +2,7 @@ name: AEM Store Self Publish V2
 
 on:
   workflow_run:
-    workflows: ["AEM Store Android APK Final"]
+    workflows: ["AEM Store Combined Release"]
     types: [completed]
 
 permissions:
@@ -15,7 +15,7 @@ concurrency:
 
 jobs:
   publish:
-    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    if: ${{ github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main' && github.event.workflow_run.event != 'pull_request' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
