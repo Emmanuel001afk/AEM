@@ -49,6 +49,7 @@ jobs:
         env:
           AEM_RUNTIME_ROOT: ${{ runner.temp }}\aem-runtime-verification
           PYTHON: python
+          AEM_PRIVATE_JAVA: "1"
       - name: Upload actual runtime evidence or failure diagnostics
         if: always()
         uses: actions/upload-artifact@v4

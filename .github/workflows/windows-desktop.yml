@@ -25,22 +25,7 @@ on:
       - .github/workflows/windows-desktop.yml
   workflow_dispatch:
     inputs:
-          - name: Publish readable Windows verification evidence
-        if: always()
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const fs = require('node:fs');
-            const file = 'test-results/results.json';
-            const report = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')) : null;
-            const errors = [];
-            const visit = suite => { for (const spec of suite.specs || []) for (const test of spec.tests || []) for (const result of test.results || []) if (result.error) errors.push(`${spec.title}: ${result.error.message}`); for (const child of suite.suites || []) visit(child); };
-            if (report) for (const suite of report.suites || []) visit(suite);
-            const artifacts = fs.existsSync('release') ? fs.readdirSync('release').filter(f => f.endsWith('.verification.json')).map(f => JSON.parse(fs.readFileSync(`release/${f}`, 'utf8'))) : [];
-            const success = report?.stats?.unexpected === 0 && report?.stats?.expected > 0 && artifacts.length > 0;
-            const summary = `## Installed Windows application verification\n\nResult: **${success ? 'PASS' : 'FAIL'}**\n\n${JSON.stringify(report?.stats || {}, null, 2)}\n\n\`\`\`json\n${JSON.stringify(artifacts, null, 2)}\n\`\`\`\n\n${errors.map(e => `- ${e.replace(/\u001b\[[0-9;]*m/g, '')}`).join('\n')}`.slice(0, 64000);
-            await github.rest.checks.create({ owner: context.repo.owner, repo: context.repo.repo, name: 'Windows installation evidence', head_sha: context.sha, status: 'completed', conclusion: success ? 'success' : 'failure', output: { title: 'Installer, startup, store, bridge and accessibility checks', summary } });
-  publish_draft:
+      publish_draft:
         description: Publish a draft GitHub release (main only)
         type: boolean
         default: false
@@ -88,6 +73,18 @@ jobs:
           "AEM_INSTALLER=$($installer.FullName)" | Out-File $env:GITHUB_ENV -Append utf8
         env:
           WINDOWS_CSC_LINK: ${{ secrets.WINDOWS_CSC_LINK }}
+      - name: Upload Windows installer and update feed
+        uses: actions/upload-artifact@v4
+        with:
+          name: aem-store-windows-installer
+          path: |
+            release/*Setup.exe
+            release/*Setup.exe.blockmap
+            release/*Setup.exe.verification.json
+            release/latest.yml
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0
       - name: Install silently as the current user
         shell: pwsh
         run: |
@@ -106,18 +103,6 @@ jobs:
           $version | Format-List
       - name: Test the installed application, store and Android UI
         run: npm run test:desktop
-      - name: Upload Windows installer and update feed
-        uses: actions/upload-artifact@v4
-        with:
-          name: aem-store-windows-installer
-          path: |
-            release/*Setup.exe
-            release/*Setup.exe.blockmap
-            release/*Setup.exe.verification.json
-            release/latest.yml
-          if-no-files-found: error
-          retention-days: 30
-          compression-level: 0
       - name: Upload Windows UI verification evidence
         if: always()
         uses: actions/upload-artifact@v4

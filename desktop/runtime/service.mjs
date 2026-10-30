@@ -27,6 +27,7 @@ export class AndroidRuntime extends EventEmitter {
     this.lockFile = path.join(this.root, "session.json");
     this.platform = options.platform || process.platform;
     this.arch = options.arch || process.arch;
+    this.preferPrivateJava = options.preferPrivateJava ?? process.env.AEM_PRIVATE_JAVA === "1";
     this.child = null;
     this.serial = null;
     this.operation = null;
@@ -60,8 +61,8 @@ export class AndroidRuntime extends EventEmitter {
     const paths = {
       emulator: path.join(this.sdkRoot, "emulator", `emulator${ext}`),
       adb: path.join(this.sdkRoot, "platform-tools", `adb${ext}`),
-      aapt: path.join(this.sdkRoot, "build-tools", "35.0.2", `aapt${ext}`),
-      apksignerJar: path.join(this.sdkRoot, "build-tools", "35.0.2", "lib", "apksigner.jar"),
+      aapt: path.join(this.sdkRoot, "build-tools", "35.0.1", `aapt${ext}`),
+      apksignerJar: path.join(this.sdkRoot, "build-tools", "35.0.1", "lib", "apksigner.jar"),
     };
     if (!paths[kind]) throw new Error(`Unknown runtime tool: ${kind}`);
     return paths[kind];
@@ -75,6 +76,7 @@ export class AndroidRuntime extends EventEmitter {
     const ext = this.platform === "win32" ? ".exe" : "";
     const privateJava = path.join(this.root, "java", "bin", `java${ext}`);
     if (await exists(privateJava)) return privateJava;
+    if (this.preferPrivateJava) return null;
     for (const home of [process.env.AEM_JAVA_HOME, process.env.JAVA_HOME, process.env.LOCALAPPDATA && path.join(process.env.LOCALAPPDATA, "Programs", "Android Studio", "jbr"), this.platform === "win32" && "C:\\Program Files\\Android\\Android Studio\\jbr"]) {
       if (home && await exists(path.join(home, "bin", `java${ext}`))) return path.join(home, "bin", `java${ext}`);
     }

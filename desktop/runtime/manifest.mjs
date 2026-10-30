@@ -4,10 +4,10 @@ export const RUNTIME = Object.freeze({
   avdName: "AEM_Phone",
   image: "system-images;android-35;google_apis;x86_64",
   packages: Object.freeze([
-    "platform-tools;35.0.2",
+    "platform-tools;37.0.1",
     "platforms;android-35",
-    "build-tools;35.0.2",
-    "emulator;36.1.9",
+    "build-tools;35.0.1",
+    "emulator;37.2.12",
     "system-images;android-35;google_apis;x86_64",
   ]),
   commandLineTools: Object.freeze({

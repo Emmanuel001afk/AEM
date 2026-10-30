@@ -17,14 +17,14 @@ output = Path(args.output).resolve()
 root = Path(__file__).resolve().parents[1]
 fixture = root / 'tests/fixtures/android'
 ext = '.exe' if os.name == 'nt' else ''
-tools = sdk / 'build-tools/35.0.2'
+tools = sdk / 'build-tools/35.0.1'
 jar = sdk / 'platforms/android-35/android.jar'
 java_home = os.environ.get('JAVA_HOME')
 java = Path(java_home) / 'bin' / ('java' + ext) if java_home else shutil.which('java')
 javac = Path(java_home) / 'bin' / ('javac' + ext) if java_home else shutil.which('javac')
 keytool = Path(java_home) / 'bin' / ('keytool' + ext) if java_home else shutil.which('keytool')
 if not all([java, javac, keytool, jar.exists(), (tools / ('aapt2' + ext)).exists()]):
-    raise SystemExit('A JDK, platforms;android-35 and build-tools;35.0.2 are required to build the test APK.')
+    raise SystemExit('A JDK, platforms;android-35 and build-tools;35.0.1 are required to build the test APK.')
 output.parent.mkdir(parents=True, exist_ok=True)
 with tempfile.TemporaryDirectory(prefix='aem-probe-') as temporary:
     temp = Path(temporary)
