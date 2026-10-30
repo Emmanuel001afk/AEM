@@ -71,7 +71,8 @@ jobs:
             const fs = require('node:fs'); const path = require('node:path');
             const root = path.join(process.env.RUNNER_TEMP, 'aem-runtime-verification');
             const file = path.join(root, 'verification-report.json');
-            const report = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')) : { success: false, error: 'Verifier did not produce a report.' };
+            const raw = fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : '';
+            let report; try { report = raw ? JSON.parse(raw) : { success: false, error: 'Verifier did not produce a report.' }; } catch (error) { report = { success: false, error: `Report was not valid JSON: ${error.message}`, rawReport: raw.slice(0, 4000) }; }
             const tail = (name) => { const p = path.join(root, name); return fs.existsSync(p) ? `\n\n### ${name}\n\`\`\`\n${fs.readFileSync(p, 'utf8').slice(-6000)}\n\`\`\`` : ''; };
             const summary = `## Real Android runtime verification\n\nResult: **${report.success ? 'PASS' : 'FAIL'}**\n\n${(report.checks || []).map(c => `- ${c.passed ? 'PASS' : 'FAIL'}: ${c.name}`).join('\n')}\n\n\`\`\`json\n${JSON.stringify(report, null, 2).slice(0, 40000)}\n\`\`\`${report.success ? '' : tail('logs/emulator.log') + tail('logs/runtime.log') + tail('logs/adb.log') + tail('runtime-lock.json')}`;
             await github.rest.checks.create({ owner: context.repo.owner, repo: context.repo.repo, name: 'Android runtime evidence', head_sha: context.sha, status: 'completed', conclusion: report.success ? 'success' : 'failure', output: { title: report.success ? 'Android boot, APK, permissions, network and storage passed' : 'Android runtime verification failed', summary } });

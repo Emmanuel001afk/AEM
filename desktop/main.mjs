@@ -146,6 +146,8 @@ async function createWindow() {
   window.webContents.on("will-navigate", (event, url) => { const origin = new URL(url).origin; if (origin !== APP_ORIGIN && origin !== devUrl) event.preventDefault(); });
   window.webContents.on("will-attach-webview", (event) => event.preventDefault());
   window.on("page-title-updated", (event) => event.preventDefault());
+  // Some Windows CI sessions only enumerate Electron targets after DevTools is opened.
+  if (process.env.AEM_E2E === "1") window.webContents.once("did-finish-load", () => window.webContents.openDevTools({ mode: "detach" }));
   window.once("ready-to-show", () => window.show());
   window.on("closed", () => { window = null; });
   await window.loadURL(devUrl || `${APP_ORIGIN}/index.html`);

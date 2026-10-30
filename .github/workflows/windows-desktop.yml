@@ -106,13 +106,22 @@ jobs:
       - name: Verify normal installed startup before UI automation
         shell: pwsh
         run: |
-          $process = Start-Process -FilePath $env:AEM_TEST_EXECUTABLE -PassThru
-          $deadline = (Get-Date).AddSeconds(30)
-          do { Start-Sleep -Milliseconds 500; $process.Refresh(); if ($process.HasExited) { throw "AEM exited during startup with $($process.ExitCode)" } } while (!$process.MainWindowHandle -and (Get-Date) -lt $deadline)
-          if (!$process.MainWindowHandle) { throw 'AEM did not create a startup window.' }
-          Write-Host "Startup window: $($process.MainWindowTitle)"
-          if ($process.MainWindowTitle -ne 'AEM Store') { throw "Unexpected startup window: $($process.MainWindowTitle)" }
-          Get-Process -Name 'AEM Store' -ErrorAction SilentlyContinue | Stop-Process -Force
+          New-Item -ItemType Directory -Force test-results | Out-Null
+          try {
+            $process = Start-Process -FilePath $env:AEM_TEST_EXECUTABLE -PassThru
+            $deadline = (Get-Date).AddSeconds(30)
+            do { Start-Sleep -Milliseconds 500; $process.Refresh(); if ($process.HasExited) { throw "AEM exited during startup with $($process.ExitCode)" } } while (!$process.MainWindowHandle -and (Get-Date) -lt $deadline)
+            if (!$process.MainWindowHandle) { throw 'AEM did not create a startup window.' }
+            Write-Host "Startup window: $($process.MainWindowTitle)"
+            if ($process.MainWindowTitle -ne 'AEM Store') { throw "Unexpected startup window: $($process.MainWindowTitle)" }
+            @{ passed = $true; title = $process.MainWindowTitle; pid = $process.Id } | ConvertTo-Json | Set-Content test-results/startup.json
+          } catch {
+            $_ | Out-String | Set-Content test-results/startup-error.txt
+            Get-Process -Name 'AEM Store' -ErrorAction SilentlyContinue | Select-Object Id,MainWindowTitle,Responding | ConvertTo-Json | Add-Content test-results/startup-error.txt
+            throw
+          } finally {
+            Get-Process -Name 'AEM Store' -ErrorAction SilentlyContinue | Stop-Process -Force
+          }
       - name: Test the installed application, store and Android UI
         run: npm run test:desktop
       - name: Upload Windows UI verification evidence
@@ -152,8 +161,10 @@ jobs:
             const visit = suite => { for (const spec of suite.specs || []) for (const test of spec.tests || []) for (const result of test.results || []) if (result.error) errors.push(`${spec.title}: ${result.error.message}\n${(result.error.stack || "").split("\n").slice(0,5).join("\n")}`); for (const child of suite.suites || []) visit(child); };
             if (report) for (const suite of report.suites || []) visit(suite);
             const artifacts = fs.existsSync('release') ? fs.readdirSync('release').filter(f => f.endsWith('.verification.json')).map(f => JSON.parse(fs.readFileSync(`release/${f}`, 'utf8'))) : [];
-            const success = report?.stats?.unexpected === 0 && report?.stats?.expected > 0 && artifacts.length > 0;
-            const summary = `## Installed Windows application verification\n\nResult: **${success ? 'PASS' : 'FAIL'}**\n\n${JSON.stringify(report?.stats || {}, null, 2)}\n\n\`\`\`json\n${JSON.stringify(artifacts, null, 2)}\n\`\`\`\n\n${errors.map(e => `- ${e.replace(/\u001b\[[0-9;]*m/g, '')}`).join('\n')}`.slice(0, 64000);
+            const startup = fs.existsSync('test-results/startup.json') ? JSON.parse(fs.readFileSync('test-results/startup.json', 'utf8')) : null;
+            const startupError = fs.existsSync('test-results/startup-error.txt') ? fs.readFileSync('test-results/startup-error.txt', 'utf8') : '';
+            const success = startup?.passed === true && report?.stats?.unexpected === 0 && report?.stats?.expected > 0 && artifacts.length > 0;
+            const summary = `## Installed Windows application verification\n\nResult: **${success ? 'PASS' : 'FAIL'}**\n\nStartup: ${startup?.passed ? 'PASS' : 'FAIL'}\n${startupError ? `\`\`\`\n${startupError.slice(0, 4000)}\n\`\`\`\n` : ''}\n${JSON.stringify(report?.stats || {}, null, 2)}\n\n\`\`\`json\n${JSON.stringify(artifacts, null, 2)}\n\`\`\`\n\n${errors.map(e => `- ${e.replace(/\u001b\[[0-9;]*m/g, '')}`).join('\n')}`.slice(0, 64000);
             await github.rest.checks.create({ owner: context.repo.owner, repo: context.repo.repo, name: 'Windows installation evidence', head_sha: context.sha, status: 'completed', conclusion: success ? 'success' : 'failure', output: { title: 'Installer, startup, store, bridge and accessibility checks', summary } });
   publish_draft:
     needs: windows
