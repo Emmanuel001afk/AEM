@@ -12,6 +12,11 @@ const APP_ORIGIN = "aem://store";
 const devUrl = !app.isPackaged && process.env.AEM_DEV_SERVER === "http://127.0.0.1:5173" ? process.env.AEM_DEV_SERVER : null;
 app.setName("AEM Store");
 app.setAppUserModelId("com.aem.store.desktop");
+// Explicit E2E-only Chromium debugging transport; normal installed startup never enables it.
+if (process.env.AEM_E2E === "1") {
+  app.commandLine.appendSwitch("remote-debugging-port", "0");
+  app.commandLine.appendSwitch("remote-allow-origins", "*");
+}
 protocol.registerSchemesAsPrivileged([{ scheme: "aem", privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true } }]);
 
 let window = null, runtime = null, quitting = false, updateCheck = false;
@@ -167,7 +172,7 @@ else {
     autoUpdater.autoInstallOnAppQuit = true;
     autoUpdater.logger = { info: (message) => runtime.log(String(message)), warn: (message) => runtime.log(String(message)), error: (message) => runtime.log(String(message)), debug: () => {} };
     registerBridge(); createMenu(); await createWindow();
-  }).catch((error) => { dialog.showErrorBox("AEM Store could not start", error.stack || error.message); app.quit(); });
+  }).catch((error) => { console.error("AEM Store startup failed", error); dialog.showErrorBox("AEM Store could not start", error.stack || error.message); app.quit(); });
   app.on("window-all-closed", () => app.quit());
   app.on("before-quit", (event) => {
     if (quitting) return;

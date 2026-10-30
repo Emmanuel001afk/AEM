@@ -103,6 +103,16 @@ jobs:
           $version | Format-List
           # The test harness must own the single-instance application process.
           Get-Process -Name 'AEM Store' -ErrorAction SilentlyContinue | Stop-Process -Force
+      - name: Verify normal installed startup before UI automation
+        shell: pwsh
+        run: |
+          $process = Start-Process -FilePath $env:AEM_TEST_EXECUTABLE -PassThru
+          $deadline = (Get-Date).AddSeconds(30)
+          do { Start-Sleep -Milliseconds 500; $process.Refresh(); if ($process.HasExited) { throw "AEM exited during startup with $($process.ExitCode)" } } while (!$process.MainWindowHandle -and (Get-Date) -lt $deadline)
+          if (!$process.MainWindowHandle) { throw 'AEM did not create a startup window.' }
+          Write-Host "Startup window: $($process.MainWindowTitle)"
+          if ($process.MainWindowTitle -ne 'AEM Store') { throw "Unexpected startup window: $($process.MainWindowTitle)" }
+          Get-Process -Name 'AEM Store' -ErrorAction SilentlyContinue | Stop-Process -Force
       - name: Test the installed application, store and Android UI
         run: npm run test:desktop
       - name: Upload Windows UI verification evidence
@@ -119,6 +129,7 @@ jobs:
         if: always()
         shell: pwsh
         run: |
+          Get-Process -Name 'AEM Store' -ErrorAction SilentlyContinue | Stop-Process -Force
           if (!$env:AEM_UNINSTALLER) { Write-Host 'Installation did not complete; no uninstaller to run.'; exit 0 }
           $uninstaller = $env:AEM_UNINSTALLER.Trim('"')
           if (Test-Path $uninstaller) {

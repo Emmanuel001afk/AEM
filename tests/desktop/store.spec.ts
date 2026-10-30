@@ -9,7 +9,7 @@ let application: ElectronApplication, page: Page, root: string;
 test.beforeEach(async () => {
   root = await fs.mkdtemp(path.join(os.tmpdir(), "aem-desktop-test-"));
   const executablePath = process.env.AEM_TEST_EXECUTABLE;
-  application = await electron.launch({ timeout: 20000, executablePath: executablePath || undefined, args: executablePath ? ["--disable-gpu"] : [".", "--disable-gpu"], env: { ...process.env, AEM_RUNTIME_ROOT: root, AEM_DEV_SERVER: "" } });
+  application = await electron.launch({ timeout: 20000, executablePath: executablePath || undefined, args: executablePath ? ["--disable-gpu"] : [".", "--disable-gpu"], env: { ...process.env, AEM_RUNTIME_ROOT: root, AEM_DEV_SERVER: "", AEM_E2E: "1" } });
   page = await application.firstWindow();
   await page.route("https://*.supabase.co/**", async (route) => {
     const url = new URL(route.request().url());
