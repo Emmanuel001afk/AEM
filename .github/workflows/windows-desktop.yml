@@ -101,6 +101,8 @@ jobs:
           "AEM_TEST_EXECUTABLE=$exe" | Out-File $env:GITHUB_ENV -Append utf8
           "AEM_UNINSTALLER=$($uninstall.UninstallString)" | Out-File $env:GITHUB_ENV -Append utf8
           $version | Format-List
+          # The test harness must own the single-instance application process.
+          Get-Process -Name 'AEM Store' -ErrorAction SilentlyContinue | Stop-Process -Force
       - name: Test the installed application, store and Android UI
         run: npm run test:desktop
       - name: Upload Windows UI verification evidence

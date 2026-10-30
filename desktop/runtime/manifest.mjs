@@ -4,10 +4,12 @@ export const RUNTIME = Object.freeze({
   avdName: "AEM_Phone",
   image: "system-images;android-35;google_apis;x86_64",
   packages: Object.freeze([
-    "platform-tools;37.0.1",
+    // Google exposes these two rolling packages by their unversioned SDK IDs.
+    // Their exact installed revisions are recorded in runtime-lock.json.
+    "platform-tools",
     "platforms;android-35",
     "build-tools;35.0.1",
-    "emulator;37.2.12",
+    "emulator",
     "system-images;android-35;google_apis;x86_64",
   ]),
   commandLineTools: Object.freeze({

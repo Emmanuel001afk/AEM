@@ -69,7 +69,7 @@ export class AndroidRuntime extends EventEmitter {
   }
   async isInstalled() {
     const checks = await Promise.all(["emulator", "adb", "aapt", "apksignerJar"].map((name) => exists(this.binary(name))));
-    return checks.every(Boolean) && await exists(path.join(this.sdkRoot, RUNTIME.image.replaceAll(";", path.sep).replace("system-images" + path.sep, "system-images" + path.sep), "system.img")) && await exists(path.join(this.avdHome, "AEM_Phone.avd", "config.ini"));
+    return checks.every(Boolean) && await exists(path.join(this.sdkRoot, "system-images", "android-35", "google_apis", "x86_64", "system.img")) && await exists(path.join(this.avdHome, "AEM_Phone.avd", "config.ini"));
   }
   toolsRoot() { return path.join(this.sdkRoot, "cmdline-tools", "latest"); }
   async findJava() {
@@ -352,6 +352,7 @@ export class AndroidRuntime extends EventEmitter {
     const url = new URL(input.url);
     if (url.protocol !== "https:" || !["wfvvmyixqcwosmuldxoq.supabase.co", "github.com", "objects.githubusercontent.com", "release-assets.githubusercontent.com"].includes(url.hostname)) throw new Error("Store APK must come from AEM artifact storage or GitHub over HTTPS.");
     assertPackage(input.packageIdentity);
+    if (!this.child || this.state.phase !== "running") throw new Error("Start Android before installing a store application.");
     if (this.operation) throw new Error(`${this.operation} is in progress. Retry the store installation when it finishes.`);
     return this.withDeviceTask("Store APK installation", async () => {
       const file = path.join(this.staging, `${randomUUID()}.apk`);

@@ -9,7 +9,7 @@ let application: ElectronApplication, page: Page, root: string;
 test.beforeEach(async () => {
   root = await fs.mkdtemp(path.join(os.tmpdir(), "aem-desktop-test-"));
   const executablePath = process.env.AEM_TEST_EXECUTABLE;
-  application = await electron.launch({ executablePath: executablePath || undefined, args: executablePath ? ["--disable-gpu"] : [".", "--disable-gpu"], env: { ...process.env, AEM_RUNTIME_ROOT: root, AEM_DEV_SERVER: "" } });
+  application = await electron.launch({ timeout: 20000, executablePath: executablePath || undefined, args: executablePath ? ["--disable-gpu"] : [".", "--disable-gpu"], env: { ...process.env, AEM_RUNTIME_ROOT: root, AEM_DEV_SERVER: "" } });
   page = await application.firstWindow();
   await page.route("https://*.supabase.co/**", async (route) => {
     const url = new URL(route.request().url());
@@ -18,8 +18,15 @@ test.beforeEach(async () => {
     await route.fulfill({ status: 200, contentType: "application/json", headers: { "access-control-allow-origin": "*", "access-control-allow-headers": "*" }, body: JSON.stringify(body) });
   });
   // Install deterministic network fixtures before the renderer's first catalog request.
+  const rendererErrors: string[] = [];
+  page.on("pageerror", (error) => rendererErrors.push(error.message));
+  page.on("console", (message) => { if (message.type() === "error") rendererErrors.push(message.text()); });
   await page.reload();
-  await expect(page.getByRole("heading", { name: "Phormi", exact: true })).toBeVisible();
+  try { await expect(page.getByRole("heading", { name: "Phormi", exact: true })).toBeVisible({ timeout: 20000 }); }
+  catch (error) {
+    const state = await page.evaluate(() => ({ url: location.href, title: document.title, text: document.body?.innerText?.slice(0, 3000), secure: window.isSecureContext, uuid: typeof crypto.randomUUID, bridge: typeof window.aemDesktop }));
+    throw new Error(`Catalog fixture did not render: ${JSON.stringify({ state, rendererErrors })}\n${error}`);
+  }
 });
 test.afterEach(async () => { await application?.close(); if (root) await fs.rm(root, { recursive: true, force: true }); });
 

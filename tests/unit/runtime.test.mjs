@@ -56,6 +56,7 @@ test("emulator requires CPU acceleration and exposes only explicit hardware opti
   const args = emulatorArgs(settings, { port: 5556 });
   assert.ok(args.includes("on")); assert.ok(args.includes("swiftshader_indirect")); assert.ok(args.includes("webcam0")); assert.ok(!args.includes("-no-audio"));
   const headless = emulatorArgs(settings, { port: 5556, headless: true }); assert.ok(headless.includes("-no-window")); assert.ok(!headless.includes("-no-accel"));
+  const mutedMic = emulatorArgs(validateSettings({ microphone: false }, { cores: 8, memoryMB: 16384 }), { port: 5556 }); assert.ok(!mutedMic.includes("-no-audio"));
 });
 test("acceleration is not considered available merely because a command ran", () => {
   assert.equal(accelerationResult({ code: 0, stdout: "accel:\n0\nWHPX(10.0.26100) is installed and usable.\naccel", stderr: "" }).available, true);

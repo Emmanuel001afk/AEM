@@ -76,7 +76,6 @@ function registerBridge() {
   handle("apps", () => runtime.listApps());
   handle("launch", (pkg) => runtime.launchApp(pkg));
   handle("uninstall", async (pkg) => {
-    runtime.constructor; // Identity is validated by the runtime before any command is run.
     if (!/^[a-zA-Z][a-zA-Z0-9_.]*$/.test(String(pkg))) throw new Error("Invalid package identity.");
     if (!await confirm(`Uninstall ${pkg}?`, "The app and its private Android data will be removed. Files in Android Downloads are retained.", "Uninstall")) return { cancelled: true };
     return runtime.uninstallApp(pkg);

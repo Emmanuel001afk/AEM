@@ -100,7 +100,7 @@ export function emulatorArgs(settings, { port, headless = false }) {
     "-gpu", settings.gpu === "software" ? "swiftshader_indirect" : settings.gpu,
     "-camera-back", settings.camera === "off" ? "none" : settings.camera, "-camera-front", "none"];
   if (headless) args.push("-no-window", "-no-audio");
-  else if (!settings.microphone) args.push("-no-audio");
+  // Microphone sharing is controlled by hw.audioInput; do not disable Android audio output with it.
   return args;
 }
 export function accelerationResult(result) {

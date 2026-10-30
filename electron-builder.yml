@@ -30,6 +30,7 @@ win:
   # Never substitute a self-signed certificate for a public trust identity.
 nsis:
   oneClick: false
+  runAfterFinish: false
   perMachine: false
   allowToChangeInstallationDirectory: true
   allowElevation: true
