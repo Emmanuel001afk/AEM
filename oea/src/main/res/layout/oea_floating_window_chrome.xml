@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/oea_root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/oea_window_background"
+    android:elevation="8dp">
+    <!-- Header: drag handle + minimize / expand / close -->
+    <LinearLayout
+        android:id="@+id/oea_header"
+        android:layout_width="match_parent"
+        android:layout_height="48dp"
+        android:background="@color/oea_window_header"
+        android:orientation="horizontal"
+        android:gravity="center_vertical">
+        <View android:id="@+id/oea_drag_handle" android:layout_width="24dp" android:layout_height="24dp" android:background="#444" />
+        <TextView android:id="@+id/oea_title" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:textColor="#FFF" android:text="OEA Floating" />
+        <ImageButton android:id="@+id/oea_minimize" android:layout_width="40dp" android:layout_height="40dp" android:contentDescription="Minimize" android:src="@android:drawable/arrow_down_float" />
+        <ImageButton android:id="@+id/oea_expand" android:layout_width="40dp" android:layout_height="40dp" android:contentDescription="Expand" android:src="@android:drawable/btn_plus" />
+        <ImageButton android:id="@+id/oea_close" android:layout_width="40dp" android:layout_height="40dp" android:contentDescription="Close" android:src="@android:drawable/ic_menu_close_clear_cancel" />
+    </LinearLayout>
+    <!-- Content: either shortcut grid or projection view -->
+    <FrameLayout android:id="@+id/oea_content" android:layout_width="match_parent" android:layout_height="match_parent" android:layout_marginTop="48dp" />
+    <!-- Stale/secure overlay -->
+    <TextView android:id="@+id/oea_stale_banner" android:layout_width="match_parent" android:layout_height="wrap_content" android:background="#AA000000" android:textColor="#FFF" android:padding="8dp" android:visibility="gone" android:text="@string/oea_stale_indicator" />
+    <!-- Resize handle -->
+    <View android:id="@+id/oea_resize_handle" android:layout_width="24dp" android:layout_height="24dp" android:layout_gravity="bottom|end" android:background="#888" />
+</FrameLayout>

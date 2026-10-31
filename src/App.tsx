@@ -159,6 +159,14 @@ export default function App(){
       <div><strong>Open AEM Transfer on your Android phone</strong><p>This screen is informative in a browser. Install or open the AEM Android app, then tap Transfer to start a real transfer.</p></div>
       <span className="transfer-pill">Transfer opens in the Android app</span>
     </div>
+    {isDesktop && <div className="transfer-note" style={{ marginTop: 12, borderStyle: 'dashed' }}>
+      <div><strong>Windows desktop: use files & emulator</strong><p>Double-click any <code>.apk/.apks/.xapk</code> to open AEM Store desktop — it forwards to the emulator for install. Drag files into the emulator window, or use <b>File → Open APK…</b>. Phone → PC without emulator: send via AEM Transfer to your phone, then USB/plug or use <em>Downloads/AEM Transfer</em> folder. A direct phone↔PC Wi-Fi transfer without emulator is planned (same Wi-Fi → local discovery).</p></div>
+      <button className="choice" onClick={()=>setTab("Emulator")}>OPEN EMULATOR</button>
+    </div>}
+    {!isDesktop && <div className="transfer-note" style={{ marginTop: 12 }}>
+      <div><strong>Why your Tecno/Infinix may not see each other</strong><p>Infinix Smart 8 (Android 13): grant <em>Nearby devices</em> when prompted. Tecno Spark 3 (Android 12 and below): swipe down → <em>Location ON</em> is mandatory for Wi-Fi Direct. One phone must show <em>Receive → Listening</em>, the other picks files then <em>Send → Nearby phones</em>. Keep &lt;1 m apart, screens on. Still empty: toggle Wi-Fi off/on on both and Scan again — XOS/HiOS can delay first discovery 5–15 s.</p></div>
+      <span className="transfer-pill">See Transfer → Troubleshoot</span>
+    </div>}
     <div className="transfer-fine"><span>Nothing is stored in Supabase.</span><span>Nothing leaves the two phones.</span><span>Leaving AEM keeps an active receive session alive.</span></div>
   </section>}
 

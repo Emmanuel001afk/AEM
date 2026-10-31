@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  OEA Floating Window Accessibility Service configuration.
+  Tied requirements:
+  - accessibilityFeedbackType: generic — observe window/content changes for live projection
+  - flags: retrieveInteractiveWindows + includeNotImportantViews + reportViewIds — needed to map target app UI nodes to projection coordinates
+  - canTakeScreenshot: true — API 30+ screenshot capture for fallback when nodes are not text-exposed (e.g., Canvas/WebView). Returns null on FLAG_SECURE.
+  - canPerformGestures: true — dispatch tap/long-press/swipe to mapped coordinates; only works on foreground or accessibility overlay per Android 13 restrictions (documented in docs/oea/00-investigation.md)
+  - packageNames: empty — monitors all, but OEA filters to user-selected target apps to preserve concept (not redesign to single-app shortcut)
+  Do NOT add canRetrieveWindowContent without need — it is required for node tree.
+-->
+<accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
+    android:accessibilityEventTypes="typeWindowStateChanged|typeWindowContentChanged|typeViewFocused|typeViewClicked"
+    android:accessibilityFlags="flagDefault|flagRetrieveInteractiveWindows|flagIncludeNotImportantViews|flagReportViewIds"
+    android:accessibilityFeedbackType="feedbackGeneric"
+    android:canPerformGestures="true"
+    android:canTakeScreenshot="true"
+    android:canRetrieveWindowContent="true"
+    android:notificationTimeout="50"
+    android:description="@string/oea_accessibility_description" />

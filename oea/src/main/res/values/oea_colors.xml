@@ -1,0 +1,5 @@
+<resources>
+    <color name="oea_window_background">#F5F1EE</color>
+    <color name="oea_window_header">#1A1A1A</color>
+    <color name="oea_accent">#E84040</color>
+</resources>

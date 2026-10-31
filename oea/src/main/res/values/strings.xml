@@ -1,0 +1,10 @@
+<resources>
+    <string name="oea_accessibility_description">OEA Floating Workspace — Enables OEA to show and interact with supported apps inside movable floating windows. Used to map taps and keystrokes from OEA’s window to the target app’s real interface. You can disable at any time in Settings &gt; Accessibility.</string>
+    <string name="oea_floating_workspace">OEA Floating</string>
+    <string name="oea_overlay_permission_rationale">OEA needs “Display over other apps” to show its floating workspace above your current app. It does not replace freeform windows — it is OEA’s own presentation layer.</string>
+    <string name="oea_notification_title">OEA Floating Workspace</string>
+    <string name="oea_notification_text">Tap to manage floating windows</string>
+    <string name="oea_stale_indicator">Paused — target app not in foreground</string>
+    <string name="oea_secure_blocked">Content hidden — app uses secure screen</string>
+    <string name="oea_unsupported_state">Not interactive — bring target app to foreground or check permissions</string>
+</resources>
