@@ -194,6 +194,19 @@ public class AemTransferActivity extends Activity {
 
     private final LinkedHashMap<String, Peer> peers = new LinkedHashMap<>();
     private Runnable peerRefreshRunnable;
+    private Runnable discoveryLoop;
+    private WifiP2pManager.PeerListListener peerListListener;
+    private static final long DISCOVERY_INTERVAL_MS = 2800L;
+    private final ArrayList<ActiveReceive> activeReceives = new ArrayList<>();
+
+    private static final class ActiveReceive {
+        String sender;
+        long total;
+        long done;
+        int count;
+        long startedAt;
+        boolean completed;
+    }
 
     private final LruCache<String, Bitmap> thumbnails = new LruCache<String, Bitmap>(32 * 1024 * 1024) {
         @Override protected int sizeOf(String key, Bitmap value) { return value.getByteCount(); }
@@ -446,6 +459,7 @@ public class AemTransferActivity extends Activity {
         sendingNow.set(false);
         connectPending = false;
         closeServer();
+        cancelDiscoveryLoop();
         localToken = null;
         remoteToken = null;
         connected = false;
@@ -1161,13 +1175,25 @@ public class AemTransferActivity extends Activity {
         card.addView(name, nameParams);
         card.addView(body("The link stays open. Add more items and send again without reconnecting."));
 
+        LinearLayout rowActions = new LinearLayout(this);
+        rowActions.setOrientation(LinearLayout.HORIZONTAL);
+        rowActions.setPadding(0, dp(10), 0, 0);
         TextView disconnect = pill("Disconnect", false, 38);
         disconnect.setOnClickListener(new View.OnClickListener() {
             @Override public void onClick(View view) { disconnectLink(); }
         });
-        LinearLayout.LayoutParams actionParams = new LinearLayout.LayoutParams(WRAP, dp(38));
-        actionParams.setMargins(0, dp(10), 0, 0);
-        card.addView(disconnect, actionParams);
+        rowActions.addView(disconnect, new LinearLayout.LayoutParams(WRAP, dp(38)));
+        TextView swap = pill("Swap & Receive", false, 38);
+        swap.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View view) { swapLinkDirection(); }
+        });
+        LinearLayout.LayoutParams swapParams = new LinearLayout.LayoutParams(WRAP, dp(38));
+        swapParams.setMargins(dp(8), 0, 0, 0);
+        rowActions.addView(swap, swapParams);
+        card.addView(rowActions, new LinearLayout.LayoutParams(MATCH, WRAP));
+        TextView hint = text("Stay connected to send more, or Swap so they can send to you without repairing.", 10.5f, muted());
+        hint.setPadding(0, dp(6), 0, 0);
+        card.addView(hint);
         addCard(card);
     }
 
@@ -1787,7 +1813,21 @@ public class AemTransferActivity extends Activity {
             }
         });
         actions.addView(primary, new LinearLayout.LayoutParams(0, dp(42), 1f));
+        if (receiving && connected) {
+            TextView swap = pill("Swap → Send", false, 42);
+            swap.setOnClickListener(new View.OnClickListener() {
+                @Override public void onClick(View view) { swapLinkDirection(); }
+            });
+            LinearLayout.LayoutParams swapParams = new LinearLayout.LayoutParams(WRAP, dp(42));
+            swapParams.setMargins(dp(8), 0, 0, 0);
+            actions.addView(swap, swapParams);
+        }
         card.addView(actions, new LinearLayout.LayoutParams(MATCH, WRAP));
+        if (receiving) {
+            TextView tip = text("Connected phone can now send to you. Use Swap so you can send back without repairing.", 10.5f, muted());
+            tip.setPadding(0, dp(6), 0, 0);
+            card.addView(tip);
+        }
         addCard(card);
 
         addDeviceCard();
@@ -1835,6 +1875,21 @@ public class AemTransferActivity extends Activity {
         addCard(card);
     }
 
+    private void showDiscoveryHelp() {
+        String msg = "Discovery checklist (Tecno Spark 3 ↔ Infinix Smart 8):\n\n"
+                + "• Both phones: Wi-Fi ON (no need to be on same Wi-Fi network).\n"
+                + "• Infinix Smart 8 (Android 13): grant Nearby devices when asked.\n"
+                + "• Tecno Spark 3 (Android 8–12): swipe down → Location ON + grant Location permission.\n"
+                + "• One phone: Transfer → Receive → Start receiving (shows Listening).\n"
+                + "• Other phone: Transfer → pick at least one file → Send → Nearby phones (wait 5–10s).\n"
+                + "• Keep phones <1 m apart, screens ON, battery saver OFF.\n"
+                + "• If still not found: turn Wi-Fi OFF→ON on both, retry. XOS/HiOS may delay 5–15s first time.\n"
+                + "• Legacy devices appear as Wi-Fi Direct device — tap Send to try even without AEM record.";
+        AlertDialog d = new AlertDialog.Builder(this).setTitle("Discovery help").setMessage(msg)
+                .setPositiveButton("OK", null).create();
+        showDialog(d);
+    }
+
     private void addRequirementCard(boolean sender) {
         boolean wifi = wifiEnabled();
         boolean location = Build.VERSION.SDK_INT >= 33 || locationEnabled();
@@ -1846,7 +1901,7 @@ public class AemTransferActivity extends Activity {
         card.addView(title, titleParams);
         card.addView(body(!wifi
                 ? "Wi-Fi Direct uses Wi-Fi to build the direct link. Turn Wi-Fi on, then try again."
-                : "Android below 13 requires Location mode for Wi-Fi Direct discovery. Turn it on, then try again."));
+                : "Android below 13 requires Location to be ON for Wi-Fi Direct discovery (Tecno/Infinix: swipe down → Location). Turn it on, then try again. On Infinix Smart 8 (Android 13) this is not needed — only Nearby permission."));
 
         TextView action = pill(!wifi ? "Open Wi-Fi settings" : "Open location settings", true, 42);
         action.setOnClickListener(new View.OnClickListener() {
@@ -1926,6 +1981,22 @@ public class AemTransferActivity extends Activity {
         radarCard.addView(status, new LinearLayout.LayoutParams(MATCH, WRAP));
         addCard(radarCard);
 
+        if (selected.isEmpty()) {
+            LinearLayout hint = card();
+            hint.setBackground(rounded(withAlpha(warning(), 16), 14, withAlpha(warning(), 80)));
+            hint.setPadding(dp(14), dp(10), dp(14), dp(10));
+            hint.addView(eyebrow("Pick files first"));
+            hint.addView(body("You can scan now to test visibility, but pick apps/photos/files on Transfer before tapping Send on a phone."));
+            hint.addView(spacer(4));
+            TextView go = pill("Go to Transfer", false, 36);
+            go.setOnClickListener(new View.OnClickListener() {
+                @Override public void onClick(View view) { nearby = false; scanning = false; stopDiscovery(); render(); }
+            });
+            LinearLayout.LayoutParams goParams = new LinearLayout.LayoutParams(WRAP, dp(36));
+            goParams.setMargins(0, dp(6), 0, 0);
+            hint.addView(go, goParams);
+            addCard(hint);
+        }
         if (peers.isEmpty()) {
             LinearLayout waiting = card();
             waiting.addView(eyebrow("No phones yet"));
@@ -1933,7 +2004,7 @@ public class AemTransferActivity extends Activity {
             LinearLayout.LayoutParams titleParams = new LinearLayout.LayoutParams(MATCH, WRAP);
             titleParams.setMargins(0, dp(6), 0, dp(6));
             waiting.addView(title, titleParams);
-            waiting.addView(body("On the other phone, open AEM → Transfer → Receive → Start receiving. Then tap Scan again here."));
+            waiting.addView(body("On the other phone, open AEM → Transfer → Receive → Start receiving. Keep both phones <1 meter apart, screens on, and Wi-Fi ON.\n\nStill nothing? On Tecno Spark 3 (Android 8–12) swipe down → Location ON is mandatory. On Infinix Smart 8 (Android 13) grant Nearby devices when asked. Then tap Scan again here."));
             TextView retry = pill("Scan again", true, 42);
             retry.setOnClickListener(new View.OnClickListener() {
                 @Override public void onClick(View view) { startSendFlow(); }
@@ -1941,6 +2012,11 @@ public class AemTransferActivity extends Activity {
             LinearLayout.LayoutParams retryParams = new LinearLayout.LayoutParams(MATCH, dp(42));
             retryParams.setMargins(0, dp(12), 0, 0);
             waiting.addView(retry, retryParams);
+            TextView diag = link("Troubleshoot discovery");
+            diag.setOnClickListener(new View.OnClickListener() {
+                @Override public void onClick(View view) { showDiscoveryHelp(); }
+            });
+            waiting.addView(diag, new LinearLayout.LayoutParams(WRAP, WRAP));
             addCard(waiting);
         } else {
             addSectionLabel(peers.size() == 1 ? "1 phone found" : peers.size() + " phones found");
@@ -1980,7 +2056,8 @@ public class AemTransferActivity extends Activity {
         TextView name = text(peer.name, 14.5f, ink());
         name.setTypeface(bold());
         texts.addView(name);
-        TextView meta = text(peer.compatible ? "AEM Transfer · ready" : "Needs a matching AEM version", 10.5f, peer.compatible ? success() : warning());
+        boolean isFallback = peer.token == null || peer.token.isEmpty();
+        TextView meta = text(isFallback ? "Wi-Fi Direct device · tap to try (no AEM record yet)" : (peer.compatible ? "AEM Transfer · ready" : "Needs a matching AEM version"), 10.5f, isFallback ? warning() : (peer.compatible ? success() : warning()));
         texts.addView(meta);
         row.addView(texts, new LinearLayout.LayoutParams(0, WRAP, 1f));
 
@@ -1993,6 +2070,11 @@ public class AemTransferActivity extends Activity {
         row.addView(send, new LinearLayout.LayoutParams(WRAP, dp(36)));
 
         card.addView(row, new LinearLayout.LayoutParams(MATCH, WRAP));
+        if (isFallback) {
+            TextView hint = text("This phone appeared via Wi-Fi Direct but AEM hasn't seen its transfer record yet. Make sure the other phone shows Receive → Listening, then Scan again.", 10.5f, secondary());
+            hint.setPadding(0, dp(8), 0, 0);
+            card.addView(hint);
+        }
         return card;
     }
 
@@ -2089,17 +2171,60 @@ public class AemTransferActivity extends Activity {
         head.addView(refresh, new LinearLayout.LayoutParams(WRAP, WRAP));
         addCard(head);
 
-        if (files.isEmpty()) {
-            addEmptyState("↓", "Nothing received yet", "Files sent to this phone from AEM Transfer will appear here, ready to open, install or share.");
-            return;
+        // Active receives: show in-progress/resumable transfers with progress bar
+        if (!activeReceives.isEmpty() || receiving) {
+            for (int i = 0; i < activeReceives.size(); i++) {
+                ActiveReceive a = activeReceives.get(i);
+                addCard(activeReceiveCard(a));
+            }
+            if (activeReceives.isEmpty() && receiving && incomingBusy.get() == false) {
+                // Show waiting state when in receive mode but no active transfer yet
+                LinearLayout waiting = card();
+                waiting.setBackground(rounded(withAlpha(success(), 12), 16, withAlpha(success(), 60)));
+                waiting.addView(eyebrow("Receiving active"));
+                waiting.addView(body("This phone is visible. Keep this screen open — incoming files will show progress here and in the banner."));
+                TextView prog = new TextView(this);
+                prog.setText("●  Listening as " + deviceName());
+                prog.setTextColor(success());
+                prog.setPadding(0, dp(6), 0, 0);
+                waiting.addView(prog);
+                addCard(waiting);
+            }
+            // Also show resume-partials that exist on disk even if no active socket
+            ArrayList<File> resumeParts = new ArrayList<>();
+            File resumeDirFile = resumeDir();
+            if (resumeDirFile.isDirectory()) {
+                File[] r = resumeDirFile.listFiles();
+                if (r != null) {
+                    for (File f : r) if (f.getName().endsWith(".part")) resumeParts.add(f);
+                }
+            }
+            if (!resumeParts.isEmpty() && activeReceives.isEmpty()) {
+                LinearLayout resumeCard = card();
+                resumeCard.setBackground(rounded(withAlpha(warning(), 14), 16, withAlpha(warning(), 60)));
+                resumeCard.addView(eyebrow("Resume available"));
+                long totalResume = 0L;
+                for (File f : resumeParts) totalResume += f.length();
+                resumeCard.addView(body(resumeParts.size() + " partial file" + (resumeParts.size()==1?"":"s") + " · " + format(totalResume) + " kept for resume. The next transfer from the same phone will continue where it left off."));
+                addCard(resumeCard);
+            }
         }
 
-        addSectionLabel(files.size() == 1 ? "1 file" : files.size() + " files");
-        int limit = Math.min(files.size(), 200);
-        for (int index = 0; index < limit; index++) {
-            addCard(downloadCard(files.get(index)));
+        if (files.isEmpty()) {
+            if (!activeReceives.isEmpty()) {
+                // Don't show empty state when active receives exist
+            } else {
+                addEmptyState("↓", "Nothing received yet", "Files sent to this phone from AEM Transfer will appear here, ready to open, install or share.");
+                return;
+            }
+        } else {
+            addSectionLabel(files.size() == 1 ? "1 file" : files.size() + " files");
+            int limit = Math.min(files.size(), 200);
+            for (int index = 0; index < limit; index++) {
+                addCard(downloadCard(files.get(index)));
+            }
+            if (files.size() > limit) content.addView(body("Showing the 200 most recent files."));
         }
-        if (files.size() > limit) content.addView(body("Showing the 200 most recent files."));
     }
 
     private View downloadCard(final File file) {
@@ -2164,6 +2289,34 @@ public class AemTransferActivity extends Activity {
         actions.addView(delete, deleteParams);
 
         card.addView(actions, new LinearLayout.LayoutParams(MATCH, WRAP));
+        return card;
+    }
+
+    private View activeReceiveCard(final ActiveReceive a) {
+        LinearLayout card = card();
+        card.setBackground(rounded(withAlpha(accent(), 18), 16, withAlpha(accent(), 90)));
+        card.setPadding(dp(14), dp(12), dp(14), dp(12));
+        LinearLayout head = new LinearLayout(this);
+        head.setGravity(Gravity.CENTER_VERTICAL);
+        TextView dot = text("●", 10f, accent());
+        head.addView(dot);
+        TextView st = text("Receiving from " + (a.sender == null ? "nearby phone" : a.sender), 12f, accentSoft());
+        st.setTypeface(bold());
+        st.setPadding(dp(6), 0, 0, 0);
+        head.addView(st, new LinearLayout.LayoutParams(0, WRAP, 1f));
+        TextView pct = text(a.total > 0 ? (a.done * 100 / a.total) + "%" : "…", 12f, ink());
+        pct.setTypeface(bold());
+        head.addView(pct);
+        card.addView(head);
+        ProgressBar bar = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
+        bar.setMax(100);
+        bar.setProgress(a.total > 0 ? (int)(a.done * 100 / a.total) : 0);
+        bar.setProgressTintList(ColorStateList.valueOf(accent()));
+        LinearLayout.LayoutParams barParams = new LinearLayout.LayoutParams(MATCH, dp(6));
+        barParams.setMargins(0, dp(10), 0, dp(4));
+        card.addView(bar, barParams);
+        TextView detail = text(a.count + (a.count==1?" file":" files") + " · " + format(a.done) + " / " + format(a.total), 11.5f, secondary());
+        card.addView(detail);
         return card;
     }
 
@@ -2258,6 +2411,22 @@ public class AemTransferActivity extends Activity {
         p2p = (WifiP2pManager) getSystemService(WIFI_P2P_SERVICE);
         if (p2p == null) return;
         p2pChannel = p2p.initialize(this, getMainLooper(), null);
+        peerListListener = new WifiP2pManager.PeerListListener() {
+            @Override public void onPeersAvailable(android.net.wifi.p2p.WifiP2pDeviceList list) {
+                if (list == null || nearby == false) return;
+                boolean added = false;
+                for (WifiP2pDevice device : list.getDeviceList()) {
+                    if (device == null || device.deviceAddress == null) continue;
+                    if (peers.containsKey(device.deviceAddress)) continue;
+                    String name = device.deviceName;
+                    if (name == null || name.trim().isEmpty()) name = "Wi-Fi Direct device";
+                    String fallbackToken = "";
+                    peers.put(device.deviceAddress, new Peer(device.deviceAddress, name.trim(), fallbackToken, true));
+                    added = true;
+                }
+                if (added) schedulePeerRender();
+            }
+        };
         p2pReceiver = new BroadcastReceiver() {
             @Override public void onReceive(Context context, Intent intent) {
                 String action = intent == null ? null : intent.getAction();
@@ -2273,6 +2442,7 @@ public class AemTransferActivity extends Activity {
                         connectPending = false;
                         sessionActive.set(false);
                         closeServer();
+                        cancelDiscoveryLoop();
                         AemTransferService.stop(AemTransferActivity.this);
                         if (wasActive) {
                             showBanner("Wi-Fi Direct turned off", "Turn Wi-Fi back on, then start again.", TONE_WARNING, 0);
@@ -2281,12 +2451,30 @@ public class AemTransferActivity extends Activity {
                     }
                 } else if (WifiP2pManager.WIFI_P2P_CONNECTION_CHANGED_ACTION.equals(action)) {
                     requestConnectionInfo();
+                } else if (WifiP2pManager.WIFI_P2P_PEERS_CHANGED_ACTION.equals(action)) {
+                    if (p2p != null && p2pChannel != null && hasNearbyPermission()) {
+                        try { p2p.requestPeers(p2pChannel, peerListListener); } catch (Exception ignored) {}
+                    }
+                } else if (WifiP2pManager.WIFI_P2P_DISCOVERY_CHANGED_ACTION.equals(action)) {
+                    int discoveryState = intent.getIntExtra(WifiP2pManager.EXTRA_DISCOVERY_STATE, -1);
+                    if (discoveryState == WifiP2pManager.WIFI_P2P_DISCOVERY_STOPPED && scanning && nearby) {
+                        ui.postDelayed(new Runnable() {
+                            @Override public void run() {
+                                if (scanning && nearby && hasNearbyPermission()) {
+                                    try { p2p.discoverPeers(p2pChannel, noop()); } catch (Exception ignored) {}
+                                    try { p2p.discoverServices(p2pChannel, noop()); } catch (Exception ignored) {}
+                                }
+                            }
+                        }, 600L);
+                    }
                 }
             }
         };
         IntentFilter filter = new IntentFilter();
         filter.addAction(WifiP2pManager.WIFI_P2P_STATE_CHANGED_ACTION);
         filter.addAction(WifiP2pManager.WIFI_P2P_CONNECTION_CHANGED_ACTION);
+        filter.addAction(WifiP2pManager.WIFI_P2P_PEERS_CHANGED_ACTION);
+        filter.addAction(WifiP2pManager.WIFI_P2P_DISCOVERY_CHANGED_ACTION);
         if (Build.VERSION.SDK_INT >= 33) registerReceiver(p2pReceiver, filter, Context.RECEIVER_EXPORTED);
         else registerReceiver(p2pReceiver, filter);
     }
@@ -2301,11 +2489,20 @@ public class AemTransferActivity extends Activity {
     }
 
     private boolean locationEnabled() {
-        if (Build.VERSION.SDK_INT < 28) return true;
+        if (Build.VERSION.SDK_INT >= 33) return true;
         try {
             android.location.LocationManager manager =
                     (android.location.LocationManager) getSystemService(LOCATION_SERVICE);
-            return manager != null && manager.isLocationEnabled();
+            if (manager != null) {
+                try {
+                    return manager.isLocationEnabled();
+                } catch (Exception ignored) {
+                    // Fallback for older APIs: check providers enabled
+                    return manager.isProviderEnabled(android.location.LocationManager.GPS_PROVIDER)
+                            || manager.isProviderEnabled(android.location.LocationManager.NETWORK_PROVIDER);
+                }
+            }
+            return true;
         } catch (Exception error) {
             return true;
         }
@@ -2499,10 +2696,6 @@ public class AemTransferActivity extends Activity {
     // ---- discovery ---------------------------------------------------------
 
     private void startSendFlow() {
-        if (selected.isEmpty()) {
-            toast("Pick something to send first");
-            return;
-        }
         if (!hasNearbyPermission()) {
             pendingPermissionAction = "send";
             requestNearbyPermission("send");
@@ -2511,6 +2704,16 @@ public class AemTransferActivity extends Activity {
         pendingPermissionAction = null;
         if (receiving || receivePreparing) stopReceivingFlow(false);
         if (connected && activeHost != null) {
+            if (selected.isEmpty()) {
+                toast("Pick something to send first, then Send again");
+                nearby = true;
+                scanning = false;
+                render();
+                showBanner("Pick files first", "Choose apps, photos or files on the Transfer tab, then return here to send.", TONE_WARNING, 0, "Go to Transfer", new Runnable() {
+                    @Override public void run() { nearby = false; scanning = false; stopDiscovery(); render(); }
+                });
+                return;
+            }
             startSendingSelection();
             return;
         }
@@ -2523,7 +2726,12 @@ public class AemTransferActivity extends Activity {
             render();
             return;
         }
+        // Allow scanning even without selection so user can verify the other phone is visible.
+        // The actual Send is still gated in connectToPeer/startSendingSelection.
         beginDiscovery();
+        if (selected.isEmpty()) {
+            showBanner("Pick files to send", "You can scan for phones now. Pick files on the Transfer tab before tapping Send on a device.", TONE_ACCENT, 6000);
+        }
     }
 
     private void beginDiscovery() {
@@ -2570,13 +2778,24 @@ public class AemTransferActivity extends Activity {
                 @Override public void onSuccess() {
                     scanning = true;
                     showTransferBanner("Looking for nearby phones", "Both phones must stay on the Transfer screen", 0, false);
+                    scheduleDiscoveryLoop();
+                    // Also request legacy peers immediately
+                    try { p2p.requestPeers(p2pChannel, peerListListener); } catch (Exception ignored) {}
                 }
                 @Override public void onFailure(int reason) {
+                    // BUSY often means a group already exists; still try service discovery
+                    if (reason == WifiP2pManager.BUSY) {
+                        scanning = true;
+                        showTransferBanner("Looking for nearby phones", "Wi-Fi Direct busy — still scanning for AEM receivers", 0, false);
+                        scheduleDiscoveryLoop();
+                        addServiceRequest();
+                        return;
+                    }
                     scanning = false;
                     showBanner("Could not start scanning",
                             reason == WifiP2pManager.BUSY
                                     ? "Wi-Fi Direct is busy. Turn Wi-Fi off and on, then try again."
-                                    : "Android refused to start discovery (" + reason + ").",
+                                    : "Android refused to start discovery (" + reason + "). On Tecno/Infinix, toggle Wi-Fi and Location, then try again.",
                             TONE_DANGER, 0, "Try again", new Runnable() {
                                 @Override public void run() { beginDiscovery(); }
                             });
@@ -2642,6 +2861,31 @@ public class AemTransferActivity extends Activity {
         ui.postDelayed(peerRefreshRunnable, 220L);
     }
 
+    private void scheduleDiscoveryLoop() {
+        cancelDiscoveryLoop();
+        discoveryLoop = new Runnable() {
+            @Override public void run() {
+                if (!nearby || !scanning) return;
+                if (p2p != null && p2pChannel != null && hasNearbyPermission()) {
+                    try { p2p.discoverServices(p2pChannel, noop()); } catch (Exception ignored) {}
+                    if (Math.random() < 0.5) {
+                        try { p2p.discoverPeers(p2pChannel, noop()); } catch (Exception ignored) {}
+                    }
+                    try { p2p.requestPeers(p2pChannel, peerListListener); } catch (Exception ignored) {}
+                }
+                ui.postDelayed(this, DISCOVERY_INTERVAL_MS);
+            }
+        };
+        ui.postDelayed(discoveryLoop, DISCOVERY_INTERVAL_MS);
+    }
+
+    private void cancelDiscoveryLoop() {
+        if (discoveryLoop != null) {
+            ui.removeCallbacks(discoveryLoop);
+            discoveryLoop = null;
+        }
+    }
+
     private void connectToPeer(final Peer peer) {
         if (peer == null) return;
         if (!peer.compatible) {
@@ -2649,9 +2893,19 @@ public class AemTransferActivity extends Activity {
             return;
         }
         if (selected.isEmpty()) {
+            showBanner("Pick files first", "Choose at least one app, photo or file on the Transfer tab, then tap Send on " + peer.name + ".", TONE_WARNING, 6000, "Go to Transfer", new Runnable() {
+                @Override public void run() {
+                    nearby = false;
+                    scanning = false;
+                    stopDiscovery();
+                    render();
+                }
+            });
             toast("Pick something to send first");
             return;
         }
+        // Legacy fallback peer may have empty token: allow attempt, handshake will validate.
+        // Show hint if token empty.
         if (p2p == null || p2pChannel == null) {
             toast("Wi-Fi Direct is unavailable");
             return;
@@ -2707,8 +2961,47 @@ public class AemTransferActivity extends Activity {
         render();
     }
 
+    private void swapLinkDirection() {
+        // Let user reverse sender/receiver without manual disconnect + mode switch.
+        if (sendingNow.get()) {
+            toast("Wait for the current transfer to finish");
+            return;
+        }
+        if (senderRole && connected) {
+            // Was sender, become receiver
+            sessionActive.set(false);
+            sendingNow.set(false);
+            connected = false;
+            activeHost = null;
+            remoteName = null;
+            remoteToken = null;
+            ui.removeCallbacks(connectWatchdog);
+            getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+            try { if (p2p != null && p2pChannel != null) p2p.removeGroup(p2pChannel, noop()); } catch (Exception ignored) { }
+            AemTransferService.stop(this);
+            receiveMode = true;
+            senderRole = false;
+            showBanner("Switched to Receive", "Now the other phone can send to you. Tap Start receiving.", TONE_ACCENT, 5000);
+            render();
+            // Auto-start receiving for convenience
+            startReceivingFlow();
+        } else if (receiving || receiveArmed) {
+            // Was receiver, become sender
+            stopReceivingFlow(false);
+            receiveMode = false;
+            senderRole = true;
+            if (senderToken == null) senderToken = randomToken();
+            showBanner("Switched to Send", "Pick files, then scan for the other phone.", TONE_ACCENT, 5000);
+            render();
+            if (!selected.isEmpty()) beginDiscovery();
+        } else {
+            toast("Start Send or Receive first");
+        }
+    }
+
     private void stopDiscovery() {
         scanning = false;
+        cancelDiscoveryLoop();
         if (peerRefreshRunnable != null) {
             ui.removeCallbacks(peerRefreshRunnable);
             peerRefreshRunnable = null;
@@ -2779,6 +3072,16 @@ public class AemTransferActivity extends Activity {
                     connected = false;
                     AemTransferService.start(AemTransferActivity.this, "Ready to receive", "Waiting for a nearby phone");
                     showBanner("Ready to receive", "This phone is visible as " + deviceName(), TONE_SUCCESS, 5000);
+                    // Re-advertise after group creation to ensure TXT propagates (XOS needs this)
+                    try {
+                        if (localService == null) advertiseReceiver();
+                        else {
+                            // Keep existing advertisement, but ensure it's still valid after group
+                            try { p2p.removeLocalService(p2pChannel, localService, noop()); } catch (Exception ignored) {}
+                            localService = null;
+                            advertiseReceiver();
+                        }
+                    } catch (Exception ignored) {}
                     render();
                 }
                 @Override public void onFailure(int reason) {
@@ -2845,6 +3148,7 @@ public class AemTransferActivity extends Activity {
         sessionActive.set(false);
         sendingNow.set(false);
         closeServer();
+        synchronized (activeReceives) { activeReceives.clear(); }
         try { if (p2p != null && p2pChannel != null && localService != null) p2p.removeLocalService(p2pChannel, localService, noop()); } catch (Exception ignored) { }
         localService = null;
         try { if (p2p != null && p2pChannel != null) p2p.removeGroup(p2pChannel, noop()); } catch (Exception ignored) { }
@@ -3395,6 +3699,20 @@ public class AemTransferActivity extends Activity {
             final SpeedMeter meter = new SpeedMeter();
             byte[] buffer = new byte[512 * 1024];
             long paintedAt = 0L;
+            final ActiveReceive active = new ActiveReceive();
+            active.sender = senderLabel;
+            active.total = total;
+            active.done = doneBytes;
+            active.count = count;
+            active.startedAt = System.currentTimeMillis();
+            active.completed = false;
+            synchronized (activeReceives) { activeReceives.clear(); activeReceives.add(active); }
+            // Pre-populate Downloads banner if user already on that tab
+            runOnUiThread(new Runnable() {
+                @Override public void run() {
+                    if ("Downloads".equals(section)) render();
+                }
+            });
 
             runOnUiThread(new Runnable() {
                 @Override public void run() {
@@ -3431,6 +3749,7 @@ public class AemTransferActivity extends Activity {
                         fileOut.write(buffer, 0, read);
                         left -= read;
                         doneBytes += read;
+                        active.done = doneBytes;
                         long now = System.currentTimeMillis();
                         if (now - paintedAt > 150L) {
                             paintedAt = now;
@@ -3485,6 +3804,8 @@ public class AemTransferActivity extends Activity {
             completed = true;
             acceptedTransferId = id;
             acceptedHost = host;
+            active.completed = true;
+            synchronized (activeReceives) { activeReceives.remove(active); }
 
             final int doneCount = count;
             final long totalBytes = total;
@@ -3520,6 +3841,14 @@ public class AemTransferActivity extends Activity {
         } finally {
             if (locked) incomingBusy.set(false);
             closeIncomingDialog();
+            if (!completed) {
+                synchronized (activeReceives) { activeReceives.remove(active); }
+                runOnUiThread(new Runnable() {
+                    @Override public void run() {
+                        if ("Downloads".equals(section)) render();
+                    }
+                });
+            }
             if (!completed && receiving) {
                 // The link stays alive; a retry from the sender can resume from the receiver's offsets.
                 runOnUiThread(new Runnable() {

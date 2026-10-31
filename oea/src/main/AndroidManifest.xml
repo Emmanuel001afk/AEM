@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <!--
+      Every permission tied to specific requirement — no speculative declarations.
+      See docs/oea/00-investigation.md for justification.
+    -->
+    <!-- Required for OEA-managed floating workspace above current app -->
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+    <!-- Keep accessibility service alive on XOS Go; foreground notification -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <!-- Foreground notification channel -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- Detect installed supported apps for workspace shortcuts (Android 11+ package visibility) -->
+    <!-- QUERY_ALL_PACKAGES not declared — use <queries> instead for legitimate need -->
+    <queries>
+        <intent><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent>
+        <package android:name="com.whatsapp" />
+        <package android:name="com.facebook.orca" />
+        <package android:name="com.google.android.youtube" />
+    </queries>
+
+    <application android:allowBackup="true" android:supportsRtl="true">
+
+        <service
+            android:name=".multitask.OeaFloatingWindowService"
+            android:exported="false"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"
+            android:foregroundServiceType="specialUse">
+            <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE" android:value="oeaFloating" />
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data android:name="android.accessibilityservice" android:resource="@xml/oea_floating_window" />
+        </service>
+
+        <!-- No activity here — launcher hosts OEA; oea is library module -->
+
+    </application>
+</manifest>

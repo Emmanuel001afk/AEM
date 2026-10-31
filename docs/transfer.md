@@ -159,13 +159,39 @@ sources into the Capacitor project and runs
 The web client opens the activity through the `AemTransfer` Capacitor plugin and
 always passes the current appearance so native and web stay in the same theme.
 
+## Permissions and discovery (Tecno Spark 3 ↔ Infinix Smart 8)
+
+- **Infinix Smart 8 (Android 13 Go, XOS)**: needs `NEARBY_WIFI_DEVICES` (`neverForLocation`). Grant when AEM asks. `Location` does **not** need to be on.
+- **Tecno Spark 3 (Android 12 and below, HiOS)**: needs `ACCESS_FINE_LOCATION` **and** Location mode ON (quick-settings tile). Without it Android returns an empty discovery result even if Wi-Fi is on. AEM now shows a dedicated "Location is off" card with an action to open settings.
+- Wi-Fi must be ON on both phones, but they do not need to be on the same Wi-Fi network — Wi-Fi Direct builds its own group. Keep both screens on, <1 m apart, battery saver off.
+- XOS/HiOS can delay the first DNS-SD advertisement 5–15 s. AEM retries service discovery every ~2.8 s and falls back to legacy Wi-Fi Direct peer list (`WIFI_P2P_PEERS_CHANGED_ACTION`) so a device still appears as "Wi-Fi Direct device" even if the TXT record is delayed.
+
+## Receive vs Send and reversal
+
+- Only the **receiver** advertises `_aemtransfer._tcp` with `role=receiver`. The sender discovers; this is why Send scans only after Receive is listening.
+- `Send` can now scan even with zero items selected so you can test visibility without picking files first — the actual connection is still gated until you pick something.
+- The Wi-Fi Direct group is owned by the receiver on port **38177**. To reverse direction without a full repair, use **Swap** (sender → "Swap & Receive", receiver → "Swap → Send") which tears down the group and switches roles in one tap. Disconnect fully also leaves a clean state.
+
+## Active downloads and progress
+
+- Banner progress is global. **Downloads** now also shows an **Active receives** card while a transfer is in-flight (sender, count, bytes, %) and a **Resume available** card when `.part` files remain in `.resume/`.
+- Resume: interrupted transfers keep `.part` offsets; a retry re-uses the transfer ID and sender skips already-verified bytes. If the acknowledgement is lost, the receiver treats the same `(id, signature)` as already done.
+
+## Desktop and phone↔PC
+
+- The web **Transfer** tab is informative only (`Capacitor.isNativePlatform()` guard). Desktop shows an extra Explainer: double-click `.apk/.apks/.xapk/.apkm` or `File → Open APK…` forwards to the emulator (`aem:openApkFile`). Drag-and-drop into the emulator and `adb push/pull` also work.
+- Direct phone↔PC over the same Wi-Fi LAN without emulator is not yet a full TCP fallback — the current link is Wi-Fi Direct phone↔phone (port 38177). Planned: LAN NSD (`_aemtransfer._tcp` over mDNS) so desktop can advertise and a phone can discover it on the same router without Wi-Fi Direct. Until then, use phone→phone, then USB to PC, or install straight to emulator from the AEM catalog.
+
 ## Troubleshooting
 
 | Symptom | Likely cause |
 | --- | --- |
 | "Wi-Fi Direct is busy" | Another app owns a P2P group. Toggle Wi-Fi and retry. |
-| Receiver missing from the list | The other phone hasn't tapped **Start receiving**, or the app version differs (protocol 6). |
-| Connection fails immediately | The phones are too far apart or the group owner role flipped; scan again. |
+| Receiver missing from the list | The other phone hasn't tapped **Start receiving**, Location is off on Tecno (pre-13), or XOS delay — wait 10 s and Scan again; legacy fallback shows as "Wi-Fi Direct device" — tap to try. |
+| Tecno Spark 3 sees nothing next to Infinix | On Tecno: Location ON + Location permission granted; on Infinix: Nearby permission granted; one phone Receive listening, other Send scanning; <1 m apart. |
+| Infinix sees Tecno but not vice versa | Wrong direction — only receiver advertises. Put the *other* phone in Receive. |
+| Connection fails immediately | Phones too far, group owner flipped (`groupOwnerIntent=0` mismatch), or XOS power saver — scan again. |
 | "Different AEM version" | Both phones must run a build with protocol 6. |
 | Install button opens Settings | Android's "install unknown apps" permission has not been granted for AEM. |
 | Transfer stops when leaving | Both devices must keep the transfer screen alive; receive sessions survive in the background via the foreground service. |
+| Progress not in Downloads | Active receives now show at top of Downloads; banner also shows % + speed. Partial `.part` kept for resume. |
