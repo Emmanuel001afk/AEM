@@ -3572,6 +3572,7 @@ public class AemTransferActivity extends Activity {
         String host = null;
         long total = 0L;
         boolean locked = false;
+        ActiveReceive active = null;
         try {
             host = socket.getInetAddress() == null ? "nearby phone" : socket.getInetAddress().getHostAddress();
             if (!receiveArmed) throw new IOException("This phone is not receiving.");
@@ -3699,7 +3700,7 @@ public class AemTransferActivity extends Activity {
             final SpeedMeter meter = new SpeedMeter();
             byte[] buffer = new byte[512 * 1024];
             long paintedAt = 0L;
-            final ActiveReceive active = new ActiveReceive();
+            active = new ActiveReceive();
             active.sender = senderLabel;
             active.total = total;
             active.done = doneBytes;
