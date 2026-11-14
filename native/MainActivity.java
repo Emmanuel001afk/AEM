@@ -15,6 +15,18 @@ import java.util.zip.ZipInputStream;
 import com.getcapacitor.BridgeActivity;
 
 public class MainActivity extends BridgeActivity {
+    private final java.util.concurrent.atomic.AtomicBoolean importing = new java.util.concurrent.atomic.AtomicBoolean(false);
+    private Intent pendingExternalInstall;
+
+    @Override public void onResume() {
+        super.onResume();
+        if (pendingExternalInstall != null && (Build.VERSION.SDK_INT < 26 || getPackageManager().canRequestPackageInstalls())) {
+            Intent pending = pendingExternalInstall;
+            pendingExternalInstall = null;
+            handleIncomingPackage(pending);
+        }
+    }
+
     @Override public void onCreate(Bundle savedInstanceState) {
         registerPlugin(AemInstallerPlugin.class);
         registerPlugin(AemTransferPlugin.class);
@@ -36,17 +48,30 @@ public class MainActivity extends BridgeActivity {
         if (!isSupportedPackage(name, type)) return;
 
         if (Build.VERSION.SDK_INT >= 26 && !getPackageManager().canRequestPackageInstalls()) {
+            pendingExternalInstall = intent;
             startActivity(new Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
                     Uri.parse("package:" + getPackageName())));
             return;
         }
 
-        try {
-            List<File> apks = materializePackage(uri, name, type);
-            installApks(apks, name);
-        } catch (Exception e) {
-            android.util.Log.e("AEM_INSTALL", "External package install failed", e);
+        if (!importing.compareAndSet(false, true)) {
+            android.widget.Toast.makeText(this, "An incoming package is already being prepared", android.widget.Toast.LENGTH_LONG).show();
+            return;
         }
+        new Thread(() -> {
+            File staging = null;
+            try {
+                List<File> apks = materializePackage(uri, name, type);
+                staging = apks.get(0).getParentFile();
+                installApks(apks, name);
+            } catch (Exception e) {
+                android.util.Log.e("AEM_INSTALL", "External package install failed", e);
+                runOnUiThread(() -> android.widget.Toast.makeText(this, "Package installation failed: " + e.getMessage(), android.widget.Toast.LENGTH_LONG).show());
+            } finally {
+                AemPackageArchive.deleteTree(staging);
+                importing.set(false);
+            }
+        }, "aem-external-package").start();
     }
 
     private boolean isSupportedPackage(String name, String type) {
@@ -75,6 +100,7 @@ public class MainActivity extends BridgeActivity {
         String lower = name.toLowerCase(Locale.US);
         File dir = new File(getCacheDir(), "incoming-packages-" + System.nanoTime());
         if (!dir.mkdirs()) throw new IOException("Cannot create package staging directory");
+        try {
 
         if (lower.endsWith(".apk") || "application/vnd.android.package-archive".equals(type)) {
             File apk = new File(dir, "base.apk");
@@ -84,24 +110,8 @@ public class MainActivity extends BridgeActivity {
 
         File archive = new File(dir, "package.zip");
         copyUri(uri, archive);
-        ArrayList<File> apks = new ArrayList<>();
-        try (ZipInputStream zin = new ZipInputStream(new BufferedInputStream(new FileInputStream(archive)))) {
-            ZipEntry entry;
-            byte[] buffer = new byte[65536];
-            while ((entry = zin.getNextEntry()) != null) {
-                if (entry.isDirectory() || !entry.getName().toLowerCase(Locale.US).endsWith(".apk")) continue;
-                String safe = new File(entry.getName()).getName();
-                if (safe.isEmpty()) continue;
-                File out = new File(dir, "apk-" + apks.size() + "-" + safe);
-                try (OutputStream os = new BufferedOutputStream(new FileOutputStream(out))) {
-                    int n;
-                    while ((n = zin.read(buffer)) >= 0) if (n > 0) os.write(buffer, 0, n);
-                }
-                if (out.length() > 0) apks.add(out);
-            }
-        }
-        if (apks.isEmpty()) throw new IOException("No APK files were found inside " + name);
-        return apks;
+        return AemPackageArchive.extract(archive, dir);
+        } catch (Exception e) { AemPackageArchive.deleteTree(dir); throw e; }
     }
 
     private void copyUri(Uri uri, File target) throws Exception {
@@ -111,7 +121,12 @@ public class MainActivity extends BridgeActivity {
              OutputStream out = new BufferedOutputStream(new FileOutputStream(target))) {
             byte[] buffer = new byte[65536];
             int n;
-            while ((n = in.read(buffer)) >= 0) if (n > 0) out.write(buffer, 0, n);
+            long bytes = 0;
+            while ((n = in.read(buffer)) >= 0) {
+                bytes += n;
+                if (bytes > 4L * 1024 * 1024 * 1024) throw new IOException("Incoming package exceeds 4 GB limit");
+                if (n > 0) out.write(buffer, 0, n);
+            }
         }
     }
 

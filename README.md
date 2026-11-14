@@ -1,5 +1,9 @@
 # AEM
 
+## Multi-platform development status
+
+See [implementation and verification ledger](docs/TRANSFORMATION.md), [download/install guide](docs/desktop/DOWNLOADS.md), [native source delivery](docs/native-delivery.md), and [resource policy / Latitude 3190](docs/host-requirements.md). This branch adds real delivery operations and automated tests but is **not a fully verified ecosystem release**. The ledger supersedes older feature-completeness claims below.
+
 AEM is a personal software distribution store. It uses GitHub as its source provider, receives published APK artifacts, stores them in its own Supabase artifact storage, and distributes releases through the shared web + Android + Windows desktop clients.
 
 Core pipeline: GitHub source -> published artifact -> AEM ingestion -> validation -> publication -> install/update.
@@ -18,7 +22,7 @@ GitHub is the first source provider. Public repositories can be discovered witho
 | **Android** | Android 7+ | `src/` + Capacitor + `native/` | `.github/workflows/aem-android-final.yml` → signed APK |
 | **Windows Desktop** | Windows 10/11 x64 | `src/` + Electron + Android Emulator | `.github/workflows/aem-desktop.yml` → NSIS installer + portable |
 
-The desktop client is the primary deliverable for this expansion; see `docs/desktop/README.md` for install and `docs/emulator/README.md` for the integrated Android environment.
+Android and Windows are separate platform versions of AEM Store; see `docs/desktop/README.md` for install and `docs/emulator/README.md` for the integrated Android environment.
 
 ---
 

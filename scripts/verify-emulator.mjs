@@ -1,6 +1,6 @@
 import fs from "fs";
 import path from "path";
-console.log("🔍 AEM Emulator Verification");
+console.log("AEM Emulator STATIC contract checks — NOT runtime or hardware acceptance");
 console.log("=============================");
 let failed=0;
 function check(l,fn){ try{ fn(); console.log(`✅ ${l}`);} catch(e){ console.error(`❌ ${l}: ${e.message}`); failed++; } }
@@ -19,10 +19,7 @@ check("Diagnostics", () => {
   const d = fs.readFileSync("electron/emulator/diagnostics.ts","utf8");
   if (!d.includes("virtualization")) throw new Error("virtualization check missing");
 });
-check("Test APK exists or can be fetched", () => {
-  // We use store artifacts as test APKs
-  console.log("  - Test will use latest AEM Store catalog artifact as APK");
-});
+console.log("SKIPPED: SDK, boot, install, launch, GPU and resource benchmarks need actual runtime/device tests.");
 check("Emulator UI includes required actions", () => {
   const ui = fs.readFileSync("src/components/emulator/EmulatorView.tsx","utf8");
   if (!ui.includes("Install APK")) throw new Error("Install APK button missing");
@@ -31,4 +28,4 @@ check("Emulator UI includes required actions", () => {
 });
 console.log("");
 if (failed) { console.error(`Failed ${failed}`); process.exit(1); }
-console.log("🎉 Emulator checks passed");
+console.log("Static source checks passed (no emulator executed)");

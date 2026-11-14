@@ -27,48 +27,66 @@ jobs:
     secrets: inherit
 
   verify-and-package:
-    name: Verify both platforms and package release artifacts
     runs-on: ubuntu-latest
     needs: [android, windows]
     steps:
-      - name: Download APK and Windows outputs from this run
-        uses: actions/download-artifact@v4
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - uses: actions/download-artifact@v4
         with:
-          pattern: aem-store-*
+          name: aem-store-release-apk
           path: release
-          merge-multiple: true
-
-      - name: Verify all required deliverables
-        shell: bash
+      - uses: actions/download-artifact@v4
+        with:
+          name: aem-store-windows
+          path: release
+      - name: Validate complete deliverable set and checksums
         run: |
           set -euo pipefail
-          test -s release/app-release.apk || { echo "Missing or empty signed Android APK"; exit 1; }
-          apk_size="$(stat -c '%s' release/app-release.apk)"
-          if [ "$apk_size" -lt 1000000 ]; then
-            echo "APK is unexpectedly small: $apk_size bytes"
-            exit 1
-          fi
-
-          mapfile -t exes < <(find release -maxdepth 1 -type f -name '*.exe' -size +9999999c | sort)
-          if [ "${#exes[@]}" -lt 2 ]; then
-            echo "Expected genuine Windows Setup and Portable EXE files (at least 10 MB each)."
-            find release -maxdepth 1 -type f -printf '%f (%s bytes)\n' | sort
-            exit 1
-          fi
-
-          echo "Verified APK: release/app-release.apk ($apk_size bytes)"
-          for exe in "${exes[@]}"; do
-            echo "Verified Windows executable: $exe ($(stat -c '%s' "$exe") bytes)"
-          done
-          (
-            cd release
-            sha256sum app-release.apk *.exe | tee SHA256SUMS.txt
-          )
-
-      - name: Upload unified APK and EXE release bundle
-        uses: actions/upload-artifact@v4
+          node scripts/verify-release.mjs release
+          node scripts/stamp-version.mjs
+          node --input-type=module -e "import fs from 'node:fs'; const p=JSON.parse(fs.readFileSync('package.json')); fs.writeFileSync('release/release.json',JSON.stringify({family:'com.aem.store',version:p.version,androidVersionCode:1810000000+Number(process.env.GITHUB_RUN_NUMBER),source:process.env.GITHUB_SHA,run:process.env.GITHUB_RUN_ID},null,2))"
+          cp docs/desktop/DOWNLOADS.md release/INSTALL.md
+          (cd release && sha256sum -c SHA256SUMS.txt)
+      - uses: actions/upload-artifact@v4
         with:
           name: aem-store-complete-release
           path: release/**
           if-no-files-found: error
           retention-days: 30
+
+  publish:
+    needs: verify-and-package
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: aem-store-complete-release
+          path: release
+      - name: Publish only after verifying downloadable draft assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          SOURCE_SHA: ${{ github.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(jq -r .version release/release.json)"
+          tag="v$version"
+          (cd release && zip -q "AEM-Store-$version-Complete.zip" app-release.apk *.exe SHA256SUMS.txt INSTALL.md release.json)
+          if gh release view "$tag" --json isDraft --jq .isDraft > is-draft.txt; then
+            test "$(cat is-draft.txt)" = true || { echo "Refusing to overwrite a published release"; exit 1; }
+          else
+            gh release create "$tag" --target "$SOURCE_SHA" --draft --title "AEM Store $version" --notes-file release/INSTALL.md
+          fi
+          gh release upload "$tag" release/* --clobber
+          mkdir downloaded
+          gh release download "$tag" --dir downloaded --pattern '*.exe' --pattern '*.apk' --pattern SHA256SUMS.txt
+          (cd downloaded && sha256sum -c SHA256SUMS.txt)
+          # This is deliberately last: any failed build/download leaves a draft, never a latest release.
+          gh release edit "$tag" --draft=false --latest

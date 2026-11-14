@@ -18,6 +18,7 @@ export interface EmulatorStatus {
 }
 
 export interface DiagnosticsResult {
+  recommendation?: import("../../../electron/emulator/resources").ResourcePlan;
   timestamp: string;
   platform: string;
   arch: string;
@@ -99,10 +100,23 @@ export interface EmulatorBridge {
   setLocation(lat: number, lng: number): Promise<boolean>;
   rotate(r: number): Promise<boolean>;
   getLogs(limit?: number): Promise<string[]>;
-  installStoreArtifact(artifact: { url: string; filename: string; packageIdentity?: string }): Promise<{ success: boolean; message: string }>;
+  installStoreArtifact(artifact: { url: string; filename: string; packageIdentity?: string; sha256?: string }): Promise<{ success: boolean; message: string }>;
 }
 
+export interface PhoneBridge {
+  devices(): Promise<{serial:string;state:string;model:string}[]>;
+  status(): Promise<{running:boolean;serial:string|null;error:string|null;scrcpyAvailable:boolean;progress:{phase:string;completed:number;total:number;message:string}}>;
+  configure(): Promise<unknown>;
+  apps(serial:string): Promise<string[]>;
+  start(serial:string,pkg?:string): Promise<unknown>;
+  stop(): Promise<unknown>;
+  send(serial:string): Promise<{path:string;sha256:string}|null>;
+  receive(serial:string,remote:string): Promise<{path:string;sha256:string}|null>;
+  exportPackage(serial:string,pkg:string): Promise<{path:string;sha256:string;components:number}|null>;
+}
 export interface DesktopBridge {
+  native: {build():Promise<{path:string}|null>;install(artifact:{url:string;filename:string;sha256:string;packageIdentity:string}):Promise<{path:string;launched:boolean}|null>};
+  phone: PhoneBridge;
   isDesktop: boolean;
   platform: NodeJS.Platform;
   arch: string;

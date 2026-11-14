@@ -1,6 +1,8 @@
 import { app, BrowserWindow, Menu, shell, dialog, nativeImage } from "electron";
 import path from "path";
 import fs from "fs";
+import { stopPhone } from "./phone-runtime";
+import { isAllowedExternal, isTrustedRenderer } from "./security";
 import { registerIpc } from "./ipc";
 import { EmulatorManager } from "./emulator/manager";
 
@@ -20,7 +22,7 @@ function isDev(): boolean {
 }
 
 function getRendererUrl(): string {
-  if (isDev()) return "http://localhost:5173";
+  if (isDev() && process.env.AEM_DEV_URL) return process.env.AEM_DEV_URL;
   return `file://${path.join(__dirname, "../dist/index.html")}`;
 }
 
@@ -31,9 +33,9 @@ function getIconPath(): string {
     const ico = path.join(process.resourcesPath, "icons", "icon.ico");
     if (fs.existsSync(ico)) return ico;
   }
-  const localIco = path.join(__dirname, "../../resources/icons/icon.ico");
+  const localIco = path.join(__dirname, "../resources/icons/icon.ico");
   if (fs.existsSync(localIco)) return localIco;
-  const localPng = path.join(__dirname, "../../resources/icons/icon.png");
+  const localPng = path.join(__dirname, "../resources/icons/icon.png");
   if (fs.existsSync(localPng)) return localPng;
   return "";
 }
@@ -124,7 +126,7 @@ async function createWindow(): Promise<BrowserWindow> {
       preload: path.join(__dirname, "preload.js"),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: false,
+      sandbox: true,
       webSecurity: true,
       allowRunningInsecureContent: false,
     },
@@ -133,20 +135,12 @@ async function createWindow(): Promise<BrowserWindow> {
 
   // Security: open external links in browser
   win.webContents.setWindowOpenHandler(({ url }) => {
-    shell.openExternal(url);
+    if (isAllowedExternal(url)) void shell.openExternal(url);
     return { action: "deny" };
   });
 
   // Register IPC before load
   registerIpc(win);
-
-  // Load renderer
-  const url = getRendererUrl();
-  if (url.startsWith("file://")) {
-    await win.loadFile(path.join(__dirname, "../dist/index.html"));
-  } else {
-    await win.loadURL(url);
-  }
 
   win.once("ready-to-show", () => {
     win.show();
@@ -157,6 +151,25 @@ async function createWindow(): Promise<BrowserWindow> {
       pendingApkFile = null;
     }
   });
+
+  win.webContents.on("will-navigate", (event, url) => {
+    if (!isTrustedRenderer(url, path.join(__dirname, "../dist/index.html"), isDev() ? process.env.AEM_DEV_URL : undefined)) event.preventDefault();
+  });
+  win.webContents.session.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
+
+  // Load renderer
+  const url = getRendererUrl();
+  if (url.startsWith("file://")) {
+    await win.loadFile(path.join(__dirname, "../dist/index.html"));
+  } else {
+    await win.loadURL(url);
+  }
+
+  if (process.env.AEM_SMOKE_TEST === "1" && process.env.AEM_SMOKE_RESULT) {
+    const ok = await win.webContents.executeJavaScript('Boolean(document.querySelector("#root")?.childElementCount)');
+    fs.writeFileSync(process.env.AEM_SMOKE_RESULT, JSON.stringify({ ok, version: app.getVersion(), executable: process.execPath }));
+    app.quit();
+  }
 
   // Graceful handling of crashes
   win.webContents.on("render-process-gone", (_e, details) => {
@@ -200,14 +213,6 @@ app.on("will-finish-launching", () => {
 
 // ─── App lifecycle ───
 app.whenReady().then(async () => {
-  // Security: disable navigation to file:// outside app
-  app.on("web-contents-created", (_e, contents) => {
-    contents.on("will-navigate", (e, url) => {
-      const parsed = new URL(url);
-      if (parsed.protocol === "file:" && !url.includes("dist")) e.preventDefault();
-    });
-  });
-
   createMenu();
   await createWindow();
 
@@ -215,12 +220,8 @@ app.whenReady().then(async () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
 
-  // Start ADB server in background if SDK exists
-  try {
-    const mgr = EmulatorManager.getInstance();
-    const sdk = await mgr.getSdkStatus();
-    if (sdk.installed) await mgr.startAdbServer();
-  } catch {}
+  // ADB starts only for explicit emulator/device operations.
+
 });
 
 app.on("window-all-closed", () => {
@@ -228,23 +229,19 @@ app.on("window-all-closed", () => {
   if (process.platform !== "darwin") app.quit();
 });
 
-app.on("before-quit", async (e) => {
-  // Gracefully stop emulator if running — but don't block quit indefinitely
-  try {
+let quitting = false;
+app.on("before-quit", (event) => {
+  if (quitting) return;
+  event.preventDefault();
+  quitting = true;
+  stopPhone();
+  // preventDefault must happen synchronously, before an await yields to Electron.
+  const stop = async () => {
     const mgr = EmulatorManager.getInstance();
     const status = await mgr.getStatus();
-    if (status.state === "running" || status.state === "starting") {
-      e.preventDefault();
-      console.log("Stopping emulator before quit…");
-      try {
-        await Promise.race([
-          mgr.stop(),
-          new Promise(r => setTimeout(r, 8000)),
-        ]);
-      } catch {}
-      app.quit();
-    }
-  } catch {}
+    if (["running","starting","stopping"].includes(status.state)) await mgr.stop();
+  };
+  void Promise.race([stop().catch(console.error),new Promise(resolve=>setTimeout(resolve,8000))]).finally(()=>app.quit());
 });
 
 // ─── Crash handling ───

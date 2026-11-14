@@ -1,4 +1,5 @@
 import fs from "fs";
+import { spawnSdk } from "./tool-process";
 import path from "path";
 import { execFile } from "child_process";
 import { promisify } from "util";
@@ -295,15 +296,8 @@ export async function installSdk(onProgress?: (p: SdkInstallProgress) => void, r
     const sdkMgr = getSdkManagerPath(r);
     if (!existsSync(sdkMgr)) throw new Error(`sdkmanager not found at ${sdkMgr}. cmdline-tools install may have failed.`);
 
-    // Accept licenses automatically
-    const licenses = path.join(r, "licenses");
-    await mkdir(licenses, { recursive: true });
-    // Create dummy license files to avoid interactive prompt
-    try {
-      fs.writeFileSync(path.join(licenses, "android-sdk-license"), "8933bad161af4178b1185d1a37fbf41ea5269c55\n", { flag: "w" });
-      fs.writeFileSync(path.join(licenses, "android-sdk-preview-license"), "84831b9409646a918e30573bab4c9c91346d8abd\n", { flag: "w" });
-    } catch {}
-
+    // License consent is requested by the main-process SDK installation dialog.
+    // Do not manufacture accepted-license files. sdkmanager records actual acceptance.
     const packages = [
       `platforms;android-${DEFAULT_API_LEVEL}`,
       DEFAULT_SYSTEM_IMAGE,
@@ -316,7 +310,7 @@ export async function installSdk(onProgress?: (p: SdkInstallProgress) => void, r
       onProgress?.({ phase: "system-image", percent: pct, message: `Installing ${pkg}…` });
       try {
         await new Promise<void>((resolve, reject) => {
-          const proc = spawn(sdkMgr, ["--install", pkg, "--sdk_root=" + r], {
+          const proc = spawnSdk(sdkMgr, ["--install", pkg, "--sdk_root=" + r], {
             stdio: ["pipe", "pipe", "pipe"],
           });
           let stderr = "";
@@ -325,36 +319,25 @@ export async function installSdk(onProgress?: (p: SdkInstallProgress) => void, r
           proc.stdin?.write("y\n");
           setTimeout(() => { try { proc.stdin?.write("y\n"); } catch {} }, 2000);
           proc.on("close", code => {
+            clearTimeout(timer);
             if (code === 0) resolve();
             else reject(new Error(`sdkmanager failed for ${pkg} (exit ${code}): ${stderr.slice(0, 500)}`));
           });
-          proc.on("error", reject);
-          setTimeout(() => {
+          proc.on("error", e => { clearTimeout(timer); reject(e); });
+          const timer = setTimeout(() => {
             try { proc.kill(); } catch {}
             reject(new Error(`sdkmanager timeout for ${pkg}`));
           }, 600000);
         });
       } catch (e: any) {
-        // If system image install fails, try alternative ABI
-        if (pkg === DEFAULT_SYSTEM_IMAGE) {
-          const fallback = "system-images;android-33;google_apis;x86_64";
-          onProgress?.({ phase: "system-image", percent: pct, message: `Primary image failed, trying fallback ${fallback}…` });
-          try {
-            await new Promise<void>((resolve, reject) => {
-              const proc = spawn(sdkMgr, ["--install", fallback, "--sdk_root=" + r], { stdio: ["pipe", "pipe", "pipe"] });
-              proc.stdin?.write("y\n");
-              proc.on("close", c => c === 0 ? resolve() : reject(new Error(`fallback failed ${c}`)));
-              proc.on("error", reject);
-            });
-          } catch {}
-        } else {
-          throw e;
-        }
+        throw new Error(`SDK installation failed for ${pkg}: ${e.message}. Retry after checking Java, storage and network connectivity.`);
       }
     }
     onProgress?.({ phase: "system-image", percent: 95, message: "System image ready" });
   }
 
+  const verified = await getSdkStatus(r);
+  if (!verified.installed) throw new Error(`SDK incomplete: ${verified.needsInstall.join(", ")}`);
   onProgress?.({ phase: "done", percent: 100, message: "Android SDK ready" });
 }
 

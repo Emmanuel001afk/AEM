@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
-  "description": "AEM Store \u2014 personal software distribution store with integrated Android emulator for Windows",
+  "description": "AEM Store — personal software distribution store with integrated Android emulator for Windows",
   "author": "AEM Team <aem@aem.store>",
   "license": "MIT",
   "productName": "AEM Store",
@@ -15,8 +15,8 @@
   },
   "scripts": {
     "dev": "vite",
-    "dev:electron": "concurrently -k \"vite\" \"wait-on http://localhost:5173 && electron .\"",
-    "dev:desktop": "npm run build:renderer && electron dist-electron/main.js",
+    "dev:electron": "npm run build:electron && concurrently -k \"vite\" \"wait-on http://localhost:5173 && cross-env AEM_DEV_URL=http://localhost:5173 electron .\"",
+    "dev:desktop": "npm run build && electron .",
     "typecheck": "tsc --noEmit",
     "typecheck:electron": "tsc --noEmit --project electron/tsconfig.json",
     "build": "npm run build:renderer && npm run build:electron",
@@ -29,31 +29,36 @@
     "verify:emulator": "node scripts/verify-emulator.mjs",
     "test": "npm run typecheck && npm run verify",
     "preview": "vite preview",
-    "postinstall": "electron-builder install-app-deps || true"
+    "postinstall": "electron-builder install-app-deps || true",
+    "test:unit": "npm run build:electron && node --test tests/*.test.mjs"
   },
   "dependencies": {
     "@capacitor/core": "7.4.4",
     "@tanstack/react-query": "5.87.4",
     "react": "19.1.1",
-    "react-dom": "19.1.1"
+    "react-dom": "19.1.1",
+    "yauzl": "3.4.0",
+    "yazl": "3.3.1"
   },
   "devDependencies": {
     "@types/node": "22.13.0",
     "@types/react": "19.1.12",
     "@types/react-dom": "19.1.9",
+    "@types/yauzl": "3.4.0",
+    "@types/yazl": "3.3.1",
     "@vitejs/plugin-react": "5.0.2",
     "concurrently": "9.1.2",
     "cross-env": "7.0.3",
     "electron": "34.5.8",
     "electron-builder": "25.1.8",
     "typescript": "5.9.2",
-    "vite": "7.1.5",
+    "vite": "7.3.8",
     "wait-on": "8.0.3"
   },
   "build": {
     "appId": "com.aem.store",
     "productName": "AEM Store",
-    "copyright": "Copyright \u00a9 2025 AEM Team",
+    "copyright": "Copyright © 2025 AEM Team",
     "directories": {
       "output": "release",
       "buildResources": "resources"
@@ -91,7 +96,7 @@
       "icon": "resources/icons/icon.ico",
       "publisherName": "AEM Team",
       "verifyUpdateCodeSignature": false,
-      "signAndEditExecutable": false
+      "signAndEditExecutable": true
     },
     "nsis": {
       "oneClick": false,

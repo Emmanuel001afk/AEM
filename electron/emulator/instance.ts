@@ -124,7 +124,7 @@ export class EmulatorInstance {
     }
 
     // Common performance flags
-    args.push("-no-snapshot-save"); // we manage snapshots explicitly
+    // Quick boot may save its snapshot on graceful shutdown; cold boot flags disable it.
     // Enable host audio, camera passthrough where supported
     // Keep default networking (NAT)
     // Allow emulator to use host GPU acceleration automatically

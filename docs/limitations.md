@@ -1,5 +1,7 @@
 # Limitations & Unsupported Features
 
+> Updated implementation status and outstanding acceptance work: [TRANSFORMATION.md](TRANSFORMATION.md). The historical notes below do not assert physical testing.
+
 _Last updated: 2025-10-30 — AEM Store 0.1.0 desktop with Android Emulator_
 
 This document is the source of truth for what the emulator **cannot** do, so QA and users are not surprised. It is updated with each release.
@@ -30,7 +32,7 @@ This document is the source of truth for what the emulator **cannot** do, so QA 
 
 - Catalog is provider-backed (GitHub → Supabase). No manual APK upload in Store UI; use GitHub release + ingestion.
 - Signing identity remains deterministic security boundary (AI never decides safety). Store refuses install if signing cert mismatches.
-- Transfer stays Android-to-Android Wi-Fi Direct; desktop shows explainer only.
+- Android Wi-Fi Direct is retained. Desktop now has authorized ADB push/pull with hashing and app/split export, plus scrcpy coordination. Native AEM LAN pairing, discovery, resume and physical transfer verification remain incomplete.
 
 ## When to Use Physical Device Instead
 

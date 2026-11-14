@@ -179,6 +179,10 @@ always passes the current appearance so native and web stay in the same theme.
 
 ## Desktop and phone↔PC
 
+Current branch: Devices provides explicit Android-authorized ADB discovery, verified push/pull and accessible base/split APK export. File progress is per-item/stage, not a fabricated byte rate. Interrupted ADB copies require retry. It is **not** the planned AEM LAN service, and no physical transfer has been tested here. The existing protocol-6 Android Wi-Fi Direct code is preserved.
+
+### Historical desktop state
+
 - The web **Transfer** tab is informative only (`Capacitor.isNativePlatform()` guard). Desktop shows an extra Explainer: double-click `.apk/.apks/.xapk/.apkm` or `File → Open APK…` forwards to the emulator (`aem:openApkFile`). Drag-and-drop into the emulator and `adb push/pull` also work.
 - Direct phone↔PC over the same Wi-Fi LAN without emulator is not yet a full TCP fallback — the current link is Wi-Fi Direct phone↔phone (port 38177). Planned: LAN NSD (`_aemtransfer._tcp` over mDNS) so desktop can advertise and a phone can discover it on the same router without Wi-Fi Direct. Until then, use phone→phone, then USB to PC, or install straight to emulator from the AEM catalog.
 

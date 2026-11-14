@@ -1,33 +1,30 @@
-# Host Requirements — AEM Store Desktop + Emulator
+# Host resources and the Latitude 3190 target
 
-See `docs/desktop/README.md` (install) and `docs/emulator/README.md` (runtime). This page is the single checklist for IT/support.
+## Store versus emulator
 
-## Windows Desktop (required)
+AEM Store's Windows desktop, native application delivery and phone display are independent of the emulator. Do not require an emulator download merely to transfer a file or display a phone. Native Windows applications have their own requirements.
 
-- Windows 10 2004+ (build 19041) x64 or Windows 11. No 32-bit, no Windows 8/7.
-- 4 GB RAM min, 8 GB rec. Free RAM ≥ 3 GB at launch.
-- 10 GB free disk min, 20 GB rec. UserData: `%APPDATA%/AEM Store`.
-- No antivirus exclusion required, but add `AEM-Store.exe` and `userData/android-sdk/emulator` to allowlist if emulator start is slow (AV may scan QCOW2 I/O).
-- Network: HTTPS egress to `*.supabase.co`, `api.github.com`, `dl.google.com` (for SDK). Offline catalog works from cache but emulator SDK download needs internet.
+The current integrated image route targets Windows x64 and Android 34 x86_64. Host diagnostics:
 
-## Emulator (when using Android environment)
+- measure total and currently available RAM;
+- reserve at least 2,560 MB (or 25% of RAM) for Windows/AEM, another 768 MB for emulator graphics/process/startup overhead, and 768 MB of currently free memory as load headroom;
+- retain at least half the logical cores in the default profile (at most four guest cores);
+- require 20 GB free storage for SDK, image, userdata and temporary downloads;
+- sample CPU utilization; report GPU/driver information without claiming a rendered acceleration benchmark;
+- use the installed emulator's `-accel-check` result rather than localized Windows text or the presence of the phrase “Hyper-V”. Missing/unverified acceleration cannot pass readiness.
 
-- BIOS VT-x/AMD-V **enabled** (Diagnostics will fail otherwise).
-- **One of:** Windows Hypervisor Platform (Settings → Apps → Optional Features → Windows Features → Windows Hypervisor Platform + Hyper-V), or Hyper-V, or Intel HAXM. WHPX is preferred.
-- If `bcdedit` shows `hypervisorlaunchtype off`, run as admin: `bcdedit /set hypervisorlaunchtype auto` + reboot.
-- GPU: host acceleration auto-detected; SwiftShader fallback if no GPU (slower but functional).
+Engineering profiles: 1536 MB lightweight (experimental), 2048 MB balanced, 3072 MB standard. These are budget policies, **not physically tested performance tiers**. Manual allocations are supported within the current safe memory/core envelope. Recheck after closing applications. Quick boot may save snapshots on normal shutdown; cold boot skips them.
 
-## macOS (future)
+## Dell Latitude 3190, 4 GB RAM
 
-- macOS 12+ on Intel or Apple Silicon (arm64 system image).
-- Hypervisor.Framework available by default; no extra driver.
-- Same RAM/disk.
+No Latitude 3190 or equivalent physical Windows machine is connected to this environment. No startup time, frame rate, CPU/RAM usage or app execution result has been measured on it.
 
-## Linux (future)
+A 4096 MB host leaves only 768 MB after the static OS/AEM/overhead reserves, below the 1536 MB guest minimum used here. Therefore the current Android 34 profile is **not recommended** on this target. This is an engineering budget result, not a claim that no emulator can ever boot. Windows paging, low-power CPU throughput, shared GPU memory, storage I/O and virtualization/hypervisor configuration all matter. Reducing guest RAM alone cannot solve them.
 
-- Kernel with KVM (`/dev/kvm` exists, user in `kvm` group).
-- Same RAM/disk; GPU accel via host.
+Prefer phone-powered execution or an available genuine native Windows implementation. Future evaluation of an older/smaller supported system image needs real tests and will have different minimum API/app compatibility.
 
-## Unsupported
+## Physical test procedure still required
 
-- Windows 10 S mode, ARM Windows (no x86_64 emulator yet), WSL1 (no nested virt), containers without `--privileged`.
+Record exact CPU, Windows build, RAM available after login, disk type/free space, GPU driver and acceleration probe. Measure cold/quick boot to Android boot completion, peak working set/commit, host responsiveness and idle/active CPU; repeat with a real signed APK and a native-library app. Test shutdown, failed-start recovery, snapshots, hardware sleep and low-storage conditions. Do not disable Windows security or antivirus to obtain favorable numbers.
+
+SDK installation requires Java, acceptance of Google's terms and HTTPS access to Google repositories. This sandbox cannot access those repositories. HAXM is not the recommended modern Windows route; use a currently supported hypervisor compatible with the installed emulator. Graphics auto mode does not guarantee hardware acceleration or automatic recovery from driver failure.

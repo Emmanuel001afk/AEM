@@ -264,6 +264,11 @@ export default function EmulatorView() {
           {!diagnostics ? <p>Loading diagnostics…</p> : <>
             <div className="diag-summary"><span>✅ {diagnostics.summary.passed} pass</span><span>⚠️ {diagnostics.summary.warnings} warn</span><span>❌ {diagnostics.summary.failed} fail</span><span className={diagnostics.summary.canRun ? "ok" : "bad"}>{diagnostics.summary.canRun ? "Can run emulator" : "Cannot run — fix required"}</span></div>
             <p>Host: {diagnostics.host.cpuModel} · {diagnostics.host.cpuCores} cores · {diagnostics.host.totalMemMB} MB RAM · {diagnostics.host.osVersion}</p>
+            {diagnostics.recommendation && <div className="setting-body">
+              <strong>Comfortable resource recommendation: {diagnostics.recommendation.supported ? diagnostics.recommendation.profile : "not currently supported"}</strong>
+              <p>{diagnostics.recommendation.ramMB} MB guest RAM · {diagnostics.recommendation.cores} cores. Profiles are engineering budgets, not measured performance guarantees.</p>
+              <button className="choice" disabled={!diagnostics.recommendation.supported} onClick={() => setCreateForm({...createForm, ramMB: diagnostics.recommendation!.ramMB, cores: diagnostics.recommendation!.cores})}>USE RECOMMENDED RESOURCES FOR NEW AVD</button>
+            </div>}
             <div className="diag-list">
               {diagnostics.checks.map((c: any) => (
                 <div key={c.id} className={`diag-check diag-${c.status}`}>
@@ -303,8 +308,8 @@ export default function EmulatorView() {
             <h4>Create new AVD</h4>
             <div className="build-form" style={{ gridTemplateColumns: "1fr 1fr 1fr 1fr auto" } as any}>
               <input value={createForm.name} onChange={e => setCreateForm({ ...createForm, name: e.target.value })} placeholder="AVD name" />
-              <select value={createForm.ramMB} onChange={e => setCreateForm({ ...createForm, ramMB: parseInt(e.target.value) })}><option value={2048}>2 GB RAM</option><option value={3072}>3 GB RAM</option><option value={4096}>4 GB RAM</option><option value={6144}>6 GB RAM</option></select>
-              <select value={createForm.cores} onChange={e => setCreateForm({ ...createForm, cores: parseInt(e.target.value) })}><option value={2}>2 cores</option><option value={4}>4 cores</option><option value={6}>6 cores</option><option value={8}>8 cores</option></select>
+              <select value={createForm.ramMB} onChange={e => setCreateForm({ ...createForm, ramMB: parseInt(e.target.value) })}><option value={1536}>1.5 GB RAM (experimental)</option><option value={2048}>2 GB RAM</option><option value={3072}>3 GB RAM</option><option value={4096}>4 GB RAM</option><option value={6144}>6 GB RAM</option></select>
+              <select value={createForm.cores} onChange={e => setCreateForm({ ...createForm, cores: parseInt(e.target.value) })}><option value={1}>1 core</option><option value={2}>2 cores</option><option value={4}>4 cores</option><option value={6}>6 cores</option><option value={8}>8 cores</option></select>
               <select value={createForm.gpuMode} onChange={e => setCreateForm({ ...createForm, gpuMode: e.target.value })}><option value="auto">GPU auto</option><option value="host">GPU host</option><option value="swiftshader_indirect">SwiftShader</option></select>
               <button className="install" onClick={handleCreateAvd} disabled={!sdk?.installed}>CREATE</button>
             </div>
@@ -351,8 +356,8 @@ export default function EmulatorView() {
         <div className="setting-body">
           <p>Emulator runs locally via QEMU with HAXM/WHPX acceleration when available. It provides genuine Android with APK install, launching, storage, networking and permission management.</p>
           <div className="integration-grid">
-            <div><strong>✅ Working</strong><ul><li>Install APK/APKS/XAPK/APKM via ADB</li><li>Launch, force-stop, uninstall, clear data</li><li>Permissions grant/revoke via pm</li><li>Storage: /sdcard, app data, file push/pull</li><li>Networking: NAT, internet access</li><li>Clipboard sync, file sharing</li><li>Location (geo fix), rotation, screenshots</li><li>Graphics acceleration (host GPU / SwiftShader fallback)</li></ul></div>
-            <div><strong>⚠️ Limited / requires extra setup</strong><ul><li>Camera: emulated (virtual scene) — no direct laptop webcam passthrough without config</li><li>Microphone/Bluetooth/NFC: not emulated — use physical device for testing</li><li>USB devices: limited passthrough — not all drivers supported</li><li>Google Play: only with playstore system image (separate install, requires sign-in)</li><li>Performance: needs VT-x/AMD-V + 8GB RAM for smooth 60fps; software GPU is slower</li></ul></div>
+            <div><strong>Implemented operations (device verification required)</strong><ul><li>Install APK/APKS/XAPK/APKM via ADB</li><li>Launch, force-stop, uninstall, clear data</li><li>Permissions grant/revoke via pm</li><li>Storage: /sdcard, app data, file push/pull</li><li>Networking: NAT, internet access</li><li>File sharing via ADB</li><li>Location (geo fix), rotation, screenshots</li><li>Graphics acceleration (host GPU / SwiftShader fallback)</li></ul></div>
+            <div><strong>⚠️ Limited / requires extra setup</strong><ul><li>Camera: emulated (virtual scene) — no direct laptop webcam passthrough without config</li><li>Microphone/Bluetooth/NFC: not emulated — use physical device for testing</li><li>USB devices: limited passthrough — not all drivers supported</li><li>Google Play: only with playstore system image (separate install, requires sign-in)</li><li>Performance: needs VT-x/AMD-V + sufficient available memory; frame rate depends on hardware and workload; software GPU is slower</li></ul></div>
             <div><strong>❌ Not supported</strong><ul><li>Telephony/SMS on emulator (use telnet console for fake SMS)</li><li>Biometrics (fingerprint/face) — stub only</li><li>Hardware DRM Widevine L1 — L3 only</li><li>Running ARM APKs without ARM translation (use x86_64 builds when possible)</li></ul></div>
           </div>
         </div>

@@ -4474,28 +4474,7 @@ public class AemTransferActivity extends Activity {
     }
 
     private void extractApks(File archive, File targetDir, ArrayList<File> out) throws IOException {
-        ZipFile zip = null;
-        try {
-            zip = new ZipFile(archive);
-            Enumeration<? extends ZipEntry> entries = zip.entries();
-            byte[] buffer = new byte[256 * 1024];
-            while (entries.hasMoreElements()) {
-                ZipEntry entry = entries.nextElement();
-                if (entry.isDirectory() || !entry.getName().toLowerCase(Locale.US).endsWith(".apk")) continue;
-                String name = new File(entry.getName()).getName();
-                if (name.isEmpty()) continue;
-                File output = new File(targetDir, "apk-" + out.size() + "-" + name);
-                try (InputStream in = new BufferedInputStream(zip.getInputStream(entry), 256 * 1024);
-                     OutputStream stream = new BufferedOutputStream(new FileOutputStream(output), 256 * 1024)) {
-                    int read;
-                    while ((read = in.read(buffer)) != -1) if (read > 0) stream.write(buffer, 0, read);
-                }
-                if (output.length() > 0L) out.add(output);
-            }
-        } finally {
-            try { if (zip != null) zip.close(); } catch (Exception ignored) { }
-        }
-        if (out.isEmpty()) throw new IOException("No APK files were found inside " + archive.getName());
+        out.addAll(AemPackageArchive.extract(archive, targetDir));
     }
 
     private void registerInstallReceiver() {

@@ -1,4 +1,6 @@
 import fs from "fs";
+import { spawnSdk } from "./tool-process";
+import { validateAvdName } from "../security";
 import path from "path";
 import { execFile, spawn } from "child_process";
 import { promisify } from "util";
@@ -9,10 +11,10 @@ import type { AvdInfo, AvdCreateOptions } from "./types";
 const execFileAsync = promisify(execFile);
 
 function getAvdIniPath(avdName: string): string {
-  return path.join(getAvdRoot(), `${avdName}.ini`);
+  return path.join(getAvdRoot(), `${validateAvdName(avdName)}.ini`);
 }
 function getAvdDir(avdName: string): string {
-  return path.join(getAvdRoot(), `${avdName}.avd`);
+  return path.join(getAvdRoot(), `${validateAvdName(avdName)}.avd`);
 }
 
 export async function listAvds(sdkRoot?: string): Promise<AvdInfo[]> {
@@ -98,8 +100,8 @@ export async function createAvd(options: AvdCreateOptions, sdkRoot?: string): Pr
   await fs.promises.mkdir(emuHome, { recursive: true });
 
   const avdName = options.name || DEFAULT_AVD_NAME;
-  // If exists, remove old
-  await deleteAvd(avdName);
+  validateAvdName(avdName);
+  if (fs.existsSync(getAvdDir(avdName)) || fs.existsSync(getAvdIniPath(avdName))) throw new Error("AVD already exists; choose a new name or explicitly delete it first");
 
   const device = options.device || "pixel_7";
   const systemImage = options.systemImage;
@@ -115,7 +117,7 @@ export async function createAvd(options: AvdCreateOptions, sdkRoot?: string): Pr
   if (device) args.push("--device", device);
 
   await new Promise<void>((resolve, reject) => {
-    const proc = spawn(avdm, args, { env, stdio: ["pipe", "pipe", "pipe"] });
+    const proc = spawnSdk(avdm, args, { env, stdio: ["pipe", "pipe", "pipe"] });
     let stdout = "";
     let stderr = "";
     proc.stdout?.on("data", d => { stdout += String(d); });
@@ -123,11 +125,12 @@ export async function createAvd(options: AvdCreateOptions, sdkRoot?: string): Pr
     // avdmanager may prompt "Do you wish to create a custom hardware profile? [no]"
     proc.stdin?.write("no\n");
     proc.on("close", code => {
+      clearTimeout(timer);
       if (code === 0) resolve();
       else reject(new Error(`avdmanager create failed (exit ${code}): ${stderr || stdout}`.slice(0, 1000)));
     });
-    proc.on("error", reject);
-    setTimeout(() => {
+    proc.on("error", err => { clearTimeout(timer); reject(err); });
+    const timer = setTimeout(() => {
       try { proc.kill(); } catch {}
       reject(new Error("avdmanager create timeout after 60s"));
     }, 60000);
@@ -171,7 +174,7 @@ export async function patchAvdConfig(avdName: string, options: AvdCreateOptions)
   if (options.skinName) set("skin.name", options.skinName);
 
   // Ensure AVD is hardware-accelerated and has PlayStore quirks handled
-  set("hw.cpu.arch", "x86_64");
+  // Preserve avdmanager-selected architecture; never relabel an ARM image as x86.
   set("hw.keyboard", "yes");
   set("hw.backup", "no");
   set("hw.battery", "yes");
