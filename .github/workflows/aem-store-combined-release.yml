@@ -90,6 +90,11 @@ jobs:
           sudo chmod 666 /dev/kvm
       - run: npm ci
       - run: npm run build:electron
+      - name: Configure Electron sandbox helper on disposable Linux runner
+        run: |
+          node node_modules/electron/install.js
+          sudo chown root:root node_modules/electron/dist/chrome-sandbox
+          sudo chmod 4755 node_modules/electron/dist/chrome-sandbox
       - name: Exercise AEM diagnostics, AVD creation, install, launch and teardown
         run: |
           if ! xvfb-run -a node_modules/.bin/electron scripts/emulator-runtime-smoke.cjs > aem-electron-runtime.log 2>&1; then
