@@ -29,14 +29,7 @@ export async function listAvds(sdkRoot?: string): Promise<AvdInfo[]> {
       if (info) avds.push(info);
     }
   }
-  // Also try avdmanager list avd for extra info
-  try {
-    const avdm = sdkRoot ? getAvdManagerPath(sdkRoot) : getAvdManagerPath();
-    if (fs.existsSync(avdm)) {
-      const { stdout } = await execFileAsync(avdm, ["list", "avd"], { timeout: 10000, env: { ...process.env, ANDROID_AVD_HOME: avdRoot, ANDROID_SDK_HOME: path.dirname(avdRoot) } as any });
-      // Could parse for validation, but filesystem is source of truth
-    }
-  } catch {}
+  // Managed AVDs are enumerated from disk; do not start a Java process on every UI poll.
   return avds;
 }
 
@@ -59,7 +52,7 @@ export async function getAvdInfo(avdName: string): Promise<AvdInfo | null> {
   const systemImage = get("image.sysdir.1") || get("sys.image") || "system-images;android-34;google_apis;x86_64";
   const device = get("hw.device.name") || get("AvdId") || "pixel_7";
   const ramMB = parseInt(get("hw.ramSize") || String(DEFAULT_RAM_MB), 10);
-  const heapMB = parseInt(get("hw.heapSize") || String(DEFAULT_HEAP_MB), 10);
+  const heapMB = parseInt(get("vm.heapSize") || get("hw.heapSize") || String(DEFAULT_HEAP_MB), 10);
   const storageMB = (() => {
     const s = get("disk.dataPartition.size") || get("hw.diskSize") || "";
     if (s.endsWith("M") || s.endsWith("m")) return parseInt(s, 10);
@@ -157,7 +150,7 @@ export async function patchAvdConfig(avdName: string, options: AvdCreateOptions)
   };
 
   if (options.ramMB) set("hw.ramSize", String(options.ramMB));
-  if (options.heapMB) set("hw.heapSize", String(options.heapMB));
+  if (options.heapMB) set("vm.heapSize", String(options.heapMB));
   if (options.cores) set("hw.cpu.ncore", String(options.cores));
   if (options.storageMB) {
     // data partition size in MB with M suffix

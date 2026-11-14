@@ -112,7 +112,7 @@ export class EmulatorManager {
       systemImage: preferred.id || DEFAULT_SYSTEM_IMAGE,
       device: "pixel_7",
       ramMB: (await this.getDiagnostics()).recommendation.ramMB,
-      heapMB: 512,
+      heapMB: (await this.getDiagnostics()).recommendation.ramMB <= 2048 ? 256 : 512,
       storageMB: 8192,
       cores: (await this.getDiagnostics()).recommendation.cores,
       gpuMode: "auto",

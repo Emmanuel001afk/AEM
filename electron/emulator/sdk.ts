@@ -1,4 +1,5 @@
 import fs from "fs";
+import { downloadVerified } from "../download";
 import { spawnSdk } from "./tool-process";
 import path from "path";
 import { execFile } from "child_process";
@@ -57,61 +58,15 @@ export function getSdkManagerPath(root?: string): string {
 }
 
 async function downloadFile(url: string, dest: string, onProgress?: (received: number, total: number) => void): Promise<void> {
-  await mkdir(path.dirname(dest), { recursive: true });
-  return new Promise<void>((resolve, reject) => {
-    const file = createWriteStream(dest);
-    const client = url.startsWith("https:") ? https : http;
-    const req = client.get(url, { headers: { "User-Agent": "AEM-Store/0.1.0" } }, res => {
-      if (res.statusCode && res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-        // redirect
-        file.close();
-        // recurse once
-        downloadFile(res.headers.location, dest, onProgress).then(resolve).catch(reject);
-        return;
-      }
-      if (res.statusCode !== 200) {
-        reject(new Error(`Download failed ${res.statusCode} for ${url}`));
-        return;
-      }
-      const total = parseInt(res.headers["content-length"] || "0", 10);
-      let received = 0;
-      res.on("data", chunk => {
-        received += chunk.length;
-        if (onProgress) onProgress(received, total);
-      });
-      res.pipe(file);
-      file.on("finish", () => {
-        file.close(() => resolve());
-      });
-    });
-    req.on("error", reject);
-    file.on("error", reject);
-    req.setTimeout(120000, () => {
-      req.destroy(new Error(`Timeout downloading ${url}`));
-    });
-  });
+  await downloadVerified(url,dest,undefined,4*1024**3,onProgress);
 }
 
 async function unzip(zipPath: string, destDir: string): Promise<void> {
-  // Try system unzip first, fallback to Node adm-zip if available
-  try {
-    if (process.platform === "win32") {
-      // Use PowerShell Expand-Archive
-      await execFileAsync("powershell", ["-Command", `Expand-Archive -Path "${zipPath}" -DestinationPath "${destDir}" -Force`], { timeout: 120000 });
-    } else {
-      await execFileAsync("unzip", ["-o", zipPath, "-d", destDir], { timeout: 120000 });
-    }
-    return;
-  } catch {}
-  // Fallback: try adm-zip if installed, else error
-  try {
-    // @ts-ignore
-    const AdmZip: any = (await import("adm-zip" as any)).default;
-    const zip = new AdmZip(zipPath);
-    zip.extractAllTo(destDir, true);
-    return;
-  } catch (e: any) {
-    throw new Error(`Failed to unzip ${zipPath}: ${e.message}. Please install unzip.`);
+  if (process.platform === "win32") {
+    const literal=(value:string)=>"'"+value.replace(/'/g,"''")+"'";
+    await execFileAsync("powershell.exe",["-NoProfile","-NonInteractive","-Command",`Expand-Archive -LiteralPath ${literal(zipPath)} -DestinationPath ${literal(destDir)} -Force`],{timeout:120000,windowsHide:true});
+  } else {
+    await execFileAsync("unzip",["-o",zipPath,"-d",destDir],{timeout:120000});
   }
 }
 
@@ -162,7 +117,10 @@ export async function getSdkStatus(root?: string): Promise<SdkStatus> {
     }
   } catch {}
 
+  const buildToolDir = path.join(r,"build-tools","34.0.0");
+  const buildToolsInstalled = fs.existsSync(path.join(buildToolDir,process.platform==="win32"?"aapt.exe":"aapt")) && fs.existsSync(path.join(buildToolDir,process.platform==="win32"?"apksigner.bat":"apksigner"));
   const needsInstall: string[] = [];
+  if (!buildToolsInstalled) needsInstall.push("build-tools;34.0.0");
   if (!platToolsInstalled) needsInstall.push("platform-tools");
   if (!emuInstalled) needsInstall.push("emulator");
   if (!cmdlineInstalled) needsInstall.push("cmdline-tools");
@@ -175,26 +133,15 @@ export async function getSdkStatus(root?: string): Promise<SdkStatus> {
   if (!cmdlineInstalled) totalMB += 150;
   if (!systemImageInstalled && !anySystemImage) totalMB += 900;
 
-  let platformToolsVersion: string | undefined;
-  if (platToolsInstalled) {
-    try {
-      const out = await execFileAsync(platToolsPath, ["--version"], { timeout: 5000 });
-      platformToolsVersion = String(out.stdout || out.stderr || "").trim().split("\n")[0]?.slice(0, 80);
-    } catch {}
-  }
-
-  let emulatorVersion: string | undefined;
-  if (emuInstalled) {
-    try {
-      const out = await execFileAsync(emuPath, ["-version"], { timeout: 5000 });
-      emulatorVersion = String(out.stdout || out.stderr || "").trim().split("\n")[0]?.slice(0, 120);
-    } catch {}
-  }
+  const revision=(dir:string)=>{try{return fs.readFileSync(path.join(dir,"source.properties"),"utf8").match(/^Pkg.Revision\s*=\s*(.+)$/m)?.[1]?.trim();}catch{return undefined;}};
+  const platformToolsVersion=revision(path.join(r,"platform-tools"));
+  const emulatorVersion=revision(path.join(r,"emulator"));
 
   return {
     installed: needsInstall.length === 0,
     sdkRoot: r,
     components: {
+      buildTools: {installed:buildToolsInstalled,path:buildToolsInstalled?buildToolDir:null},
       platformTools: { installed: platToolsInstalled, path: platToolsInstalled ? platToolsPath : null, version: platformToolsVersion },
       emulator: { installed: emuInstalled, path: emuInstalled ? emuPath : null, version: emulatorVersion },
       cmdlineTools: { installed: cmdlineInstalled, path: cmdlineInstalled ? avdm : null },
@@ -250,12 +197,7 @@ export async function installSdk(onProgress?: (p: SdkInstallProgress) => void, r
     }
     const latest = path.join(dest, "latest");
     await mkdir(latest, { recursive: true });
-    // Copy inner to latest
-    if (process.platform === "win32") {
-      await execFileAsync("powershell", ["-Command", `Copy-Item -Path "${inner}\\*" -Destination "${latest}" -Recurse -Force`], { timeout: 60000 });
-    } else {
-      await execFileAsync("cp", ["-a", `${inner}/.`, latest], { timeout: 60000 });
-    }
+    await fs.promises.cp(inner, latest, {recursive:true});
     await rm(zip, { force: true });
     await rm(tmpExtract, { recursive: true, force: true });
     onProgress?.({ phase: "cmdline-tools", percent: 20, message: "cmdline-tools ready" });
@@ -291,7 +233,7 @@ export async function installSdk(onProgress?: (p: SdkInstallProgress) => void, r
   }
 
   // 4. system image & platform via sdkmanager
-  if (!status.components.systemImage.installed) {
+  if (!status.components.systemImage.installed || !status.components.buildTools?.installed) {
     onProgress?.({ phase: "system-image", percent: 52, message: "Installing system image (this may take several minutes)…" });
     const sdkMgr = getSdkManagerPath(r);
     if (!existsSync(sdkMgr)) throw new Error(`sdkmanager not found at ${sdkMgr}. cmdline-tools install may have failed.`);

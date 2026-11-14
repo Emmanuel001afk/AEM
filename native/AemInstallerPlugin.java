@@ -394,7 +394,17 @@ public class AemInstallerPlugin extends Plugin {
             apks.addAll(AemPackageArchive.extract(file, dir));
         } else throw new IOException("Unsupported installer file: " + file.getName());
 
-        for (File apk : apks) validatePackage(apk, expectedPackage, expectedSigningCert, expectedVersionCode);
+        // PackageManager cannot parse isolated config splits on every Android version.
+        // Preflight readable base metadata; PackageInstaller atomically verifies every split/signature.
+        boolean readableBase = false;
+        for (File apk : apks) {
+            android.content.pm.PackageInfo readable = getContext().getPackageManager().getPackageArchiveInfo(apk.getAbsolutePath(), 0);
+            if (readable != null) {
+                validatePackage(apk, expectedPackage, expectedSigningCert, expectedVersionCode);
+                readableBase = true;
+            }
+        }
+        if (!readableBase) throw new IOException("No readable base APK; obtain a complete device-compatible package set");
 
         if ("system".equalsIgnoreCase(mode)) {
             if (!lower.endsWith(".apk")) throw new IOException("Android system installer mode supports .apk only; use AEM Split Installer for split-package archives.");

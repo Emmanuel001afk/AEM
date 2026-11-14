@@ -26,6 +26,11 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           cache-overwrite-existing: true
+      - name: Test bounded native archive extraction on JVM
+        run: |
+          mkdir -p /tmp/aem-java-tests
+          javac -d /tmp/aem-java-tests native/AemPackageArchive.java tests/native/AemPackageArchiveTest.java
+          java -cp /tmp/aem-java-tests com.aem.store.AemPackageArchiveTest
       - run: npm ci
       - name: Typecheck
         run: |

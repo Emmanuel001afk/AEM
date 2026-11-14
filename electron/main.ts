@@ -155,6 +155,7 @@ async function createWindow(): Promise<BrowserWindow> {
   win.webContents.on("will-navigate", (event, url) => {
     if (!isTrustedRenderer(url, path.join(__dirname, "../dist/index.html"), isDev() ? process.env.AEM_DEV_URL : undefined)) event.preventDefault();
   });
+  win.webContents.on("will-attach-webview", event => event.preventDefault());
   win.webContents.session.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
 
   // Load renderer
@@ -166,7 +167,14 @@ async function createWindow(): Promise<BrowserWindow> {
   }
 
   if (process.env.AEM_SMOKE_TEST === "1" && process.env.AEM_SMOKE_RESULT) {
-    const ok = await win.webContents.executeJavaScript('Boolean(document.querySelector("#root")?.childElementCount)');
+    const ok = await win.webContents.executeJavaScript(`new Promise(resolve => {
+      const deadline = Date.now() + 10000;
+      const check = () => {
+        if (document.querySelector('#root')?.childElementCount && window.aemDesktop?.isDesktop) return resolve(true);
+        if (Date.now() > deadline) return resolve(false);
+        setTimeout(check, 100);
+      }; check();
+    })`);
     fs.writeFileSync(process.env.AEM_SMOKE_RESULT, JSON.stringify({ ok, version: app.getVersion(), executable: process.execPath }));
     app.quit();
   }
