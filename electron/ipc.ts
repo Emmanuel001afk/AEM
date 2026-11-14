@@ -1,3 +1,4 @@
+import {TransferService} from "./transfer/service";
 import {getNativeInstallations,nativeUpdateState} from "./native-registry";
 import { ipcMain, dialog, shell, app, BrowserWindow } from "electron";
 import path from "path";
@@ -9,6 +10,12 @@ import { EmulatorManager } from "./emulator/manager";
 
 export function registerIpc(mainWindow: BrowserWindow) {
   const emu = EmulatorManager.getInstance();
+  const transferRoot=path.join(app.getPath('downloads'),'AEM Transfer');
+  const transfer=new TransferService({root:transferRoot,assets:path.join(__dirname,'transfer','web'),consent:async(request)=>{
+    const result=await dialog.showMessageBox(mainWindow,{type:'question',buttons:['Reject','Allow'],defaultId:0,cancelId:0,message:request.kind==='pair'?'Allow this device to access locally shared files?':'Receive this file?',detail:request.kind==='pair'?`Unverified device label: ${request.name}. Network address: ${request.address}. Only approve the device you invited; compare the TLS fingerprint out of band first. Grant expires in one hour.`:`${request.name} (${request.size} bytes) from ${request.address}. SHA-256: ${request.sha256}. This saves a file only; nothing is executed or installed.`});
+    return result.response===1;
+  }});
+  mainWindow.once('closed',()=>{void transfer.stop();});
   const handle: typeof ipcMain.handle = (channel, listener) => {
     ipcMain.removeHandler(channel);
     ipcMain.handle(channel, (event, ...args) => {
@@ -112,6 +119,21 @@ export function registerIpc(mainWindow: BrowserWindow) {
     return {path:file,launched:launch.response===1};
   });
 
+  handle('transfer:status',()=>transfer.status());
+  handle('transfer:start',async()=>{
+    const c=await dialog.showMessageBox(mainWindow,{type:'warning',buttons:['Cancel','Start local HTTPS sharing'],defaultId:0,cancelId:0,message:'Open a local HTTPS transfer endpoint?',detail:'Other devices on your network can connect. Pairing requires a one-use invitation and your approval. Verify the certificate fingerprint on the other device. Only selected files are shared. Use a trusted private network; do not forward this port on your router.'});
+    return c.response===1?transfer.start():null;
+  });
+  handle('transfer:invitation',()=>transfer.newInvitation());
+  handle('transfer:stop',()=>transfer.stop());
+  handle('transfer:revoke',(_e,id:string)=>transfer.revoke(id));
+  handle('transfer:remove',(_e,id:string)=>transfer.remove(id));
+  handle('transfer:showFolder',async()=>{await fs.promises.mkdir(transferRoot,{recursive:true});const e=await shell.openPath(transferRoot);if(e)throw new Error(e);});
+  handle('transfer:offer',async()=>{
+    const pick=await dialog.showOpenDialog(mainWindow,{title:'Share selected files with paired LAN devices',properties:['openFile','multiSelections']});
+    return pick.canceled?null:transfer.offer(pick.filePaths);
+  });
+
   // Phone operations are independent of the emulator and use Android-authorized ADB only.
   handle("phone:devices", () => phoneManager().devices());
   handle("phone:status", () => phoneManager().status());
@@ -142,6 +164,7 @@ export function registerIpc(mainWindow: BrowserWindow) {
   });
 
   // Emulator
+  handle("emulator:getResourceProfiles",()=>emu.getResourceProfiles());
   handle("emulator:getStatus", async () => emu.getStatus());
   handle("emulator:getDiagnostics", async (_e, force?: boolean) => emu.getDiagnostics(!!force));
   handle("emulator:getSdkStatus", async () => emu.getSdkStatus());

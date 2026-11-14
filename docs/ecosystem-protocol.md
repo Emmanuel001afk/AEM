@@ -1,18 +1,9 @@
-# AEM-side ecosystem capability contract
+# Application-neutral capabilities and recognition
 
-`src/domain/ecosystem.ts` defines versioned registrations for AEM Store, EMA, OEA, Phormi and Central Hub, device identity, exposed capabilities, scoped grants, expiry and revocation. Pure authorization tests cover denial of ungranted, expired, revoked and mismatched peer/device requests.
+`src/domain/ecosystem.ts` accepts **any** independently owned reverse-DNS application identity, bounded human display name, numeric version, device identity and supported capability set. There is no special permission for AEM, EMA, OEA, Phormi, Central Hub or any other brand. `crossPlatform.ts` recognizes the caller's explicitly requested IDs, not a hard-coded list. Existing catalog listings and historical adapters remain compatible; they do not define the ecosystem boundary.
 
-**This is protocol preparation, not connected-app integration.** No partner repository, identity or database has been changed. No discovery advertisement establishes trust. Before this contract can be exposed over a network or Android intent interface, an implementation must:
+Authorization is separate from recognition: a copied display name, a discovery advertisement or a catalog entry never grants access. Each application retains its own data, package ID and credentials. Capability requests require authenticated peer/device identity, explicit scoped grants, expiry/revocation and fresh request IDs. The pure contract validator cannot authenticate a transport or detect replay by itself.
 
-1. authenticate a stable peer/device key using an explicitly approved pairing;
-2. keep private keys in Android Keystore/Windows secure storage;
-3. persist user-approved per-device/per-capability grants independently in AEM;
-4. authenticate requests, enforce expiry/revocation, bind payload integrity, reject replayed request IDs, rate-limit and audit requests;
-5. require the relevant local consent again for installation, screen/input sharing and transfer acceptance;
-6. use independent app-owned APIs, never query or merge another app's database.
+The generic file-transfer transport is live separately as `aem-lan/1`: see [LAN companion](lan-transfer.md). It has real user pairing/receive consent, bearer grants, expiry and revocation. It deliberately does not expose unattended install, arbitrary file reads, screen control or another application's database.
 
-AEM does not yet have that partner transport or grant-management UI. All external capability use remains unavailable. A future LAN protocol should use a separate version from Android's existing Wi-Fi Direct protocol 6; do not retrofit unencrypted sender tokens into a claim of cryptographic identity.
-
-## LAN transfer work remaining
-
-The current Android Wi-Fi Direct channel's consent, integrity, offsets and history remain intact. Desktop ADB is a separate explicit fallback. A complete AEM-to-AEM LAN implementation still needs Android NSD / desktop mDNS, pinned-key encrypted transport, out-of-band pairing verification, revocation, receiving consent on both platforms, range/offset persistence, disk quota checks, SHA-256 finalization and bidirectional physical tests. Discovery data must be treated as untrusted, and interrupted/unverified bytes must never become installable packages.
+Other capability adapters remain extension contracts; a platform can supply its own reviewed adapter without being added to a brand allowlist. Before exposing those capabilities over a network, authenticate stable peer keys, persist grants in secure local storage, reject replay, rate-limit, audit and require relevant local confirmation. The old Phormi-specific TypeScript shape is a deprecated compatibility interface, not an active privileged integration.

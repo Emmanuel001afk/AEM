@@ -1,3 +1,15 @@
+# Generalization and reconciliation update — 2026-11-14
+
+The previous checkpoint below is historical. PR #10 is being reconciled with main's PR #11 without discarding the verified release/emulator gates. Brand allowlists have been removed from both ecosystem registration and cross-platform recognition. Any independently owned reverse-DNS application ID and a validated display name can register; names never grant authority and databases remain independent.
+
+A separate **generic HTTPS LAN companion** replaces PR #11's non-working TCP implementation. Any compatible phone/tablet/desktop browser can pair using a two-minute one-use invitation, certificate fingerprint verification and explicit PC consent. Selected files flow both ways, uploads resume at committed chunk offsets, and full SHA-256 verification is required before saving completion. Revoke/stop/expiry, quotas, file safety and same-origin checks apply. See `docs/lan-transfer.md` for limits and exact semantics. It is not Android protocol 6, and does not impersonate existing apps.
+
+Local build and **51 tests** pass, including real TLS uploads/downloads, interrupted request recovery, wrong-CA/origin rejection, pairing replay, revocation, peer isolation and checksum failures. A real Chromium bidirectional companion smoke is added to CI. Final CI/merge/publication status is reported in the conversation and GitHub; this document does not pre-claim their success.
+
+Remaining acceptance boundaries: physical Wi-Fi Direct/phone browsers/Windows firewall/Latitude performance, AEM SDK downloader and Windows hypervisor runtime. The source-native toolchain is verified using repository-owned source, not a delivered third-party adaptation. Generic capability adapters for install/screen-control beyond existing local consented operations are contracts, not connected remote integrations. No universal APK conversion, account/entitlement transfer, native OEM desktop guarantee or database consolidation is claimed.
+
+---
+
 # AEM multi-platform implementation and verification ledger
 
 ## Latest verified checkpoint — 0.2.19
@@ -112,7 +124,7 @@ At this intermediate point, 40 local unit/integration-double tests and renderer/
 
 - Secure AEM-to-AEM LAN discovery/pairing, encrypted transport, bidirectional progress/resume and interruption/authentication tests: **not implemented**. Existing phone-phone path retained; authorized ADB copies are not a substitute for LAN/resume.
 - A licensed third-party Android application adapted to native Windows source: **not delivered**. WinForms fixture proves tooling only. Arbitrary proprietary APKs cannot supply missing source/components or entitlements.
-- Live authorized EMA/OEA/Phormi/Central Hub transport/consent UI: **not implemented**. No external repository or database changed/merged.
+- Arbitrary independently owned application capability adapters beyond file transfer: **not implemented**. Named products are examples, never an allowlist. No external repository or database changed/merged.
 - Supabase sync/publish currently ingests Android artifacts only; native Windows artifacts require a catalog publishing extension or curated records. Do not imply published native variants exist merely because a selector/build route exists.
 - Android physical install/update/permissions/settings, physical Wi-Fi Direct, both physical transfer directions, interruption recovery, phone-powered display, OEM desktop, DRM-restricted apps, cross-version Android updates and Dell Latitude 3190 4GB usability: **not verified**. No attached devices or Windows laptop available locally. CI runtime checks cover narrower cases only.
 - Main release publication and permanent latest download page: code is gated, but publication not executed; draft PR #10 remains unmerged.

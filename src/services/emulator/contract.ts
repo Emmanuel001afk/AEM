@@ -1,3 +1,40 @@
+export type ResourceProfileId = "lightweight" | "balanced" | "standard";
+
+export interface HostResources {
+  platform: string;
+  arch: string;
+  totalMemMB: number;
+  freeMemMB: number;
+  cpuModel: string;
+  cpuCores: number;
+  diskFreeMB: number | null;
+  virtualizationEnabled: boolean | null;
+  hypervisor: string | null;
+  gpuInfo: string | null;
+  osVersion: string;
+}
+
+export interface ResourceProfile {
+  id: ResourceProfileId;
+  name: string;
+  description: string;
+  ramMB: number;
+  heapMB: number;
+  cores: number;
+  storageMB: number;
+  gpuMode: string;
+  snapshot: boolean;
+  recommendedFor: string;
+}
+
+export interface ResourceRecommendation {
+  host: HostResources;
+  profiles: ResourceProfile[];
+  recommended: ResourceProfileId | null;
+  reasons: string[];
+  limitations: string[];
+}
+
 /**
  * Emulator bridge contract — shared between renderer and preload.
  * Renderer should never import Electron directly; it checks window.aemDesktop.
@@ -66,6 +103,7 @@ export interface InstalledApp {
 }
 
 export interface EmulatorBridge {
+  getResourceProfiles():Promise<ResourceRecommendation>;
   getStatus(): Promise<EmulatorStatus>;
   getDiagnostics(force?: boolean): Promise<DiagnosticsResult>;
   getSdkStatus(): Promise<SdkStatus>;
@@ -115,6 +153,7 @@ export interface PhoneBridge {
   exportPackage(serial:string,pkg:string): Promise<{path:string;sha256:string;components:number}|null>;
 }
 export interface DesktopBridge {
+  transfer:import('../transfer/contract').TransferBridge;
   native: {status(identity:string,version:string):Promise<{installed:{packageIdentity:string;displayName:string;version:string;installLocation:string;scope:'user'|'machine'}[];state:'not-installed'|'update'|'current'|'newer-installed'|'unknown'}>;build():Promise<{path:string}|null>;install(artifact:{url:string;filename:string;sha256:string;packageIdentity:string;version:string}):Promise<{path:string;launched:boolean}|null>};
   phone: PhoneBridge;
   isDesktop: boolean;

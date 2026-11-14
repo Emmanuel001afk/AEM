@@ -96,3 +96,20 @@ test('signer output parsing accepts SDK spacing/CRLF and rejects unrelated diges
  assert.deepEqual(parseSignerCertificates(`Signer #1 certificate SHA256 digest:  ${cert.toUpperCase()}\n`),[cert]);
  assert.deepEqual(parseSignerCertificates(`Source Stamp certificate SHA-256 digest: ${cert}\nSigner #1 public key SHA-256 digest: ${cert}\n`),[]);
 });
+
+test('capability registration is application-neutral, not a whitelist of platform names',async()=>{
+ const {validateRegistration,authorizeCapability}=await domain('ecosystem.ts');
+ const r={protocol:'aem-capabilities/1',platformId:'org.independent.research',displayName:'Independent Research 工具',version:'2.3.4',deviceId:'device-0123456789abcdef',capabilities:['transfer.offer']};
+ assert.equal(validateRegistration(r),true);
+ assert.equal(validateRegistration({...r,displayName:'EMA'}),true);
+ for(const patch of [{displayName:''},{displayName:'a\u202eb'},{platformId:'../admin'},{version:{}},{capabilities:['admin.all']}])assert.equal(validateRegistration({...r,...patch}),false);
+ const q={protocol:r.protocol,peerId:r.platformId,deviceId:r.deviceId,requestId:'request-0123456789',capability:'transfer.offer'};
+ assert.equal(authorizeCapability(q,{peerId:r.platformId,deviceId:r.deviceId},[]),false);
+});
+test('generic recognition preserves arbitrary publisher identities without default brands',async()=>{
+ const {emptyRecognition,mergeRecognition}=await domain('crossPlatform.ts');
+ assert.deepEqual(emptyRecognition(),{recognized:[],notFound:[]});
+ const requested=emptyRecognition(['org.example.reader','org.independent.research']);
+ const result=mergeRecognition(requested,{recognized:[{platform:'org.example.reader',identity:{appId:'reader.win'}}],notFound:[]});
+ assert.deepEqual(result.notFound,['org.independent.research']);assert.equal(result.recognized.length,1);
+});

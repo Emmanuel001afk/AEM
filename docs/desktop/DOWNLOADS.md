@@ -2,13 +2,13 @@
 
 ## Current verified CI build: 0.2.19
 
-No GitHub Release has been published by this work. Download the [complete verified CI bundle](https://github.com/Emmanuel001afk/AEM/actions/runs/43587692645/artifacts/14111202000), [Android APK artifact](https://github.com/Emmanuel001afk/AEM/actions/runs/43587692645/artifacts/14111290970) or [Windows Setup + Portable artifact](https://github.com/Emmanuel001afk/AEM/actions/runs/43587692645/artifacts/14111605512). GitHub login may be required and artifacts expire. Extract the GitHub ZIP wrapper before running a file. The binaries are `app-release.apk`, `AEM-Store-0.2.19-Setup-x64.exe` and `AEM-Store-0.2.19-Portable-x64.exe`.
+For the latest published build use [GitHub Releases](https://github.com/Emmanuel001afk/AEM/releases/latest). This section retains the pre-merge 0.2.19 CI checkpoint. Download the [complete verified CI bundle](https://github.com/Emmanuel001afk/AEM/actions/runs/43587692645/artifacts/14111202000), [Android APK artifact](https://github.com/Emmanuel001afk/AEM/actions/runs/43587692645/artifacts/14111290970) or [Windows Setup + Portable artifact](https://github.com/Emmanuel001afk/AEM/actions/runs/43587692645/artifacts/14111605512). GitHub login may be required and artifacts expire. Extract the GitHub ZIP wrapper before running a file. The binaries are `app-release.apk`, `AEM-Store-0.2.19-Setup-x64.exe` and `AEM-Store-0.2.19-Portable-x64.exe`.
 
 See [the verification ledger](../TRANSFORMATION.md) for exact hashes, executed runtime checks and important incomplete scope. The full combined run passed; this is not completion of LAN/resume, partner integrations or physical-device acceptance.
 
 ## Permanent release route
 
-Open https://github.com/Emmanuel001afk/AEM/releases/latest after a successful published main build. The draft PR has not been merged; do not assume this URL currently contains a published release.
+Open https://github.com/Emmanuel001afk/AEM/releases/latest after a successful published main build. Only successful main builds passing runtime and downloaded-asset checksum verification become public releases. PR artifacts are not permanent releases.
 
 - **Android:** `app-release.apk`. Install on Android; retain the existing app to preserve data. Android asks for installation permission. Updates must use the same signing certificate.
 - **Windows recommended:** `AEM-Store-<version>-Setup-x64.exe`. Download and double-click this file directly. It installs AEM Store, Start Menu and desktop shortcuts and an uninstaller. Do not open it using WinRAR. Run a newer Setup over the existing installation to upgrade. App data is retained by default during uninstall.

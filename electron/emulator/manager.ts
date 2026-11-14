@@ -82,6 +82,17 @@ export class EmulatorManager {
     return this.getSdkStatus();
   }
 
+  async getResourceProfiles() {
+    const d=await this.getDiagnostics(true);
+    return {
+      host:{...d.host,platform:process.platform,arch:process.arch,diskFreeMB:d.host.diskFreeMB??null,hypervisor:d.host.hypervisor??null,gpuInfo:d.host.gpuInfo??null},
+      recommended:d.recommendation.supported?d.recommendation.profile:null,
+      reasons:d.recommendation.reasons,
+      limitations:d.recommendation.warnings,
+      profiles:([['lightweight',1536],['balanced',2048],['standard',3072]] as const).map(([id,ramMB])=>({id,name:id,description:'Measured safe-budget policy; not a benchmark',ramMB,heapMB:ramMB<=2048?256:512,cores:d.recommendation.cores,storageMB:8192,gpuMode:'auto',snapshot:true,recommendedFor:'Only when current diagnostics permit this allocation'})),
+    };
+  }
+
   async listAvds(): Promise<AvdInfo[]> { return listAvds(this.sdkRoot); }
   async getAvdInfo(name: string): Promise<AvdInfo | null> { return getAvdInfo(name); }
   async listSystemImages() { return listSystemImages(this.sdkRoot); }

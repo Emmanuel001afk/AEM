@@ -95,6 +95,13 @@ jobs:
           node node_modules/electron/install.js
           sudo chown root:root node_modules/electron/dist/chrome-sandbox
           sudo chmod 4755 node_modules/electron/dist/chrome-sandbox
+      - name: Real Chromium LAN companion upload and download
+        run: |
+          if ! xvfb-run -a node_modules/.bin/electron scripts/lan-browser-smoke.cjs > aem-lan-browser.log 2>&1; then
+            node -e "const fs=require('fs');console.log('::error title=LAN browser runtime::'+(fs.existsSync('aem-lan-browser-failure.txt')?fs.readFileSync('aem-lan-browser-failure.txt','utf8'):fs.readFileSync('aem-lan-browser.log','utf8')).slice(-6000).replaceAll('%','%25').replaceAll('\\r','%0D').replaceAll('\\n','%0A'))"
+            exit 1
+          fi
+          cat aem-lan-browser.log
       - name: Exercise AEM diagnostics, AVD creation, install, launch and teardown
         run: |
           if ! xvfb-run -a node_modules/.bin/electron scripts/emulator-runtime-smoke.cjs > aem-electron-runtime.log 2>&1; then
@@ -108,6 +115,8 @@ jobs:
         with:
           name: aem-managed-emulator-diagnostics
           path: |
+            aem-lan-browser.log
+            aem-lan-browser-failure.txt
             aem-runtime-failure.txt
             aem-runtime-manager.log
             aem-electron-runtime.log

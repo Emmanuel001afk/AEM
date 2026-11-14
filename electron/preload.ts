@@ -34,6 +34,12 @@ const api = {
     ipcRenderer.invoke("aem:pickFile", opts),
   saveFile: (opts: { title?: string; defaultPath?: string; filters?: any[] }) => ipcRenderer.invoke("aem:saveFile", opts),
 
+  transfer: {
+    status:()=>ipcRenderer.invoke('transfer:status'),start:()=>ipcRenderer.invoke('transfer:start'),
+    invitation:()=>ipcRenderer.invoke('transfer:invitation'),stop:()=>ipcRenderer.invoke('transfer:stop'),
+    offer:()=>ipcRenderer.invoke('transfer:offer'),revoke:(id:string)=>ipcRenderer.invoke('transfer:revoke',id),
+    remove:(id:string)=>ipcRenderer.invoke('transfer:remove',id),showFolder:()=>ipcRenderer.invoke('transfer:showFolder'),
+  },
   native: { status: (identity:string,version:string) => ipcRenderer.invoke("native:status",identity,version), build: () => ipcRenderer.invoke("native:build"), install: (artifact: {url:string;filename:string;sha256:string;packageIdentity:string;version:string}) => ipcRenderer.invoke("native:install",artifact) },
   phone: {
     devices: () => ipcRenderer.invoke("phone:devices"),
@@ -48,6 +54,7 @@ const api = {
   },
   // Emulator
   emulator: {
+    getResourceProfiles: () => ipcRenderer.invoke("emulator:getResourceProfiles"),
     getStatus: () => ipcRenderer.invoke("emulator:getStatus"),
     getDiagnostics: (force?: boolean) => ipcRenderer.invoke("emulator:getDiagnostics", force),
     getSdkStatus: () => ipcRenderer.invoke("emulator:getSdkStatus"),

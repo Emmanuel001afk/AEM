@@ -1,3 +1,4 @@
+import DesktopTransfer from "./components/transfer/DesktopTransfer";
 import {useEffect,useMemo,useRef,useState} from "react";
 import {Capacitor,registerPlugin} from "@capacitor/core";
 import {loadSupabaseCatalog} from "./services/catalog/supabase";
@@ -130,7 +131,8 @@ export default function App(){
 
   {tab==="Updates"&&<section className="content"><div className="section-head"><div><span>UPDATES</span><h2>Available releases</h2></div><span>{updateApps.length} available</span></div><div className="grid">{updateApps.map(a=><AppCard key={a.id.project} app={a} onOpen={()=>openApp(a)} onInstall={()=>install(a)} onInstallToEmulator={()=>installToEmulator(a)} onOpenInstalled={(p)=>Capacitor.isNativePlatform()?AemInstaller.openInstalled({packageName:p}):window.open(a.sourceUrl,"_blank")} installed={a.packageIdentity?installed[a.packageIdentity]:undefined} isDesktop={isDesktop}/>)}</div></section>}
 
-  {tab==="Transfer"&&!Capacitor.isNativePlatform()&&<section className="content transfer-page">
+  {tab==="Transfer"&&isDesktop&&<DesktopTransfer/>}
+  {tab==="Transfer"&&!isDesktop&&!Capacitor.isNativePlatform()&&<section className="content transfer-page">
     <div className="section-head"><div><span>TRANSFER</span><h2>Local transfer</h2></div><span className="transfer-pill">Android app</span></div>
     <div className="transfer-hero">
       <div className="transfer-mark" aria-hidden="true"><span>↑</span><span>↓</span></div>
