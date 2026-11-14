@@ -148,9 +148,16 @@ jobs:
           set -euo pipefail
           for attempt in 1 2 3 4 5; do
             echo "Release build attempt $attempt/5"
-            if ./gradlew --max-workers=2 assembleRelease; then exit 0; fi
+            if ./gradlew --max-workers=2 assembleRelease 2>&1 | tee ../android-build.log; then exit 0; fi
             if [ "$attempt" -lt 5 ]; then sleep $((attempt * 20)); fi
           done
+          python3 - <<'PYERROR'
+          from pathlib import Path
+          text = Path("../android-build.log").read_text(errors="replace")
+          tail = "\n".join(text.splitlines()[-90:])
+          escaped = tail.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+          print("::error title=Android build failure::" + escaped)
+          PYERROR
           exit 1
 
       - name: Verify signed Android package and identity

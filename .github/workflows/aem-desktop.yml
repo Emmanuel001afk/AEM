@@ -45,7 +45,13 @@ jobs:
         run: node --input-type=module -e "import {verifyPE} from './scripts/verify-release.mjs'; import fs from 'node:fs'; for (const f of fs.readdirSync('release').filter(f=>f.endsWith('.exe'))) verifyPE('release/'+f); verifyPE('release/win-unpacked/AEM Store.exe')"
       - name: Installed and portable application smoke tests
         shell: pwsh
-        run: ./scripts/windows-smoke.ps1
+        run: |
+          try { ./scripts/windows-smoke.ps1 }
+          catch {
+            $message = ($_.Exception.Message + "`n" + $_.ScriptStackTrace).Replace('%','%25').Replace("`r",'%0D').Replace("`n",'%0A')
+            Write-Host "::error title=Windows installation smoke failure::$message"
+            exit 1
+          }
       - uses: actions/upload-artifact@v4
         with:
           name: aem-store-windows
