@@ -85,3 +85,6 @@ Local retrieval via `gh run download` was attempted and failed at the Azure arti
 - Android physical install/update/permissions/settings, physical Wi-Fi Direct, both physical transfer directions, interruption recovery, phone-powered display, OEM desktop, DRM-restricted apps, cross-version Android updates and Dell Latitude 3190 4GB usability: **not verified**. No attached devices or Windows laptop available locally. CI runtime checks cover narrower cases only.
 - Main release publication and permanent latest download page: code is gated, but publication not executed; draft PR #10 remains unmerged.
 - Dependency audit: 6 moderate development/build-time issues; production audit has no advisories. Avoid a forced incompatible builder downgrade.
+
+
+Run [43585276138](https://github.com/Emmanuel001afk/AEM/actions/runs/43585276138), head `c6ad941`: Windows native registry/current/update/downgrade/uninstall checks and Windows 0.2.12 → 0.2.13 upgrade passed; signed APK/API29 smoke passed. Overall run failed before the new managed emulator test: `android-actions/setup-android@v3` failed (log download blocked; precise setup cause unknown). Replaced the redundant setup action with the runner's existing SDK manager and explicit setup-failure annotations. No managed-AVD success is claimed from this run.
