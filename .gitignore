@@ -13,3 +13,7 @@ release/
 # OS
 .DS_Store
 Thumbs.db
+
+# Local validation tooling and transient logs
+.cache/
+*.log

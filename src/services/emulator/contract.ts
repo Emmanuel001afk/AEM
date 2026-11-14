@@ -1,45 +1,3 @@
-/**
- * Emulator bridge contract — shared between renderer and preload.
- * Renderer should never import Electron directly; it checks window.aemDesktop.
- */
-
-export type EmulatorState = "not-installed" | "installing" | "ready" | "starting" | "running" | "stopping" | "error" | "unavailable";
-
-export interface EmulatorStatus {
-  state: EmulatorState;
-  avdName: string | null;
-  pid: number | null;
-  adbSerial: string | null;
-  uptimeMs: number | null;
-  bootCompleted: boolean;
-  lastError: string | null;
-  progress?: { phase: string; percent: number; message: string };
-  version?: { emulator: string; adb: string; apiLevel: number };
-}
-
-export interface DiagnosticsResult {
-  timestamp: string;
-  platform: string;
-  arch: string;
-  checks: { id: string; label: string; status: "pass"|"warn"|"fail"|"info"; message: string; details?: string; fix?: string; required: boolean }[];
-  summary: { passed: number; warnings: number; failed: number; canRun: boolean };
-  requirements: { minRamMB: number; recommendedRamMB: number; minDiskMB: number; recommendedDiskMB: number; minCpuCores: number };
-  host: { totalMemMB: number; freeMemMB: number; cpuModel: string; cpuCores: number; gpuInfo?: string; osVersion: string; virtualizationEnabled?: boolean; hypervisor?: string; diskFreeMB?: number };
-}
-
-export interface SdkStatus {
-  installed: boolean;
-  sdkRoot: string;
-  components: {
-    platformTools: { installed: boolean; path: string | null; version?: string };
-    emulator: { installed: boolean; path: string | null; version?: string };
-    cmdlineTools: { installed: boolean; path: string | null };
-    systemImage: { installed: boolean; apiLevel: number; variant: string; path: string | null };
-  };
-  needsInstall: string[];
-  totalDownloadMB: number;
-}
-
 export type ResourceProfileId = "lightweight" | "balanced" | "standard";
 
 export interface HostResources {
@@ -72,9 +30,52 @@ export interface ResourceProfile {
 export interface ResourceRecommendation {
   host: HostResources;
   profiles: ResourceProfile[];
-  recommended: ResourceProfileId;
+  recommended: ResourceProfileId | null;
   reasons: string[];
   limitations: string[];
+}
+
+/**
+ * Emulator bridge contract — shared between renderer and preload.
+ * Renderer should never import Electron directly; it checks window.aemDesktop.
+ */
+
+export type EmulatorState = "not-installed" | "installing" | "ready" | "starting" | "running" | "stopping" | "error" | "unavailable";
+
+export interface EmulatorStatus {
+  state: EmulatorState;
+  avdName: string | null;
+  pid: number | null;
+  adbSerial: string | null;
+  uptimeMs: number | null;
+  bootCompleted: boolean;
+  lastError: string | null;
+  progress?: { phase: string; percent: number; message: string };
+  version?: { emulator: string; adb: string; apiLevel: number };
+}
+
+export interface DiagnosticsResult {
+  recommendation?: import("../../../electron/emulator/resources").ResourcePlan;
+  timestamp: string;
+  platform: string;
+  arch: string;
+  checks: { id: string; label: string; status: "pass"|"warn"|"fail"|"info"; message: string; details?: string; fix?: string; required: boolean }[];
+  summary: { passed: number; warnings: number; failed: number; canRun: boolean };
+  requirements: { minRamMB: number; recommendedRamMB: number; minDiskMB: number; recommendedDiskMB: number; minCpuCores: number };
+  host: { totalMemMB: number; freeMemMB: number; cpuModel: string; cpuCores: number; gpuInfo?: string; osVersion: string; virtualizationEnabled?: boolean; hypervisor?: string; diskFreeMB?: number };
+}
+
+export interface SdkStatus {
+  installed: boolean;
+  sdkRoot: string;
+  components: {
+    platformTools: { installed: boolean; path: string | null; version?: string };
+    emulator: { installed: boolean; path: string | null; version?: string };
+    cmdlineTools: { installed: boolean; path: string | null };
+    systemImage: { installed: boolean; apiLevel: number; variant: string; path: string | null };
+  };
+  needsInstall: string[];
+  totalDownloadMB: number;
 }
 
 export interface AvdInfo {
@@ -102,6 +103,7 @@ export interface InstalledApp {
 }
 
 export interface EmulatorBridge {
+  getResourceProfiles():Promise<ResourceRecommendation>;
   getStatus(): Promise<EmulatorStatus>;
   getDiagnostics(force?: boolean): Promise<DiagnosticsResult>;
   getSdkStatus(): Promise<SdkStatus>;
@@ -111,7 +113,6 @@ export interface EmulatorBridge {
   getAvdInfo(name: string): Promise<AvdInfo | null>;
   listSystemImages(): Promise<any[]>;
   createAvd(opts: any): Promise<AvdInfo>;
-  getResourceProfiles(): Promise<ResourceRecommendation>;
   deleteAvd(name: string): Promise<boolean>;
   wipeAvd(name: string): Promise<void>;
   updateAvd(name: string, patch: any): Promise<AvdInfo | null>;
@@ -137,12 +138,24 @@ export interface EmulatorBridge {
   setLocation(lat: number, lng: number): Promise<boolean>;
   rotate(r: number): Promise<boolean>;
   getLogs(limit?: number): Promise<string[]>;
-  installStoreArtifact(artifact: { url: string; filename: string; packageIdentity?: string }): Promise<{ success: boolean; message: string }>;
+  installStoreArtifact(artifact: { url: string; filename: string; packageIdentity?: string; sha256?: string; signingCertificateSha256?: string }): Promise<{ success: boolean; message: string }>;
 }
 
-import type { TransferBridge } from "../transfer/contract";
-
+export interface PhoneBridge {
+  devices(): Promise<{serial:string;state:string;model:string}[]>;
+  status(): Promise<{running:boolean;serial:string|null;error:string|null;scrcpyAvailable:boolean;progress:{phase:string;completed:number;total:number;message:string}}>;
+  configure(): Promise<unknown>;
+  apps(serial:string): Promise<string[]>;
+  start(serial:string,pkg?:string): Promise<unknown>;
+  stop(): Promise<unknown>;
+  send(serial:string): Promise<{path:string;sha256:string}|null>;
+  receive(serial:string,remote:string): Promise<{path:string;sha256:string}|null>;
+  exportPackage(serial:string,pkg:string): Promise<{path:string;sha256:string;components:number}|null>;
+}
 export interface DesktopBridge {
+  transfer:import('../transfer/contract').TransferBridge;
+  native: {status(identity:string,version:string):Promise<{installed:{packageIdentity:string;displayName:string;version:string;installLocation:string;scope:'user'|'machine'}[];state:'not-installed'|'update'|'current'|'newer-installed'|'unknown'}>;build():Promise<{path:string}|null>;install(artifact:{url:string;filename:string;sha256:string;packageIdentity:string;version:string}):Promise<{path:string;launched:boolean}|null>};
+  phone: PhoneBridge;
   isDesktop: boolean;
   platform: NodeJS.Platform;
   arch: string;
@@ -157,7 +170,6 @@ export interface DesktopBridge {
   pickApkFile(): Promise<{ canceled: boolean; filePaths: string[] }>;
   pickFile(opts: { title?: string; filters?: { name: string; extensions: string[] }[] }): Promise<{ canceled: boolean; filePaths: string[] }>;
   emulator: EmulatorBridge;
-  transfer: TransferBridge;
 }
 
 declare global {

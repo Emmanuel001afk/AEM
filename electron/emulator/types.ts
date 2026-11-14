@@ -18,6 +18,7 @@ export interface EmulatorStatus {
 }
 
 export interface DiagnosticsResult {
+  recommendation: import("./resources").ResourcePlan;
   timestamp: string;
   platform: NodeJS.Platform;
   arch: string;

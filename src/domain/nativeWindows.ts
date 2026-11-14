@@ -9,7 +9,7 @@
  */
 export type NativeBuildStrategy =
   | "source-rebuild"     // app ships Windows source/components; rebuild to EXE/MSIX
-  | "wrapper"            // lightweight launcher around the web/Android artifact
+  | "published-native"   // separately published Windows artifact; not APK conversion
   | "unavailable";       // no native Windows build possible from available inputs
 
 export interface NativeWindowsVariant {
@@ -27,7 +27,7 @@ export interface NativeWindowsAssessment {
   summary: string;
 }
 
-const WINDOWS_ARTIFACT_KINDS = new Set(["exe", "msix"]);
+const WINDOWS_ARTIFACT_KINDS = new Set(["exe"]);
 
 /**
  * Assess the native-Windows delivery option for one application based on its
@@ -36,14 +36,14 @@ const WINDOWS_ARTIFACT_KINDS = new Set(["exe", "msix"]);
 export function assessNativeWindows(app: {
   id: { provider: string; project: string };
   platforms: string[];
-  latest?: { artifacts: Array<{ platform: string; kind: string; packageIdentity?: string }> };
+  latest?: { artifacts: Array<{ platform: string; kind: string; packageIdentity?: string;sha256?:string;downloadUrl?:string }> };
   packageIdentity?: string;
 }): NativeWindowsAssessment {
   const appId = `${app.id.provider}/${app.id.project}`;
   const hasWindowsPlatform = app.platforms.includes("windows");
 
   const windowsArtifacts = (app.latest?.artifacts || []).filter(
-    (a) => a.platform === "windows" && WINDOWS_ARTIFACT_KINDS.has(String(a.kind).toLowerCase()),
+    (a) => a.platform === "windows" && WINDOWS_ARTIFACT_KINDS.has(String(a.kind).toLowerCase()) && !!a.packageIdentity && /^[a-f0-9]{64}$/i.test(a.sha256||'') && /^https:\/\//.test(a.downloadUrl||''),
   );
 
   const variant: NativeWindowsVariant = {
@@ -75,7 +75,7 @@ export function assessNativeWindows(app: {
 
   const artifact = windowsArtifacts[0];
   variant.available = true;
-  variant.strategy = "wrapper";
+  variant.strategy = "published-native";
   variant.artifactKind =
     String(artifact.kind).toLowerCase() === "msix" ? "msix" : "exe";
   variant.identityMapping = artifact.packageIdentity || app.packageIdentity;

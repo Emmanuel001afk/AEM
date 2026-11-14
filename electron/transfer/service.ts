@@ -1,514 +1,181 @@
-/**
- * AEM Store desktop transfer service.
- *
- * Local-only, bidirectional phone <-> PC file transfer.
- *   - UDP beacon discovery (port 38178) — matches the Android AEM Transfer protocol.
- *   - TCP data channel (port 38179) with SHA-256 integrity and offset-based resume.
- *   - Pairing tokens to avoid unsolicited transfers.
- *
- * This sandbox has no physical devices / virtualization / LAN, so the runtime
- * discovery and transfer paths cannot be executed here. They are implemented at
- * code level and typecheck-clean; real-device validation is required (see PLAN.md).
- *
- * No cloud account and no Supabase storage is part of the file path.
+/** Application-neutral LAN companion. HTTPS + one-use out-of-band invitation + explicit local consent.
+ * Separate from Android Wi-Fi Direct protocol 6. Never accepts that protocol's unauthenticated tokens.
  */
+import https from 'https';
+import type {IncomingMessage,ServerResponse} from 'http';
+import fs from 'fs';
+import path from 'path';
+import os from 'os';
+import crypto from 'crypto';
+import {generate} from 'selfsigned';
+import {Bonjour} from 'bonjour-service';
 
-import net from "net";
-import dgram from "dgram";
-import crypto from "crypto";
-import fs from "fs";
-import path from "path";
-import os from "os";
-
-const DISCOVERY_PORT = 38178;
-const DATA_PORT = 38179;
-const BEACON_INTERVAL_MS = 4000;
-const DISCOVERY_TIMEOUT_MS = 8000;
-const CHUNK_SIZE = 64 * 1024;
-
-export type TransferDirection = "send" | "receive";
-export type TransferStatus =
-  | "idle"
-  | "discovering"
-  | "paired"
-  | "transferring"
-  | "completed"
-  | "failed"
-  | "cancelled"
-  | "paused";
-
-export interface TransferPeer {
-  id: string;
-  name: string;
-  platform: "android" | "windows" | "unknown";
-  version?: string;
-  lastSeenAt: string;
+const CHUNK=1024*1024, MAX_FILE=256*1024*1024, MAX_TOTAL=2*1024**3;
+const sha=(v:crypto.BinaryLike)=>crypto.createHash('sha256').update(v).digest('hex');
+const id=()=>crypto.randomBytes(16).toString('hex');
+const secret=()=>crypto.randomBytes(32).toString('base64url');
+const equal=(a:string,b:string)=>crypto.timingSafeEqual(Buffer.from(sha(a)),Buffer.from(sha(b)));
+class HttpError extends Error {constructor(public status:number,message:string){super(message);}}
+interface Peer {id:string;name:string;address:string;expiresAt:number}
+interface FileEntry {id:string;name:string;size:number;sha256:string;offset:number;state:'pending'|'complete';owner:string;direction:'receive'|'send';file:string;busy?:boolean}
+export interface TransferConsent {kind:'pair'|'receive';name:string;address:string;size?:number;sha256?:string}
+export interface TransferOptions {root:string;assets:string;consent:(request:TransferConsent)=>Promise<boolean>;advertise?:boolean;bindHost?:string;port?:number}
+async function hashFile(file:string){const h=crypto.createHash('sha256');for await(const chunk of fs.createReadStream(file))h.update(chunk);return h.digest('hex');}
+export function validateManifest(v:any):{name:string;size:number;sha256:string}{
+  if(!v||typeof v.name!=='string'||v.name.length<1||v.name.length>120||/[\\/<>:"|?*\x00-\x1f]/.test(v.name)||/[. ]$/.test(v.name)||/^(con|prn|aux|nul|com[1-9]|lpt[1-9])(\.|$)/i.test(v.name)||v.name==='.'||v.name==='..')throw new HttpError(400,'Unsafe filename');
+  if(!Number.isSafeInteger(v.size)||v.size<0||v.size>MAX_FILE||typeof v.sha256!=='string'||!/^\w{64}$/.test(v.sha256)||!/^[a-f0-9]{64}$/.test(v.sha256))throw new HttpError(400,'Invalid size/hash; maximum file size is 256 MiB');
+  return {name:v.name,size:v.size,sha256:v.sha256};
 }
-
-export interface TransferFile {
-  id: string;
-  name: string;
-  size: number;
-  sha256: string;
-  transferred: number;
-  completed: boolean;
+async function body(req:IncomingMessage,max:number){
+  const chunks:Buffer[]=[];let n=0;
+  for await(const chunk of req){n+=chunk.length;if(n>max)throw new HttpError(413,'Request too large');chunks.push(chunk);}
+  return Buffer.concat(chunks);
 }
-
-export interface TransferSession {
-  id: string;
-  direction: TransferDirection;
-  status: TransferStatus;
-  peer: TransferPeer;
-  files: TransferFile[];
-  totalBytes: number;
-  transferredBytes: number;
-  startedAt: string;
-  updatedAt: string;
-  error?: string;
-}
-
-export interface TransferProgressEvent {
-  sessionId: string;
-  fileId: string;
-  transferred: number;
-  total: number;
-  percent: number;
-}
-
-type ProgressCb = (e: TransferProgressEvent) => void;
-type SessionChangeCb = (s: TransferSession) => void;
-
-function now(): string {
-  return new Date().toISOString();
-}
-
-function sha256File(filePath: string): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const hash = crypto.createHash("sha256");
-    const stream = fs.createReadStream(filePath);
-    stream.on("data", (d: Buffer | string) => hash.update(Buffer.isBuffer(d) ? d : Buffer.from(d)));
-    stream.on("end", () => resolve(hash.digest("hex")));
-    stream.on("error", reject);
-  });
-}
-
-/**
- * Desktop transfer service. One instance owns the UDP beacon/listener and the
- * TCP server used for both sending (initiating) and receiving (accepting).
- */
+async function jsonBody(req:IncomingMessage){try{return JSON.parse((await body(req,4096)).toString());}catch(e){if(e instanceof HttpError)throw e;throw new HttpError(400,'Invalid JSON');}}
+function json(res:ServerResponse,data:unknown,status=200){res.writeHead(status,{'Content-Type':'application/json'});res.end(JSON.stringify(data));}
 export class TransferService {
-  private sessions = new Map<string, TransferSession>();
-  private progressCbs = new Map<string, Set<ProgressCb>>();
-  private sessionCbs = new Set<SessionChangeCb>();
-
-  private udpSocket: dgram.Socket | null = null;
-  private tcpServer: net.Server | null = null;
-  private peerInfo: TransferPeer | null = null;
-
-  private discoveryTimer: NodeJS.Timeout | null = null;
-  private discovered = new Map<string, TransferPeer>();
-
-  private incomingHandlers = new Map<
-    string,
-    { accept: (conn: net.Socket) => void; cleanup: () => void }
-  >();
-
-  constructor(peerName?: string, peerVersion?: string) {
-    this.peerInfo = {
-      id: crypto.randomBytes(8).toString("hex"),
-      name: peerName || os.hostname(),
-      platform: "windows",
-      version: peerVersion,
-      lastSeenAt: now(),
-    };
+  private server:https.Server|null=null;
+  private starting:Promise<ReturnType<TransferService["status"]>>|null=null;
+  private advertisement:Bonjour|null=null;
+  private invitation='';private inviteUntil=0;private inviteBusy=false;
+  private peers=new Map<string,Peer>();
+  private files=new Map<string,FileEntry>();
+  private attempts=new Map<string,{count:number;until:number}>();
+  private port=0;private addresses:string[]=[];private fingerprint='';private ca='';
+  private origins=new Set<string>();private generation=0;private pending=new Set<string>();
+  constructor(private options:TransferOptions){}
+  get certificate(){return this.ca;}
+  private publicFile(f:FileEntry){return {id:f.id,name:f.name,size:f.size,sha256:f.sha256,offset:f.offset,state:f.state,direction:f.direction};}
+  status(){return {running:!!this.server,port:this.port,fingerprint:this.fingerprint,urls:this.addresses.map(a=>`https://${a}:${this.port}/`),invitation:this.invitation,inviteUntil:this.inviteUntil,peers:[...this.peers.values()],files:[...this.files.values()].map(f=>this.publicFile(f))};}
+  async start(){
+    if(this.starting)return this.starting;
+    this.starting=this.startInternal();
+    try{return await this.starting;}finally{this.starting=null;}
   }
-
-  /* ------------------------------------------------------------------ */
-  /* Discovery                                                          */
-  /* ------------------------------------------------------------------ */
-
-  async discover(opts: { timeoutMs?: number } = {}): Promise<TransferPeer[]> {
-    const timeout = opts.timeoutMs ?? DISCOVERY_TIMEOUT_MS;
-    this.discovered.clear();
-
-    return new Promise<TransferPeer[]>((resolve) => {
-      let socket: dgram.Socket | null = null;
-      let timer: NodeJS.Timeout | null = null;
-      const done = () => {
-        if (timer) clearTimeout(timer);
-        if (socket) {
-          try { socket.close(); } catch {}
-        }
-        socket = null;
-        timer = null;
-        resolve([...this.discovered.values()]);
-      };
-
-      socket = dgram.createSocket("udp4");
-      socket.on("error", () => done());
-      socket.on("message", (msg: Buffer, rinfo: dgram.RemoteInfo) => {
-        try {
-          const payload = JSON.parse(msg.toString("utf8"));
-          if (payload && payload.protocol === "aem-transfer-v6") {
-            const peer: TransferPeer = {
-              id: payload.peerId || rinfo.address,
-              name: payload.name || rinfo.address,
-              platform: payload.platform === "android" ? "android" : "unknown",
-              version: payload.version,
-              lastSeenAt: now(),
-            };
-            this.discovered.set(peer.id, peer);
-          }
-        } catch { /* ignore malformed beacons */ }
-      });
-      socket.bind(0, () => {
-        try {
-          socket!.setBroadcast(true);
-          // Beacon: announce ourselves + request peers
-          const beacon = JSON.stringify({
-            protocol: "aem-transfer-v6",
-            type: "discover",
-            peerId: this.peerInfo?.id,
-            name: this.peerInfo?.name,
-            platform: "windows",
-            version: this.peerInfo?.version,
-            port: DATA_PORT,
-          });
-          socket!.send(
-            Buffer.from(beacon, "utf8"),
-            0,
-            Buffer.byteLength(beacon),
-            DISCOVERY_PORT,
-            "255.255.255.255",
-            () => {},
-          );
-        } catch {}
-      });
-      timer = setTimeout(done, timeout);
-    });
+  private async startInternal(){
+    if(this.server)return this.status();
+    this.generation++;
+    fs.mkdirSync(this.options.root,{recursive:true});
+    fs.mkdirSync(path.join(this.options.root,'.pending'),{recursive:true,mode:0o700});
+    // Stopped/revoked sessions cannot resume. Remove only AEM's UUID-named partials.
+    for(const name of fs.readdirSync(path.join(this.options.root,'.pending')))if(/^[a-f0-9]{32}\.part$/.test(name))fs.rmSync(path.join(this.options.root,'.pending',name),{force:true});
+    this.addresses=[...new Set(Object.values(os.networkInterfaces()).flat().filter(a=>a?.family==='IPv4'&&!a.internal).map(a=>a!.address))];
+    const hosts=[...this.addresses,'127.0.0.1'];
+    const cert=await new Promise<{private:string;cert:string}>((resolve,reject)=>generate([{name:'commonName',value:'AEM Local Transfer'}],{keySize:2048,days:1,algorithm:'sha256',extensions:[{name:'basicConstraints',cA:false},{name:'keyUsage',digitalSignature:true,keyEncipherment:true},{name:'extKeyUsage',serverAuth:true},{name:'subjectAltName',altNames:hosts.map(ip=>({type:7,ip}))}]},(e,r)=>e?reject(e):resolve(r)));
+    this.ca=cert.cert;this.fingerprint=new crypto.X509Certificate(cert.cert).fingerprint256;
+    const server=https.createServer({key:cert.private,cert:cert.cert,minVersion:'TLSv1.2'},(req,res)=>{void this.route(req,res).catch(e=>{if(!res.headersSent)json(res,{error:e instanceof HttpError?e.message:'Transfer operation failed'},e instanceof HttpError?e.status:500);else res.destroy();});});
+    server.requestTimeout=30000;server.headersTimeout=15000;server.maxHeadersCount=30;server.maxConnections=32;
+    await new Promise<void>((resolve,reject)=>{server.once('error',reject);server.listen(this.options.port??0,this.options.bindHost??'0.0.0.0',()=>{server.removeListener('error',reject);resolve();});});
+    server.on('error',()=>{void this.stop();});this.server=server;
+    this.port=(server.address() as import('net').AddressInfo).port;
+    this.origins=new Set(hosts.map(a=>`https://${a}:${this.port}`));this.newInvitation();
+    if(this.options.advertise!==false){try{this.advertisement=new Bonjour(undefined,()=>{});this.advertisement.publish({name:`AEM Local Transfer ${id().slice(0,6)}`,type:'aem-transfer',port:this.port,txt:{protocol:'aem-lan/1',tls:'required'}});}catch{this.advertisement?.destroy();this.advertisement=null;}}
+    return this.status();
   }
-
-  async startReceiving(opts?: { downloadDir?: string }): Promise<void> {
-    if (this.tcpServer) return;
-    this.tcpServer = net.createServer((conn) => {
-      this.handleIncoming(conn).catch(() => {});
-    });
-    this.tcpServer.listen(DATA_PORT, () => {
-      // listening
-    });
-    this.tcpServer.on("error", () => {
-      // port may be in use; receiving still attempted on next start
-    });
+  newInvitation(){if(!this.server)throw new Error('Start transfer first');this.invitation=secret();this.inviteUntil=Date.now()+120000;return this.status();}
+  async stop(){
+    if(this.starting)await this.starting.catch(()=>{});
+    this.generation++;this.invitation='';this.inviteUntil=0;this.peers.clear();this.pending.clear();this.attempts.clear();
+    this.advertisement?.unpublishAll();this.advertisement?.destroy();this.advertisement=null;
+    const server=this.server;this.server=null;
+    if(server){server.closeAllConnections();await new Promise<void>(r=>server.close(()=>r()));}
+    for(const f of this.files.values())if(f.direction==='receive'&&f.state==='pending')await fs.promises.rm(f.file,{force:true}).catch(()=>{});
+    this.files.clear();this.ca='';
   }
-
-  async stop(): Promise<void> {
-    if (this.udpSocket) {
-      try { this.udpSocket.close(); } catch {}
-      this.udpSocket = null;
+  async revoke(peerId:string){
+    for(const [token,p] of this.peers)if(p.id===peerId)this.peers.delete(token);
+    for(const [key,f] of this.files)if(f.owner===peerId){if(f.direction==='receive'&&f.state==='pending')await fs.promises.rm(f.file,{force:true}).catch(()=>{});this.files.delete(key);}
+  }
+  async offer(paths:string[]){
+    if(!this.server)throw new Error('Start transfer first');
+    if(!Array.isArray(paths)||paths.length>16||this.files.size+paths.length>64)throw new Error('Too many files');
+    for(const file of paths){const stat=await fs.promises.stat(file);if(!stat.isFile())throw new Error('Select a regular file');const m=validateManifest({name:path.basename(file),size:stat.size,sha256:await hashFile(file)});const key=id();this.files.set(key,{...m,id:key,offset:0,state:'complete',direction:'send',owner:'shared',file});}
+    return this.status();
+  }
+  async remove(fileId:string){const f=this.files.get(fileId);if(f?.busy)throw new Error('Pause the active transfer first');if(f?.direction==='receive'&&f.state==='pending')await fs.promises.rm(f.file,{force:true});this.files.delete(fileId);return this.status();}
+  private authenticated(req:IncomingMessage){
+    const token=String(req.headers.authorization||'').replace(/^Bearer /,'');const p=this.peers.get(sha(token));
+    if(!p||p.expiresAt<Date.now())throw new HttpError(401,'Pairing expired or revoked');return p;
+  }
+  private async route(req:IncomingMessage,res:ServerResponse){
+    res.setHeader('Cache-Control','no-store');res.setHeader('X-Content-Type-Options','nosniff');res.setHeader('Referrer-Policy','no-referrer');
+    res.setHeader('Content-Security-Policy',"default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self' blob:; img-src 'self' blob:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'");
+    const origin=`https://${req.headers.host}`;
+    if(!this.origins.has(origin)||req.headers.origin&&req.headers.origin!==origin)throw new HttpError(403,'Foreign host/origin rejected');
+    const url=new URL(req.url||'/',origin);
+    if(req.method==='GET'&&['/','/client.js','/style.css'].includes(url.pathname)){
+      const file=url.pathname==='/'?'index.html':url.pathname.slice(1);
+      res.setHeader('Content-Type',file.endsWith('.js')?'application/javascript':file.endsWith('.css')?'text/css':'text/html');
+      res.end(await fs.promises.readFile(path.join(this.options.assets,file)));return;
     }
-    if (this.tcpServer) {
-      try { this.tcpServer.close(); } catch {}
-      this.tcpServer = null;
+    const address=req.socket.remoteAddress||'unknown';
+    if(req.method==='POST'&&url.pathname==='/pair'){
+      let a=this.attempts.get(address);if(!a||a.until<Date.now()){if(this.attempts.size>=128)this.attempts.clear();a={count:0,until:Date.now()+60000};this.attempts.set(address,a);}if(++a.count>6)throw new HttpError(429,'Pairing rate limit');
+      const b=await jsonBody(req);
+      if(this.inviteBusy||!this.invitation||Date.now()>this.inviteUntil||typeof b.invitation!=='string'||!equal(b.invitation,this.invitation))throw new HttpError(403,'Invalid or expired invitation');
+      if(this.peers.size>=8)throw new HttpError(429,'Peer limit');
+      const name=typeof b.name==='string'?b.name.trim():'';if(!name||name.length>80||/[\p{Cc}\p{Cf}]/u.test(name))throw new HttpError(400,'Invalid device label');
+      this.inviteBusy=true;const generation=this.generation;const invitation=this.invitation;
+      try{
+        if(!await this.options.consent({kind:'pair',name,address}))throw new HttpError(403,'Pairing declined on PC');
+        if(generation!==this.generation||invitation!==this.invitation||Date.now()>this.inviteUntil)throw new HttpError(403,'Invitation no longer active');
+        this.invitation='';this.inviteUntil=0;const token=secret();const p={id:id(),name,address,expiresAt:Date.now()+3600000};this.peers.set(sha(token),p);json(res,{token,peer:p,protocol:'aem-lan/1',maxFileBytes:MAX_FILE,chunkBytes:CHUNK});
+      }finally{this.inviteBusy=false;}return;
     }
-    if (this.discoveryTimer) clearTimeout(this.discoveryTimer);
-    this.discoveryTimer = null;
-  }
-
-  /* ------------------------------------------------------------------ */
-  /* Sessions                                                           */
-  /* ------------------------------------------------------------------ */
-
-  listSessions(): TransferSession[] {
-    return [...this.sessions.values()].sort(
-      (a, b) => (b.updatedAt || "").localeCompare(a.updatedAt || ""),
-    );
-  }
-
-  getSession(id: string): TransferSession | undefined {
-    return this.sessions.get(id);
-  }
-
-  private emitSession(s: TransferSession) {
-    this.sessionCbs.forEach((cb) => {
-      try { cb(s); } catch {}
-    });
-  }
-
-  private emitProgress(sessionId: string, fileId: string, transferred: number, total: number) {
-    const cbs = this.progressCbs.get(sessionId);
-    if (!cbs) return;
-    const percent = total > 0 ? Math.round((transferred / total) * 100) : 0;
-    const ev: TransferProgressEvent = { sessionId, fileId, transferred, total, percent };
-    cbs.forEach((cb) => {
-      try { cb(ev); } catch {}
-    });
-  }
-
-  onProgress(sessionId: string, cb: ProgressCb): () => void {
-    let cbs = this.progressCbs.get(sessionId);
-    if (!cbs) { cbs = new Set(); this.progressCbs.set(sessionId, cbs); }
-    cbs.add(cb);
-    return () => { cbs.delete(cb); };
-  }
-
-  onSessionChange(cb: SessionChangeCb): () => void {
-    this.sessionCbs.add(cb);
-    return () => { this.sessionCbs.delete(cb); };
-  }
-
-  async cancel(sessionId: string): Promise<void> {
-    const s = this.sessions.get(sessionId);
-    if (!s) return;
-    s.status = "cancelled";
-    s.updatedAt = now();
-    this.sessions.set(sessionId, s);
-    this.emitSession(s);
-  }
-
-  async pause(sessionId: string): Promise<void> {
-    const s = this.sessions.get(sessionId);
-    if (!s) return;
-    s.status = "paused";
-    s.updatedAt = now();
-    this.sessions.set(sessionId, s);
-    this.emitSession(s);
-  }
-
-  async resume(sessionId: string): Promise<void> {
-    const s = this.sessions.get(sessionId);
-    if (!s || s.status !== "paused") return;
-    s.status = "transferring";
-    s.updatedAt = now();
-    this.sessions.set(sessionId, s);
-    this.emitSession(s);
-  }
-
-  /* ------------------------------------------------------------------ */
-  /* Send                                                               */
-  /* ------------------------------------------------------------------ */
-
-  async send(opts: { peerId: string; filePaths: string[] }): Promise<TransferSession> {
-    const peer = this.discovered.get(opts.peerId);
-    if (!peer) throw new Error("Peer not discovered — run discovery first.");
-
-    const sessionId = crypto.randomBytes(8).toString("hex");
-    const files: TransferFile[] = await Promise.all(
-      opts.filePaths.map(async (fp) => {
-        const stat = fs.statSync(fp);
-        return {
-          id: crypto.randomBytes(4).toString("hex"),
-          name: path.basename(fp),
-          size: stat.size,
-          sha256: await sha256File(fp),
-          transferred: 0,
-          completed: false,
-        };
-      }),
-    );
-
-    const session: TransferSession = {
-      id: sessionId,
-      direction: "send",
-      status: "transferring",
-      peer,
-      files,
-      totalBytes: files.reduce((a, f) => a + f.size, 0),
-      transferredBytes: 0,
-      startedAt: now(),
-      updatedAt: now(),
-    };
-    this.sessions.set(sessionId, session);
-    this.emitSession(session);
-
-    // Open TCP connection to the peer's data port and stream files with SHA-256
-    // verification and resume-offset support.
-    try {
-      await this.streamFilesToPeer(peer, session);
-      session.status = "completed";
-    } catch (e: any) {
-      session.status = "failed";
-      session.error = e?.message || "Transfer failed";
+    const peer=this.authenticated(req);
+    if(req.method==='GET'&&url.pathname==='/api/state'){json(res,{peer,files:[...this.files.values()].filter(f=>f.owner===peer.id||f.direction==='send').map(f=>this.publicFile(f))});return;}
+    if(req.method==='POST'&&url.pathname==='/api/uploads'){
+      const m=validateManifest(await jsonBody(req));
+      const existing=[...this.files.values()].find(f=>f.owner===peer.id&&f.name===m.name&&f.sha256===m.sha256&&f.size===m.size);
+      if(existing){json(res,this.publicFile(existing));return;}
+      if(this.pending.has(peer.id))throw new HttpError(409,'Another offer is pending approval');
+      if(this.files.size>=64)throw new HttpError(429,'Transfer queue full');
+      const generation=this.generation;this.pending.add(peer.id);
+      try{
+        if(!await this.options.consent({kind:'receive',name:m.name,address:peer.name,size:m.size,sha256:m.sha256}))throw new HttpError(403,'File declined on PC');
+        this.authenticated(req);if(generation!==this.generation)throw new HttpError(403,'Receiver stopped');
+        const disk=await fs.promises.statfs(this.options.root);
+        const used=[...this.files.values()].filter(f=>f.direction==='receive').reduce((s,f)=>s+f.size,0);
+        const reserved=[...this.files.values()].filter(f=>f.direction==='receive'&&f.state==='pending').reduce((s,f)=>s+f.size-f.offset,0);
+        if(used+m.size>MAX_TOTAL||disk.bavail*disk.bsize<m.size+reserved+512*1024*1024)throw new HttpError(507,'Insufficient transfer quota or disk space');
+        const key=id(),file=path.join(this.options.root,'.pending',`${key}.part`);
+        const f:FileEntry={...m,id:key,file,owner:peer.id,direction:'receive',offset:0,state:'pending'};this.files.set(key,f);
+        try{await fs.promises.writeFile(file,'',{flag:'wx',mode:0o600});json(res,this.publicFile(f));}catch(e){this.files.delete(key);throw e;}
+      }finally{this.pending.delete(peer.id);}return;
     }
-    session.updatedAt = now();
-    this.sessions.set(sessionId, session);
-    this.emitSession(session);
-    return session;
-  }
-
-  private async streamFilesToPeer(
-    peer: TransferPeer,
-    session: TransferSession,
-  ): Promise<void> {
-    await new Promise<void>((resolve, reject) => {
-      const socket = net.createConnection({ host: peer.id, port: DATA_PORT });
-      let resolved = false;
-      const finish = (err?: Error) => {
-        if (resolved) return;
-        resolved = true;
-        socket.destroy();
-        if (err) reject(err); else resolve();
-      };
-      socket.on("error", finish);
-      socket.on("timeout", () => finish(new Error("Connection timed out")));
-      socket.on("connect", async () => {
-        try {
-          // Handshake: tell peer we're sending, include session id + file manifest
-          const hello = JSON.stringify({
-            protocol: "aem-transfer-v6",
-            type: "send",
-            sessionId: session.id,
-            files: session.files.map((f) => ({
-              id: f.id, name: f.name, size: f.size, sha256: f.sha256,
-              offset: f.transferred,
-            })),
-          });
-          socket.write(Buffer.from(hello + "\n", "utf8"));
-
-          // Stream each file
-          for (const file of session.files) {
-            if (session.status === "cancelled") {
-              finish(new Error("cancelled")); return;
-            }
-            await this.streamFile(socket, file, session);
-          }
-          finish();
-        } catch (e: any) {
-          finish(e);
-        }
-      });
-    });
-  }
-
-  private async streamFile(
-    socket: net.Socket,
-    file: TransferFile,
-    session: TransferSession,
-  ): Promise<void> {
-    const stream = fs.createReadStream(file.name /* path handled by caller */, {
-      start: file.transferred,
-      highWaterMark: CHUNK_SIZE,
-    });
-    // NOTE: in the real path we open by absolute path; here file.name is used as
-    // the stream source for typecheck clarity. The send() path resolves absolute
-    // paths before streaming.
-    return new Promise((resolve, reject) => {
-      let sent = file.transferred;
-      stream.on("data", (chunk: Buffer | string) => {
-        const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-        const ok = socket.write(buf);
-        sent += buf.length;
-        session.transferredBytes = session.files.reduce(
-          (a, f) => a + (f.id === file.id ? sent - file.transferred : f.transferred),
-          0,
-        );
-        this.emitProgress(session.id, file.id, sent, file.size);
-        if (!ok) {
-          // wait for drain before continuing
-          socket.once("drain", () => {});
-        }
-      });
-      stream.on("end", () => {
-        file.completed = true;
-        file.transferred = sent;
-        resolve();
-      });
-      stream.on("error", reject);
-      socket.on("error", reject);
-    });
-  }
-
-  /* ------------------------------------------------------------------ */
-  /* Receive                                                            */
-  /* ------------------------------------------------------------------ */
-
-  private async handleIncoming(conn: net.Socket): Promise<void> {
-    let buffer = "";
-    conn.on("data", (chunk: Buffer) => {
-      buffer += chunk.toString("utf8");
-      const idx = buffer.indexOf("\n");
-      if (idx === -1) return;
-      const line = buffer.slice(0, idx);
-      buffer = buffer.slice(idx + 1);
-      try {
-        const msg = JSON.parse(line);
-        if (msg.protocol === "aem-transfer-v6" && msg.type === "send") {
-          this.handleSendRequest(conn, msg).catch(() => {});
-        }
-      } catch { /* ignore */ }
-    });
-  }
-
-  private async handleSendRequest(conn: net.Socket, msg: any): Promise<void> {
-    const sessionId = msg.sessionId;
-    const session: TransferSession = {
-      id: sessionId,
-      direction: "receive",
-      status: "paired",
-      peer: {
-        id: conn.remoteAddress || "unknown",
-        name: "remote",
-        platform: "android",
-        lastSeenAt: now(),
-      },
-      files: (msg.files || []).map((f: any) => ({
-        id: f.id,
-        name: f.name,
-        size: f.size,
-        sha256: f.sha256,
-        transferred: f.offset || 0,
-        completed: false,
-      })),
-      totalBytes: (msg.files || []).reduce((a: number, f: any) => a + f.size, 0),
-      transferredBytes: 0,
-      startedAt: now(),
-      updatedAt: now(),
-    };
-    this.sessions.set(sessionId, session);
-    this.emitSession(session);
-
-    // Stream files into the download dir, verifying SHA-256 and supporting resume.
-    try {
-      for (const file of session.files) {
-        if (session.status === "cancelled") break;
-        await this.receiveFile(conn, file, session);
+    const match=/^\/api\/(uploads|offers)\/([a-f0-9]{32})(\/complete)?$/.exec(url.pathname);
+    if(!match)throw new HttpError(404,'Not found');
+    const f=this.files.get(match[2]);if(!f||match[1]==='uploads'&&(f.direction!=='receive'||f.owner!==peer.id)||match[1]==='offers'&&f.direction!=='send')throw new HttpError(404,'Not found');
+    if(match[1]==='offers'&&req.method==='GET'){
+      const range=/^bytes=(\d+)-(\d+)$/.exec(String(req.headers.range||''));if(!range)throw new HttpError(416,'Explicit bounded byte range required');
+      const start=Number(range[1]),end=Number(range[2]);if(!Number.isSafeInteger(start)||!Number.isSafeInteger(end)||start<0||end<start||end>=f.size||end-start>=CHUNK)throw new HttpError(416,'Invalid range');
+      const st=await fs.promises.stat(f.file);if(st.size!==f.size)throw new HttpError(409,'Source file changed; re-offer it');
+      res.writeHead(206,{'Content-Type':'application/octet-stream','Content-Length':end-start+1,'Content-Range':`bytes ${start}-${end}/${f.size}`,'Accept-Ranges':'bytes'});
+      const stream=fs.createReadStream(f.file,{start,end});stream.on('error',()=>res.destroy());res.on('close',()=>stream.destroy());stream.pipe(res);return;
+    }
+    if(f.busy)throw new HttpError(409,'File already in use');f.busy=true;
+    try{
+      if(req.method==='PATCH'&&!match[3]){
+        if(f.state==='complete')throw new HttpError(409,'Already complete');
+        const offset=Number(url.searchParams.get('offset'));
+        const chunk=await body(req,CHUNK);this.authenticated(req);
+        if(this.files.get(f.id)!==f)throw new HttpError(403,'Transfer revoked');
+        f.offset=(await fs.promises.stat(f.file)).size;
+        if(!Number.isSafeInteger(offset)||offset!==f.offset||!chunk.length||f.offset+chunk.length>f.size)throw new HttpError(409,'Offset mismatch; refresh transfer state');
+        if(typeof req.headers['x-chunk-sha256']!=='string'||!equal(sha(chunk),req.headers['x-chunk-sha256']))throw new HttpError(422,'Chunk checksum mismatch');
+        const fd=await fs.promises.open(f.file,'r+');try{let n=0;while(n<chunk.length){const w=await fd.write(chunk,n,chunk.length-n,offset+n);if(!w.bytesWritten)throw new Error('Short write');n+=w.bytesWritten;}await fd.sync();}finally{await fd.close();}
+        f.offset+=chunk.length;json(res,this.publicFile(f));return;
       }
-      session.status = "completed";
-    } catch (e: any) {
-      session.status = "failed";
-      session.error = e?.message || "Receive failed";
-    }
-    session.updatedAt = now();
-    this.sessions.set(sessionId, session);
-    this.emitSession(session);
-    conn.end();
-  }
-
-  private async receiveFile(
-    conn: net.Socket,
-    file: TransferFile,
-    session: TransferSession,
-  ): Promise<void> {
-    // Write to a temp path, resume from existing offset if present.
-    return new Promise((resolve, reject) => {
-      let received = file.transferred;
-      const ws = fs.createWriteStream(file.name, {
-        flags: received > 0 ? "a" : "w",
-        start: received > 0 ? received : undefined,
-      });
-      ws.on("error", reject);
-      conn.on("data", (chunk: Buffer) => {
-        received += chunk.length;
-        session.transferredBytes = session.files.reduce((a, f) =>
-          a + (f.id === file.id ? received : f.transferred), 0);
-        this.emitProgress(session.id, file.id, received, file.size);
-      });
-      conn.on("end", () => {
-        file.transferred = received;
-        file.completed = true;
-        ws.end(() => resolve());
-      });
-      conn.on("error", reject);
-      ws.on("finish", () => resolve());
-    });
+      if(req.method==='POST'&&match[3]){
+        if(f.state==='pending'){
+          if(f.offset!==f.size)throw new HttpError(409,'File incomplete');
+          if(await hashFile(f.file)!==f.sha256){await fs.promises.truncate(f.file,0);f.offset=0;throw new HttpError(422,'Final checksum mismatch; partial file reset');}
+          this.authenticated(req);if(this.files.get(f.id)!==f)throw new HttpError(403,'Transfer revoked');
+          const target=path.join(this.options.root,`${f.id}-${f.name}`);await fs.promises.rename(f.file,target);f.file=target;f.state='complete';
+        }
+        json(res,this.publicFile(f));return;
+      }
+      throw new HttpError(405,'Unsupported operation');
+    }finally{f.busy=false;}
   }
 }

@@ -1,4 +1,7 @@
 import fs from "fs";
+import { extractPackage, inspectApk, selectPackageSet, assertCatalogCertificate } from "./packages";
+import { downloadVerified } from "../download";
+import { validateAllocation } from "./resources";
 import path from "path";
 import { app } from "electron";
 import { getSdkRoot, getUserDataPath, DEFAULT_AVD_NAME, DEFAULT_SYSTEM_IMAGE } from "../config";
@@ -7,9 +10,8 @@ import { getSdkStatus, installSdk, listSystemImages } from "./sdk";
 import { listAvds, getAvdInfo, createAvd, deleteAvd, wipeAvd, updateAvdConfig } from "./avd";
 import { EmulatorInstance } from "./instance";
 import { adbInstall, adbInstallMultiple, adbListInstalledApps, adbLaunchApp, adbUninstall, adbDevices, adbGetPackageInfo, adbGrantPermission, adbRevokePermission, adbClearData, adbForceStop, adbPush, adbPull, adbShell, adbGetPermissions, adbExec, adbStartServer } from "./adb";
-import type { EmulatorStatus, SdkStatus, DiagnosticsResult, AvdInfo, AvdCreateOptions, InstalledApp, InstallResult, EmulatorLaunchOptions, ApkInfo, GpuMode } from "./types";
+import type { EmulatorStatus, SdkStatus, DiagnosticsResult, AvdInfo, AvdCreateOptions, InstalledApp, InstallResult, EmulatorLaunchOptions, ApkInfo } from "./types";
 import { createHash } from "crypto";
-import { getResourceProfiles, avdOptionsForProfile, profileById, type ResourceProfileId, type ResourceRecommendation } from "./resources";
 
 let instance: EmulatorManager | null = null;
 
@@ -80,6 +82,17 @@ export class EmulatorManager {
     return this.getSdkStatus();
   }
 
+  async getResourceProfiles() {
+    const d=await this.getDiagnostics(true);
+    return {
+      host:{...d.host,platform:process.platform,arch:process.arch,diskFreeMB:d.host.diskFreeMB??null,hypervisor:d.host.hypervisor??null,gpuInfo:d.host.gpuInfo??null},
+      recommended:d.recommendation.supported?d.recommendation.profile:null,
+      reasons:d.recommendation.reasons,
+      limitations:d.recommendation.warnings,
+      profiles:([['lightweight',1536],['balanced',2048],['standard',3072]] as const).map(([id,ramMB])=>({id,name:id,description:'Measured safe-budget policy; not a benchmark',ramMB,heapMB:ramMB<=2048?256:512,cores:d.recommendation.cores,storageMB:8192,gpuMode:'auto',snapshot:true,recommendedFor:'Only when current diagnostics permit this allocation'})),
+    };
+  }
+
   async listAvds(): Promise<AvdInfo[]> { return listAvds(this.sdkRoot); }
   async getAvdInfo(name: string): Promise<AvdInfo | null> { return getAvdInfo(name); }
   async listSystemImages() { return listSystemImages(this.sdkRoot); }
@@ -87,13 +100,17 @@ export class EmulatorManager {
   async createAvd(options: AvdCreateOptions): Promise<AvdInfo> {
     const sdk = await getSdkStatus(this.sdkRoot);
     if (!sdk.installed) throw new Error(`SDK not ready: missing ${sdk.needsInstall.join(", ")}. Install SDK first.`);
+    const d = await this.getDiagnostics(true);
+    if (!d.recommendation.supported) throw new Error(d.recommendation.reasons.join(" "));
+    options = { ...options, ramMB: options.ramMB ?? d.recommendation.ramMB, cores: options.cores ?? d.recommendation.cores };
+    validateAllocation(options.ramMB!, options.cores!, d.recommendation, d.host.cpuCores);
     this.log(`Creating AVD ${options.name} with image ${options.systemImage}`);
     const avd = await createAvd(options, this.sdkRoot);
     this.log(`AVD created: ${avd.name} at ${avd.path}`);
     return avd;
   }
 
-  async ensureDefaultAvd(profileId?: ResourceProfileId | null): Promise<AvdInfo> {
+  async ensureDefaultAvd(): Promise<AvdInfo> {
     const existing = await getAvdInfo(DEFAULT_AVD_NAME);
     if (existing) return existing;
     const sdk = await getSdkStatus(this.sdkRoot);
@@ -101,13 +118,17 @@ export class EmulatorManager {
     // Determine best available system image
     const images = await listSystemImages();
     const preferred = images.find(i => i.id === DEFAULT_SYSTEM_IMAGE && i.installed) || images.find(i => i.installed) || { id: DEFAULT_SYSTEM_IMAGE } as any;
-    const options = avdOptionsForProfile((profileId ?? "balanced") as ResourceProfileId, preferred.id || DEFAULT_SYSTEM_IMAGE, DEFAULT_AVD_NAME);
-    this.log(`Creating default AVD ${DEFAULT_AVD_NAME} with profile ${options.ramMB} MB RAM / ${options.cores} cores`);
-    return this.createAvd(options);
-  }
-
-  async getResourceProfiles(): Promise<ResourceRecommendation> {
-    return getResourceProfiles();
+    return this.createAvd({
+      name: DEFAULT_AVD_NAME,
+      systemImage: preferred.id || DEFAULT_SYSTEM_IMAGE,
+      device: "pixel_7",
+      ramMB: (await this.getDiagnostics()).recommendation.ramMB,
+      heapMB: (await this.getDiagnostics()).recommendation.ramMB <= 2048 ? 256 : 512,
+      storageMB: 8192,
+      cores: (await this.getDiagnostics()).recommendation.cores,
+      gpuMode: "auto",
+      snapshot: true,
+    });
   }
 
   async deleteAvd(name: string): Promise<boolean> {
@@ -127,7 +148,7 @@ export class EmulatorManager {
   }
 
   async start(options: EmulatorLaunchOptions = {}): Promise<EmulatorStatus> {
-    const diag = await this.getDiagnostics();
+    const diag = await this.getDiagnostics(true);
     if (!diag.summary.canRun) {
       const fails = diag.checks.filter(c => c.status === "fail" && c.required).map(c => c.label).join(", ");
       throw new Error(`Host cannot run emulator: ${fails}. Check diagnostics for fixes.`);
@@ -139,9 +160,11 @@ export class EmulatorManager {
     const avdName = options.avdName || DEFAULT_AVD_NAME;
     let avd = await getAvdInfo(avdName);
     if (!avd) {
-      // Try to create default
+      if (avdName !== DEFAULT_AVD_NAME) throw new Error(`AVD not found: ${avdName}`);
       avd = await this.ensureDefaultAvd();
     }
+
+    validateAllocation(options.ramMB ?? avd.ramMB, options.cores ?? avd.cores, diag.recommendation, diag.host.cpuCores);
 
     // If options specify overrides, patch config before start
     if (options.ramMB || options.cores || options.gpuMode) {
@@ -158,17 +181,14 @@ export class EmulatorManager {
   }
 
   async restart(options?: EmulatorLaunchOptions): Promise<EmulatorStatus> {
-    return this.emu.restart(options);
+    await this.stop();
+    return this.start(options);
   }
 
   private async requireSerial(): Promise<string> {
     const s = this.emu.getStatus();
-    if (s.adbSerial) return s.adbSerial;
-    // Fallback: query adb devices
-    const devices = await adbDevices(this.sdkRoot);
-    const emu = devices.find(d => d.startsWith("emulator-"));
-    if (emu) return emu;
-    throw new Error("Emulator not running — no ADB device found. Start emulator first.");
+    if (s.state === "running" && s.bootCompleted && s.adbSerial) return s.adbSerial;
+    throw new Error("Managed emulator is not running. Start it in AEM first; other emulators are not selected implicitly.");
   }
 
   async getInstalledApps(): Promise<InstalledApp[]> {
@@ -176,94 +196,38 @@ export class EmulatorManager {
     return adbListInstalledApps(this.sdkRoot, serial);
   }
 
-  async installApk(filePath: string, options: { reinstall?: boolean; grantPermissions?: boolean; allowDowngrade?: boolean } = {}): Promise<InstallResult> {
+  async installApk(filePath: string, options: { reinstall?: boolean; grantPermissions?: boolean; allowDowngrade?: boolean; packageIdentity?: string; signingCertificateSha256?: string } = {}): Promise<InstallResult> {
     const start = Date.now();
-    if (!fs.existsSync(filePath)) throw new Error(`APK file not found: ${filePath}`);
+    if (!fs.statSync(filePath).isFile()) throw new Error("Select a package file");
     const serial = await this.requireSerial();
-    const lower = filePath.toLowerCase();
-    let result: any;
-
-    if (lower.endsWith(".apks") || lower.endsWith(".xapk") || lower.endsWith(".apkm") || lower.endsWith(".zip")) {
-      // Extract and install-multiple
-      const dir = path.join(path.dirname(filePath), `.aem_extract_${Date.now()}`);
-      await fs.promises.mkdir(dir, { recursive: true });
-      try {
-        // Extract apks
-        const apks: string[] = [];
-        if (process.platform === "win32") {
-          const { execSync } = await import("child_process");
-          execSync(`powershell -Command "Expand-Archive -Path '${filePath}' -DestinationPath '${dir}' -Force"`, { timeout: 30000 });
-          const walk = (d: string) => {
-            for (const e of fs.readdirSync(d)) {
-              const p = path.join(d, e);
-              if (fs.statSync(p).isDirectory()) walk(p);
-              else if (p.toLowerCase().endsWith(".apk")) apks.push(p);
-            }
-          };
-          walk(dir);
-        } else {
-          const { execFileSync } = await import("child_process");
-          execFileSync("unzip", ["-o", filePath, "-d", dir]);
-          const walk = (d: string) => {
-            for (const e of fs.readdirSync(d)) {
-              const p = path.join(d, e);
-              if (fs.statSync(p).isDirectory()) walk(p);
-              else if (p.toLowerCase().endsWith(".apk")) apks.push(p);
-            }
-          };
-          walk(dir);
-        }
-        if (apks.length === 0) throw new Error("No APK files found inside archive");
-        result = await adbInstallMultiple(this.sdkRoot, serial, apks, { reinstall: options.reinstall ?? true, grantPermissions: options.grantPermissions });
-      } finally {
-        try { fs.rmSync(dir, { recursive: true, force: true }); } catch {}
-      }
-    } else {
-      result = await adbInstall(this.sdkRoot, serial, filePath, { reinstall: options.reinstall ?? true, grantPermissions: options.grantPermissions, allowDowngrade: options.allowDowngrade });
-    }
-
-    const durationMs = Date.now() - start;
-    const success = result.success || /success/i.test(result.stdout);
-    const msg = success ? `Installed ${path.basename(filePath)}` : (result.stderr || result.stdout || "Install failed");
-
-    // Try to get package name from apk via aapt or from result
-    let pkg: string | undefined;
-    const m = (result.stdout + result.stderr).match(/pkg:\s*([a-z0-9._]+)/i) || msg.match(/([a-z0-9._]+\.[a-z0-9._]+)/);
-    if (m) pkg = m[1];
-
-    return { success, packageName: pkg, message: msg, durationMs };
+    const staging = await fs.promises.mkdtemp(path.join(app.getPath("temp"), "aem-package-"));
+    try {
+      const files = /\.apk$/i.test(filePath) ? [filePath] : await extractPackage(filePath, staging);
+      const metadata = [];
+      for (const file of files) metadata.push(await inspectApk(file, this.sdkRoot));
+      const api = await adbExec(this.sdkRoot,["-s",serial,"shell","getprop","ro.build.version.sdk"]);
+      const abi = await adbExec(this.sdkRoot,["-s",serial,"shell","getprop","ro.product.cpu.abilist"]);
+      if (!api.success || !abi.success || !Number(api.stdout.trim()) || !abi.stdout.trim()) throw new Error("Unable to inspect target API/ABI; no installation attempted");
+      const selected = selectPackageSet(metadata,{api:Number(api.stdout.trim()),abis:abi.stdout.trim().split(",")});
+      const base = selected.find(p=>!p.split)!;
+      if (options.packageIdentity && options.packageIdentity !== base.packageName) throw new Error("Catalog package identity mismatch");
+      assertCatalogCertificate(base.certificate,options.signingCertificateSha256);
+      const result = selected.length === 1
+        ? await adbInstall(this.sdkRoot, serial, selected[0].file, { ...options, reinstall: options.reinstall ?? true })
+        : await adbInstallMultiple(this.sdkRoot, serial, selected.map(p=>p.file), { ...options, reinstall: options.reinstall ?? true });
+      return {success:result.success,packageName:base.packageName,versionName:base.versionName,versionCode:base.versionCode,durationMs:Date.now()-start,message:result.success?`Installed ${base.packageName}`:`${result.stderr || result.stdout}. Check missing feature splits, signing identity, storage and Android API. Play licensing, Integrity and hardware requirements cannot be bypassed.`};
+    } finally { await fs.promises.rm(staging,{recursive:true,force:true}); }
   }
 
-  async installApkFromUrl(url: string, fileName: string): Promise<InstallResult> {
-    // Download to temp, then install
-    const tmpDir = path.join(app.getPath("temp"), "aem-apk-downloads");
-    await fs.promises.mkdir(tmpDir, { recursive: true });
-    const filePath = path.join(tmpDir, fileName.replace(/[^A-Za-z0-9._-]/g, "_"));
-    // Use fetch or http get
-    const https = await import("https");
-    const http = await import("http");
-    const { createWriteStream } = await import("fs");
-    await new Promise<void>((resolve, reject) => {
-      const client = url.startsWith("https:") ? https : http;
-      const file = createWriteStream(filePath);
-      client.get(url, res => {
-        if (res.statusCode && res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-          // redirect
-          const redir = res.headers.location;
-          client.get(redir, res2 => {
-            res2.pipe(file);
-            file.on("finish", () => file.close(() => resolve()));
-            res2.on("error", reject);
-          }).on("error", reject);
-          return;
-        }
-        if (res.statusCode !== 200) return reject(new Error(`HTTP ${res.statusCode} for ${url}`));
-        res.pipe(file);
-        file.on("finish", () => file.close(() => resolve()));
-        res.on("error", reject);
-      }).on("error", reject);
-    });
-    return this.installApk(filePath);
+  async installApkFromUrl(url: string, fileName: string, sha256?: string, packageIdentity?: string, signingCertificateSha256?: string): Promise<InstallResult> {
+    const dir = await fs.promises.mkdtemp(path.join(app.getPath("temp"), "aem-download-"));
+    try {
+      const safeName = path.basename(fileName).replace(/[^A-Za-z0-9._-]/g,"_");
+      if (!/\.(apk|apks|xapk|apkm)$/i.test(safeName)) throw new Error("Unsupported package extension");
+      const file = path.join(dir,safeName);
+      await downloadVerified(url,file,sha256);
+      return await this.installApk(file,{packageIdentity,signingCertificateSha256});
+    } finally { await fs.promises.rm(dir,{recursive:true,force:true}); }
   }
 
   async uninstallApp(packageName: string, keepData = false): Promise<{ success: boolean; message: string }> {
@@ -339,39 +303,8 @@ export class EmulatorManager {
       valid: false,
     };
     try {
-      // Try aapt dump badging
-      const buildToolsDir = path.join(this.sdkRoot, "build-tools");
-      let aapt: string | null = null;
-      if (fs.existsSync(buildToolsDir)) {
-        const versions = fs.readdirSync(buildToolsDir).sort().reverse();
-        for (const v of versions) {
-          const candidate = path.join(buildToolsDir, v, process.platform === "win32" ? "aapt.exe" : "aapt");
-          if (fs.existsSync(candidate)) { aapt = candidate; break; }
-        }
-      }
-      if (aapt) {
-        const { execFileSync } = await import("child_process");
-        const out = execFileSync(aapt, ["dump", "badging", filePath], { encoding: "utf8", timeout: 10000, maxBuffer: 5 * 1024 * 1024 });
-        info.packageName = out.match(/package: name='([^']+)'/)?.[1];
-        info.versionName = out.match(/versionName='([^']+)'/)?.[1];
-        info.versionCode = parseInt(out.match(/versionCode='(\d+)'/)?.[1] || "0", 10) || undefined;
-        info.minSdk = parseInt(out.match(/sdkVersion:'(\d+)'/)?.[1] || "0", 10) || undefined;
-        info.targetSdk = parseInt(out.match(/targetSdkVersion:'(\d+)'/)?.[1] || "0", 10) || undefined;
-        info.permissions = [...out.matchAll(/uses-permission: name='([^']+)'/g)].map(m => m[1]);
-        info.valid = !!info.packageName;
-      } else {
-        // Fallback: try to unzip and read AndroidManifest.xml binary? Mark as potentially valid if zip contains .dex
-        // For now, check if it's a zip with apk signature
-        const isZip = (() => {
-          const fd = fs.openSync(filePath, "r");
-          const buf = Buffer.alloc(4);
-          fs.readSync(fd, buf, 0, 4, 0);
-          fs.closeSync(fd);
-          return buf[0] === 0x50 && buf[1] === 0x4b; // PK
-        })();
-        info.valid = isZip && filePath.toLowerCase().endsWith(".apk");
-        if (!info.valid && (filePath.toLowerCase().endsWith(".apks") || filePath.toLowerCase().endsWith(".xapk"))) info.valid = isZip;
-      }
+      const metadata = await inspectApk(filePath, this.sdkRoot);
+      Object.assign(info, metadata, { valid: true });
       // SHA256
       const h = createHash("sha256");
       const s = fs.createReadStream(filePath);

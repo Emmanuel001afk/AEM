@@ -1,3 +1,5 @@
+> Historical report from PR #11. Superseded by `docs/TRANSFORMATION.md` and `docs/lan-transfer.md`. Its original desktop transfer did not write received bytes, did not implement authenticated pairing, and did not match Android protocol 6. Do not treat its typecheck-only completion statements as runtime evidence. The reconciled implementation uses a separate, tested, generic HTTPS companion; Android Wi-Fi Direct is unchanged.
+
 # AEM Store — Final Implementation Report
 
 **Branch:** `arena/6f1f16e2-aem` (from `main` @ `89df759f4ff4e9893ae4660e1bdb89dd1224ed2e`)

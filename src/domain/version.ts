@@ -50,3 +50,16 @@ export function compareAndroidRelease(
   if (releaseCode < installed.versionCode) return "local-newer";
   return "installed";
 }
+
+
+/** Windows semantic versions are ordered independently of Android version codes. */
+export function selectLatestWindowsRelease(releases: Release[]): Release | undefined {
+  const tuple = (name: string) => /^v?(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.exec(name)?.slice(1).map(Number);
+  return releases.filter(r => r.status === "published" && r.channel === "stable" && tuple(r.version.name) && r.artifacts.some(a =>
+    a.platform === "windows" && a.kind === "exe" && a.packageIdentity && /^[a-f0-9]{64}$/i.test(a.sha256 || "") && /^https:\/\//.test(a.downloadUrl)
+  )).sort((a,b) => {
+    const av = tuple(a.version.name)!, bv = tuple(b.version.name)!;
+    for (let i=0;i<3;i++) if(av[i]!==bv[i]) return bv[i]-av[i];
+    return 0;
+  })[0];
+}

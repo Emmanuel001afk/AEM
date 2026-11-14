@@ -1,19 +1,5 @@
-/**
- * Cross-platform recognition (AEM side only).
- *
- * Recognizes sister AEM-family products on the user's device/network — AEM
- * Store itself, EMA (Email Marketing App), OEA (Office Editor App), Phormi,
- * and Central Hub — so AEM Store can show coherent "installed elsewhere"
- * status and hand off between them. Each product owns its own database and
- * identity; AEM Store never merges identities or databases, and makes no
- * changes to any other repository.
- */
-export type ConnectedPlatform =
-  | "aem-store"
-  | "ema"
-  | "oea"
-  | "phormi"
-  | "central-hub";
+/** Generic recognition. Display names are metadata; authentication and consent are separate. */
+export type ConnectedPlatform = string; // publisher-owned reverse-DNS identifier
 
 export interface PlatformIdentity {
   platform: ConnectedPlatform;
@@ -48,34 +34,9 @@ export interface RecognitionResponse {
   handshakeUrl?: string; // deep-link to launch a recognized partner app
 }
 
-/**
- * AEM-side registry of recognizable AEM-family platforms. Pure data — no network,
- * no DB writes, no merges. Each platform's DB boundary is preserved.
- */
-export const RECOGNIZABLE_PLATFORMS: ConnectedPlatform[] = [
-  "aem-store",
-  "ema",
-  "oea",
-  "phormi",
-  "central-hub",
-];
-
-export const PLATFORM_LABELS: Record<ConnectedPlatform, string> = {
-  "aem-store": "AEM Store",
-  ema: "EMA",
-  oea: "OEA",
-  phormi: "Phormi",
-  "central-hub": "Central Hub",
-};
-
-/**
- * Empty recognition result: nothing recognized, nothing merged.
- */
-export function emptyRecognition(): RecognitionResponse {
-  return {
-    recognized: [],
-    notFound: [...RECOGNIZABLE_PLATFORMS],
-  };
+/** No fixed brand registry. Query the applications the user explicitly selected. */
+export function emptyRecognition(platforms:ConnectedPlatform[]=[]):RecognitionResponse {
+  return {recognized:[],notFound:[...new Set(platforms)]};
 }
 
 /**
@@ -97,7 +58,8 @@ export function mergeRecognition(
   };
   a.recognized.forEach(push);
   b.recognized.forEach(push);
-  const notFound = RECOGNIZABLE_PLATFORMS.filter(
+  const requested = [...new Set([...a.notFound,...b.notFound,...a.recognized.map(r=>r.platform),...b.recognized.map(r=>r.platform)])];
+  const notFound = requested.filter(
     (p) => !recognized.some((r) => r.platform === p),
   );
   return { recognized, notFound };

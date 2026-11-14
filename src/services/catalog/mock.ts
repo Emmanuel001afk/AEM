@@ -5,7 +5,7 @@ export const demoCatalog:StoreApp[]=[
     id:{provider:"github",project:"Emmanuel001afk/phormi-android"},
     packageIdentity:"com.uong.phormi",
     name:"Phormi",
-    description:"Private Android browser partner for AEM.",
+    description:"Android browser application.",
     sourceUrl:"https://github.com/Emmanuel001afk/phormi-android",
     platforms:["android"],
     category:"Browsers",

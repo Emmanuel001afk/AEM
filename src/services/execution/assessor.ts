@@ -28,7 +28,7 @@ export async function assessAppExecution(
   };
 
   if (desktop) {
-    host.emulatorAvailable = !!desktop.emulator;
+    host.emulatorAvailable = !!(await desktop.emulator.getDiagnostics().catch(()=>null))?.summary.canRun;
     try {
       const st = await desktop.emulator.getStatus().catch(() => null);
       host.emulatorRunning = st?.state === "running";

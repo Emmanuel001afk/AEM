@@ -124,7 +124,7 @@ export class EmulatorInstance {
     }
 
     // Common performance flags
-    args.push("-no-snapshot-save"); // we manage snapshots explicitly
+    // Quick boot may save its snapshot on graceful shutdown; cold boot flags disable it.
     // Enable host audio, camera passthrough where supported
     // Keep default networking (NAT)
     // Allow emulator to use host GPU acceleration automatically
@@ -200,13 +200,8 @@ export class EmulatorInstance {
 
     const bootOk = await adbWaitForBoot(this.sdkRoot, serial, EMULATOR_BOOT_TIMEOUT_MS);
     if (!bootOk) {
-      this.pushLog("warn", "adb", "Boot completed property not set within timeout — device may still be usable");
-      // Still mark as running if adb shell is responsive
-      const shellTest = await adbExec(this.sdkRoot, ["-s", serial, "shell", "echo", "ready"]);
-      if (!shellTest.success) {
-        this.setStatus({ state: "error", lastError: "Android boot did not complete (shell not responsive)", progress: undefined });
-        throw new Error("Emulator boot timeout");
-      }
+      this.setStatus({ state: "error", bootCompleted: false, lastError: "Android boot did not complete before timeout", progress: undefined });
+      throw new Error("Emulator boot timeout: a responsive shell is not a completed Android boot");
     }
 
     this.pushLog("info", "system", `Emulator ${avdName} (${serial}) boot completed in ${Math.round((Date.now() - (this.startTime || 0)) / 1000)}s`);
@@ -233,13 +228,15 @@ export class EmulatorInstance {
     const start = Date.now();
     while (Date.now() - start < timeoutMs) {
       const devices = await adbDevices(this.sdkRoot);
-      // Emulators show as emulator-5554 etc.
-      const emu = devices.find(d => d.startsWith("emulator-"));
-      if (emu) {
-        this.setStatus({ adbSerial: emu, progress: { phase: "boot", percent: 40, message: `Device ${emu} detected` } });
-        // Ensure device is not offline
-        const prop = await adbExec(this.sdkRoot, ["-s", emu, "get-state"]);
-        if (prop.stdout.trim() === "device") return true;
+      // Never attach to another tool's emulator simply because it appeared first.
+      for (const serial of devices.filter(d=>d.startsWith("emulator-"))) {
+        const name = await adbExec(this.sdkRoot,["-s",serial,"emu","avd","name"],5000);
+        if (!name.success || name.stdout.split(/\r?\n/)[0].trim() !== this.status.avdName) continue;
+        const state = await adbExec(this.sdkRoot,["-s",serial,"get-state"]);
+        if (state.success && state.stdout.trim() === "device") {
+          this.setStatus({ adbSerial: serial, progress: { phase: "boot", percent: 40, message: `Managed device ${serial} detected` } });
+          return true;
+        }
       }
       // Check if process died
       if (!this.proc || this.proc.exitCode !== null) return false;

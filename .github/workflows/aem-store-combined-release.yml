@@ -8,137 +8,191 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
   actions: read
 
 concurrency:
   group: aem-store-combined-release-${{ github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   android:
     name: Build and sign Android APK
-    if: github.event_name != 'pull_request'
     uses: ./.github/workflows/aem-android-final.yml
     secrets: inherit
 
   windows:
     name: Build and verify Windows EXEs
-    if: github.event_name != 'pull_request'
     uses: ./.github/workflows/aem-desktop.yml
     secrets: inherit
 
-  verify-and-package:
-    name: Verify both platforms and package release artifacts
-    runs-on: ubuntu-latest
-    needs: [android, windows]
-    if: github.event_name != 'pull_request'
+  android-smoke:
+    name: Signed APK installation and launch on Android AVD
+    needs: android
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
     steps:
-      - name: Download APK and Windows outputs from this run
-        uses: actions/download-artifact@v4
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: "21" }
+      - uses: actions/download-artifact@v4
         with:
-          pattern: aem-store-*
+          name: aem-store-release-apk
           path: release
-          merge-multiple: true
+      - name: Enable KVM on disposable CI runner
+        run: sudo chmod 666 /dev/kvm
+      - uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 29
+          arch: x86_64
+          target: default
+          ram-size: 2048M
+          heap-size: 256M
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
+          script: bash scripts/android-smoke.sh
+      - name: Runtime smoke diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: aem-android-runtime-diagnostics
+          path: |
+            android-launch.txt
+            android-relaunch.txt
+            android-window.xml
+            android-runtime.log
+          if-no-files-found: warn
 
-      - name: Verify all required deliverables
-        shell: bash
+  managed-emulator-smoke:
+    name: AEM-managed API 34 emulator lifecycle
+    needs: android
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: "21" }
+      - uses: actions/download-artifact@v4
+        with:
+          name: aem-store-release-apk
+          path: release
+      - name: Install real emulator tools and API 34 image
         run: |
           set -euo pipefail
-          test -s release/app-release.apk || { echo "Missing or empty signed Android APK"; exit 1; }
-          apk_size="$(stat -c '%s' release/app-release.apk)"
-          if [ "$apk_size" -lt 1000000 ]; then
-            echo "APK is unexpectedly small: $apk_size bytes"
+          sdkmanager="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          test -x "$sdkmanager"
+          if ! "$sdkmanager" "emulator" "platform-tools" "build-tools;34.0.0" "system-images;android-34;google_apis;x86_64" > sdk-setup.log 2>&1; then
+            node -e "const fs=require('fs');console.log('::error title=Runtime SDK setup::'+fs.readFileSync('sdk-setup.log','utf8').slice(-6000).replaceAll('%','%25').replaceAll('\\r','%0D').replaceAll('\\n','%0A'))"
             exit 1
           fi
-
-          mapfile -t exes < <(find release -maxdepth 1 -type f -name '*.exe' -size +9999999c | sort)
-          if [ "${#exes[@]}" -lt 2 ]; then
-            echo "Expected genuine Windows Setup and Portable EXE files (at least 10 MB each)."
-            find release -maxdepth 1 -type f -printf '%f (%s bytes)\n' | sort
+          sudo chmod 666 /dev/kvm
+      - run: npm ci
+      - run: npm run build:electron
+      - name: Configure Electron sandbox helper on disposable Linux runner
+        run: |
+          node node_modules/electron/install.js
+          sudo chown root:root node_modules/electron/dist/chrome-sandbox
+          sudo chmod 4755 node_modules/electron/dist/chrome-sandbox
+      - name: Real Chromium LAN companion upload and download
+        run: |
+          if ! xvfb-run -a node_modules/.bin/electron scripts/lan-browser-smoke.cjs > aem-lan-browser.log 2>&1; then
+            node -e "const fs=require('fs');console.log('::error title=LAN browser runtime::'+(fs.existsSync('aem-lan-browser-failure.txt')?fs.readFileSync('aem-lan-browser-failure.txt','utf8'):fs.readFileSync('aem-lan-browser.log','utf8')).slice(-6000).replaceAll('%','%25').replaceAll('\\r','%0D').replaceAll('\\n','%0A'))"
             exit 1
           fi
-
-          echo "Verified APK: release/app-release.apk ($apk_size bytes)"
-          for exe in "${exes[@]}"; do
-            echo "Verified Windows executable: $exe ($(stat -c '%s' "$exe") bytes)"
-          done
-          (
-            cd release
-            sha256sum app-release.apk *.exe | tee SHA256SUMS.txt
-          )
-
-      - name: Upload unified APK and EXE release bundle
+          test ! -f aem-lan-browser-failure.txt
+          test -f aem-lan-browser-success.json
+          cat aem-lan-browser.log
+          node -e "const r=require('./aem-lan-browser-success.json');if(!r.paired||r.uploadedBytes!==1234567||r.downloadedBytes!==54321)process.exit(1);console.log('::notice title=Verified LAN browser bytes::Paired Chromium transferred '+r.uploadedBytes+' bytes to PC and verified '+r.downloadedBytes+' bytes from PC, SHA-256 '+r.downloadSha256)"
+      - name: Exercise AEM diagnostics, AVD creation, install, launch and teardown
+        run: |
+          if ! xvfb-run -a node_modules/.bin/electron scripts/emulator-runtime-smoke.cjs > aem-electron-runtime.log 2>&1; then
+            node -e "const fs=require('fs');console.log('::error title=AEM Electron runtime::'+(fs.existsSync('aem-runtime-failure.txt')?fs.readFileSync('aem-runtime-failure.txt','utf8'):fs.readFileSync('aem-electron-runtime.log','utf8')).slice(-6000).replaceAll('%','%25').replaceAll('\\r','%0D').replaceAll('\\n','%0A'))"
+            exit 1
+          fi
+          cat aem-electron-runtime.log
+      - name: Managed emulator diagnostics
+        if: always()
         uses: actions/upload-artifact@v4
+        with:
+          name: aem-managed-emulator-diagnostics
+          path: |
+            aem-lan-browser-success.json
+            aem-lan-browser.log
+            aem-lan-browser-failure.txt
+            aem-runtime-failure.txt
+            aem-runtime-manager.log
+            aem-electron-runtime.log
+            sdk-setup.log
+            aem-runtime-diagnostics.json
+            aem-managed-window.xml
+            ${{ runner.temp }}/aem-managed-emulator-smoke/logs/*.log
+          if-no-files-found: warn
+
+  verify-and-package:
+    runs-on: ubuntu-latest
+    needs: [android, android-smoke, managed-emulator-smoke, windows]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - uses: actions/download-artifact@v4
+        with:
+          name: aem-store-release-apk
+          path: release
+      - uses: actions/download-artifact@v4
+        with:
+          name: aem-store-windows
+          path: release
+      - name: Validate complete deliverable set and checksums
+        run: |
+          set -euo pipefail
+          node scripts/verify-release.mjs release
+          node scripts/stamp-version.mjs
+          node --input-type=module -e "import fs from 'node:fs'; const p=JSON.parse(fs.readFileSync('package.json')); fs.writeFileSync('release/release.json',JSON.stringify({family:'com.aem.store',version:p.version,androidVersionCode:1810000000+Number(process.env.GITHUB_RUN_NUMBER),source:process.env.GITHUB_SHA,run:process.env.GITHUB_RUN_ID},null,2))"
+          cp docs/desktop/DOWNLOADS.md release/INSTALL.md
+          (cd release && sha256sum -c SHA256SUMS.txt)
+          node --input-type=module -e "import fs from 'node:fs'; console.log('::notice title=Verified deliverable checksums::'+fs.readFileSync('release/SHA256SUMS.txt','utf8').trim().replaceAll('\n','%0A'))"
+      - uses: actions/upload-artifact@v4
         with:
           name: aem-store-complete-release
           path: release/**
           if-no-files-found: error
           retention-days: 30
 
-  publish-release:
-    name: Create GitHub Release with APK and Windows EXEs
+  publish:
+    needs: verify-and-package
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
     runs-on: ubuntu-latest
-    needs: [verify-and-package]
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push' && needs.verify-and-package.result == 'success'
+    permissions:
+      contents: write
+      actions: read
     steps:
-      - name: Download verified release bundle
-        uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v4
         with:
           name: aem-store-complete-release
           path: release
-      - name: Confirm deliverables before publishing
-        shell: bash
-        run: |
-          set -euo pipefail
-          test -s release/app-release.apk || { echo "APK missing"; exit 1; }
-          mapfile -t exes < <(find release -maxdepth 1 -type f -name '*.exe' -size +9999999c | sort)
-          if [ "${#exes[@]}" -lt 2 ]; then
-            echo "Expected at least 2 genuine Windows EXE deliverables"; exit 1
-          fi
-          test -s release/SHA256SUMS.txt || { echo "Checksums missing"; exit 1; }
-          echo "Publishing: $(ls -1 release | tr '\n' ' ')"
-      - name: Create GitHub Release
+      - name: Publish only after verifying downloadable draft assets
         env:
           GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          RELEASE_TAG="v0.1.0-ci-${GITHUB_RUN_NUMBER}"
-          RELEASE_TITLE="AEM Store v0.1.0 (build ${GITHUB_RUN_NUMBER})"
-          # Build release notes inline (single-quoted strings are safe inside YAML block scalars)
-          {
-            printf '%s\n' 'AEM Store v0.1.0 — multi-platform release (build '"${GITHUB_RUN_NUMBER}"', commit '"${GITHUB_SHA}"').'
-            printf '%s\n' ''
-            printf '%s\n' '## Downloads'
-            printf '%s\n' ''
-            printf '%s\n' '| File | What it is |'
-            printf '%s\n' '|------|------------|'
-            printf '%s\n' '| `app-release.apk` | **Android** — signed AEM Store APK (`com.aem.store`). Install on Android devices. |'
-            printf '%s\n' '| `AEM-Store-*-Setup-x64.exe` | **Windows** — Setup installer. Normal installation with Start Menu shortcut, desktop shortcut, app icon, file associations, and uninstall. |'
-            printf '%s\n' '| `AEM-Store-*-Portable-x64.exe` | **Windows** — Portable application. No installation required; run directly. |'
-            printf '%s\n' '| `SHA256SUMS.txt` | SHA-256 checksums for every file above. Verify after download. |'
-            printf '%s\n' ''
-            printf '%s\n' '## Installation'
-            printf '%s\n' ''
-            printf '%s\n' '- **Android:** download `app-release.apk`, open it, and install (enable “Install unknown apps” for your browser or file manager when prompted).'
-            printf '%s\n' '- **Windows:** download the Setup EXE, run it, and follow the installer. The portable EXE is an install-free alternative.'
-            printf '%s\n' ''
-            printf '%s\n' '## Integrity'
-            printf '%s\n' ''
-            printf '%s\n' 'Run `sha256sum -c SHA256SUMS.txt` in the folder containing the downloaded files.'
-            printf '%s\n' ''
-            printf '%s\n' 'Built by GitHub Actions from the AEM repository (Emmanuel001afk/AEM).'
-          } > release/release-notes.md
-          if gh release view "$RELEASE_TAG" --repo Emmanuel001afk/AEM >/dev/null 2>&1; then
-            echo "Release $RELEASE_TAG already exists; replacing it."
-            gh release delete "$RELEASE_TAG" --repo Emmanuel001afk/AEM --yes --cleanup-tags
-          fi
-          gh release create "$RELEASE_TAG" --repo Emmanuel001afk/AEM \
-            --title "$RELEASE_TITLE" \
-            --notes-file release/release-notes.md \
-            release/app-release.apk release/*.exe release/SHA256SUMS.txt
-      - name: Show release URL
+          GH_REPO: ${{ github.repository }}
+          SOURCE_SHA: ${{ github.sha }}
         shell: bash
         run: |
-          echo "RELEASE_TAG=v0.1.0-ci-${{ github.run_number }}" >> "$GITHUB_ENV"
-          gh release view "v0.1.0-ci-${{ github.run_number }}" --repo Emmanuel001afk/AEM --json url,tagName,createdAt
+          set -euo pipefail
+          version="$(jq -r .version release/release.json)"
+          tag="v$version"
+          (cd release && zip -q "AEM-Store-$version-Complete.zip" app-release.apk *.exe SHA256SUMS.txt INSTALL.md release.json)
+          (cd release && sha256sum "AEM-Store-$version-Complete.zip" >> SHA256SUMS.txt)
+          if gh release view "$tag" --json isDraft --jq .isDraft > is-draft.txt; then
+            test "$(cat is-draft.txt)" = true || { echo "Refusing to overwrite a published release"; exit 1; }
+          else
+            gh release create "$tag" --target "$SOURCE_SHA" --draft --title "AEM Store $version" --notes-file release/INSTALL.md
+          fi
+          gh release upload "$tag" release/* --clobber
+          mkdir downloaded
+          gh release download "$tag" --dir downloaded --pattern '*.exe' --pattern '*.apk' --pattern SHA256SUMS.txt --pattern '*-Complete.zip'
+          (cd downloaded && sha256sum -c SHA256SUMS.txt && unzip -t "AEM-Store-$version-Complete.zip")
+          # This is deliberately last: any failed build/download leaves a draft, never a latest release.
+          gh release edit "$tag" --draft=false --latest

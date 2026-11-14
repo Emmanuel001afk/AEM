@@ -7,8 +7,9 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with: { node-version: 22 }
-      - run: npm install
+      - run: npm ci
       - run: npm run typecheck
       - run: npm run typecheck:electron
       - run: npm run build
       - run: npm run verify
+      - run: npm run test:unit

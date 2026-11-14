@@ -380,30 +380,31 @@ public class AemInstallerPlugin extends Plugin {
     }
 
     private void install(File file, String mode, String expectedPackage, String expectedSigningCert, long expectedVersionCode, String expectedDownloadId) throws Exception {
-        validatePackage(file, expectedPackage, expectedSigningCert, expectedVersionCode);
         List<File> apks = new ArrayList<>();
         String lower = file.getName().toLowerCase(Locale.US);
+        File splitStaging = null;
+        try {
 
         if (lower.endsWith(".apk")) {
             apks.add(file);
         } else if (lower.endsWith(".apks") || lower.endsWith(".xapk") || lower.endsWith(".apkm") || lower.endsWith(".zip")) {
             File dir = new File(file.getParentFile(), "parts-" + System.nanoTime());
             if (!dir.mkdirs()) throw new IOException("Cannot create split staging directory");
-            try (ZipInputStream zin = new ZipInputStream(new BufferedInputStream(new FileInputStream(file)))) {
-                ZipEntry e;
-                byte[] buf = new byte[1024 * 64];
-                while ((e = zin.getNextEntry()) != null) {
-                    if (e.isDirectory() || !e.getName().toLowerCase(Locale.US).endsWith(".apk")) continue;
-                    String safe = new File(e.getName()).getName();
-                    File target = new File(dir, safe);
-                    try (OutputStream os = new BufferedOutputStream(new FileOutputStream(target))) {
-                        int n; while ((n = zin.read(buf)) >= 0) os.write(buf, 0, n);
-                    }
-                    apks.add(target);
-                }
-            }
-            if (apks.isEmpty()) throw new IOException("No APK parts found in archive");
+            splitStaging = dir;
+            apks.addAll(AemPackageArchive.extract(file, dir));
         } else throw new IOException("Unsupported installer file: " + file.getName());
+
+        // PackageManager cannot parse isolated config splits on every Android version.
+        // Preflight readable base metadata; PackageInstaller atomically verifies every split/signature.
+        boolean readableBase = false;
+        for (File apk : apks) {
+            android.content.pm.PackageInfo readable = getContext().getPackageManager().getPackageArchiveInfo(apk.getAbsolutePath(), 0);
+            if (readable != null) {
+                validatePackage(apk, expectedPackage, expectedSigningCert, expectedVersionCode);
+                readableBase = true;
+            }
+        }
+        if (!readableBase) throw new IOException("No readable base APK; obtain a complete device-compatible package set");
 
         if ("system".equalsIgnoreCase(mode)) {
             if (!lower.endsWith(".apk")) throw new IOException("Android system installer mode supports .apk only; use AEM Split Installer for split-package archives.");
@@ -454,6 +455,7 @@ public class AemInstallerPlugin extends Plugin {
         } finally {
             session.close();
         }
+        } finally { AemPackageArchive.deleteTree(splitStaging); }
     }
 
     private void monitorSystemInstall(final String packageName, final long targetVersionCode, final String downloadId) {
@@ -481,23 +483,6 @@ public class AemInstallerPlugin extends Plugin {
         if (expectedPackage == null || expectedPackage.isEmpty()) return;
         String lower = file.getName().toLowerCase(Locale.US);
         File inspect = file;
-        if (lower.endsWith(".apks") || lower.endsWith(".xapk") || lower.endsWith(".apkm") || lower.endsWith(".zip")) {
-            File dir = new File(file.getParentFile(), "validate-" + System.nanoTime());
-            if (!dir.mkdirs()) throw new IOException("Cannot create validation directory");
-            try (ZipInputStream zin = new ZipInputStream(new BufferedInputStream(new FileInputStream(file)))) {
-                ZipEntry e;
-                byte[] buf = new byte[65536];
-                while ((e = zin.getNextEntry()) != null) {
-                    if (e.isDirectory() || !e.getName().toLowerCase(Locale.US).endsWith(".apk")) continue;
-                    File candidate = new File(dir, new File(e.getName()).getName());
-                    try (OutputStream os = new BufferedOutputStream(new FileOutputStream(candidate))) {
-                        int n; while ((n = zin.read(buf)) >= 0) os.write(buf,0,n);
-                    }
-                    inspect = candidate;
-                    break;
-                }
-            }
-        }
         android.content.pm.PackageManager pm = getContext().getPackageManager();
         android.content.pm.PackageInfo info = pm.getPackageArchiveInfo(
                 inspect.getAbsolutePath(),
@@ -505,12 +490,13 @@ public class AemInstallerPlugin extends Plugin {
         );
         if (info == null || info.packageName == null) throw new IOException("Downloaded package metadata could not be read");
         if (!expectedPackage.equals(info.packageName)) throw new IOException("Package identity mismatch: expected " + expectedPackage + " but downloaded " + info.packageName);
-        if (expectedVersionCode >= 0 && Build.VERSION.SDK_INT >= 28 && info.getLongVersionCode() != expectedVersionCode) {
-            throw new IOException("Version code mismatch: expected " + expectedVersionCode + " but downloaded " + info.getLongVersionCode());
+        long actualVersionCode = Build.VERSION.SDK_INT >= 28 ? info.getLongVersionCode() : info.versionCode;
+        if (expectedVersionCode >= 0 && actualVersionCode != expectedVersionCode) {
+            throw new IOException("Version code mismatch: expected " + expectedVersionCode + " but downloaded " + actualVersionCode);
         }
-        if (expectedSigningCert != null && !expectedSigningCert.isEmpty() && Build.VERSION.SDK_INT >= 28) {
+        if (expectedSigningCert != null && !expectedSigningCert.isEmpty()) {
             android.content.pm.Signature[] signers = null;
-            if (info.signingInfo != null) {
+            if (Build.VERSION.SDK_INT >= 28 && info.signingInfo != null) {
                 signers = info.signingInfo.hasMultipleSigners()
                         ? info.signingInfo.getApkContentsSigners()
                         : info.signingInfo.getSigningCertificateHistory();
