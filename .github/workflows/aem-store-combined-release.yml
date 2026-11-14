@@ -91,13 +91,19 @@ jobs:
       - run: npm ci
       - run: npm run build:electron
       - name: Exercise AEM diagnostics, AVD creation, install, launch and teardown
-        run: xvfb-run -a node_modules/.bin/electron scripts/emulator-runtime-smoke.cjs
+        run: |
+          if ! xvfb-run -a node_modules/.bin/electron scripts/emulator-runtime-smoke.cjs > aem-electron-runtime.log 2>&1; then
+            node -e "const fs=require('fs');console.log('::error title=AEM Electron runtime::'+fs.readFileSync('aem-electron-runtime.log','utf8').slice(-6000).replaceAll('%','%25').replaceAll('\\r','%0D').replaceAll('\\n','%0A'))"
+            exit 1
+          fi
+          cat aem-electron-runtime.log
       - name: Managed emulator diagnostics
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: aem-managed-emulator-diagnostics
           path: |
+            aem-electron-runtime.log
             sdk-setup.log
             aem-runtime-diagnostics.json
             aem-managed-window.xml

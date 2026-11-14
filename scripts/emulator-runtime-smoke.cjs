@@ -55,4 +55,4 @@ app.whenReady().then(async()=>{
     try {await manager.stop();}catch{}
     app.exit(1);
   }
-}).catch(error=>{console.error(error);app.exit(1);});
+}).catch(error=>{console.error('::error title=AEM runtime initialization::'+String(error).replaceAll('\n','%0A'));app.exit(1);});
