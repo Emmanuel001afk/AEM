@@ -40,6 +40,43 @@ export interface SdkStatus {
   totalDownloadMB: number;
 }
 
+export type ResourceProfileId = "lightweight" | "balanced" | "standard";
+
+export interface HostResources {
+  platform: string;
+  arch: string;
+  totalMemMB: number;
+  freeMemMB: number;
+  cpuModel: string;
+  cpuCores: number;
+  diskFreeMB: number | null;
+  virtualizationEnabled: boolean | null;
+  hypervisor: string | null;
+  gpuInfo: string | null;
+  osVersion: string;
+}
+
+export interface ResourceProfile {
+  id: ResourceProfileId;
+  name: string;
+  description: string;
+  ramMB: number;
+  heapMB: number;
+  cores: number;
+  storageMB: number;
+  gpuMode: string;
+  snapshot: boolean;
+  recommendedFor: string;
+}
+
+export interface ResourceRecommendation {
+  host: HostResources;
+  profiles: ResourceProfile[];
+  recommended: ResourceProfileId;
+  reasons: string[];
+  limitations: string[];
+}
+
 export interface AvdInfo {
   name: string;
   path: string;
@@ -74,6 +111,7 @@ export interface EmulatorBridge {
   getAvdInfo(name: string): Promise<AvdInfo | null>;
   listSystemImages(): Promise<any[]>;
   createAvd(opts: any): Promise<AvdInfo>;
+  getResourceProfiles(): Promise<ResourceRecommendation>;
   deleteAvd(name: string): Promise<boolean>;
   wipeAvd(name: string): Promise<void>;
   updateAvd(name: string, patch: any): Promise<AvdInfo | null>;
@@ -102,6 +140,8 @@ export interface EmulatorBridge {
   installStoreArtifact(artifact: { url: string; filename: string; packageIdentity?: string }): Promise<{ success: boolean; message: string }>;
 }
 
+import type { TransferBridge } from "../transfer/contract";
+
 export interface DesktopBridge {
   isDesktop: boolean;
   platform: NodeJS.Platform;
@@ -117,6 +157,7 @@ export interface DesktopBridge {
   pickApkFile(): Promise<{ canceled: boolean; filePaths: string[] }>;
   pickFile(opts: { title?: string; filters?: { name: string; extensions: string[] }[] }): Promise<{ canceled: boolean; filePaths: string[] }>;
   emulator: EmulatorBridge;
+  transfer: TransferBridge;
 }
 
 declare global {

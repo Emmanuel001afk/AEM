@@ -48,6 +48,7 @@ const api = {
     listAvds: () => ipcRenderer.invoke("emulator:listAvds"),
     getAvdInfo: (name: string) => ipcRenderer.invoke("emulator:getAvdInfo", name),
     listSystemImages: () => ipcRenderer.invoke("emulator:listSystemImages"),
+    getResourceProfiles: () => ipcRenderer.invoke("emulator:getResourceProfiles"),
     createAvd: (opts: any) => ipcRenderer.invoke("emulator:createAvd", opts),
     deleteAvd: (name: string) => ipcRenderer.invoke("emulator:deleteAvd", name),
     wipeAvd: (name: string) => ipcRenderer.invoke("emulator:wipeAvd", name),
@@ -82,6 +83,34 @@ const api = {
     // Store integration: install latest artifact from AEM catalog directly to emulator
     installStoreArtifact: (artifact: { url: string; filename: string; packageIdentity?: string }) =>
       ipcRenderer.invoke("emulator:installStoreArtifact", artifact),
+
+    // Transfer (bidirectional phone <-> PC)
+    transfer: {
+      discover: (opts?: { timeoutMs?: number }) =>
+        ipcRenderer.invoke("transfer:discover", opts),
+      startReceiving: (opts?: { downloadDir?: string }) =>
+        ipcRenderer.invoke("transfer:startReceiving", opts),
+      stop: () => ipcRenderer.invoke("transfer:stop"),
+      send: (opts: { peerId: string; filePaths: string[] }) =>
+        ipcRenderer.invoke("transfer:send", opts),
+      listSessions: () => ipcRenderer.invoke("transfer:listSessions"),
+      cancel: (sessionId: string) => ipcRenderer.invoke("transfer:cancel", sessionId),
+      pause: (sessionId: string) => ipcRenderer.invoke("transfer:pause", sessionId),
+      resume: (sessionId: string) => ipcRenderer.invoke("transfer:resume", sessionId),
+      onProgress: (sessionId: string, cb: (e: any) => void) => {
+        const h = (_: any, ev: any) => cb(ev);
+        ipcRenderer.on("transfer:progress", h);
+        return () => {
+          ipcRenderer.removeListener("transfer:progress", h);
+          void ipcRenderer.invoke("transfer:offProgress", sessionId);
+        };
+      },
+      onSessionChange: (cb: (s: any) => void) => {
+        const h = (_: any, s: any) => cb(s);
+        ipcRenderer.on("transfer:session", h);
+        return () => ipcRenderer.removeListener("transfer:session", h);
+      },
+    },
   },
 };
 
@@ -89,13 +118,6 @@ contextBridge.exposeInMainWorld("aemDesktop", api);
 
 // Also legacy name for compatibility
 contextBridge.exposeInMainWorld("electron", api);
-
-declare global {
-  interface Window {
-    aemDesktop: typeof api;
-    electron: typeof api;
-  }
-}
 
 // Keep renderer isolated
 contextBridge.exposeInMainWorld("AEM_IS_DESKTOP", true);

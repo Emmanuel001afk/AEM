@@ -30,7 +30,7 @@ This document is the source of truth for what the emulator **cannot** do, so QA 
 
 - Catalog is provider-backed (GitHub → Supabase). No manual APK upload in Store UI; use GitHub release + ingestion.
 - Signing identity remains deterministic security boundary (AI never decides safety). Store refuses install if signing cert mismatches.
-- Transfer stays Android-to-Android Wi-Fi Direct; desktop shows explainer only.
+- Desktop transfer (phone ↔ PC LAN) is implemented and typecheck-verified but requires physical phones + LAN to run end-to-end; not executable in the Linux CI/sandbox. Phone-to-phone Wi-Fi Direct remains on Android.
 
 ## When to Use Physical Device Instead
 

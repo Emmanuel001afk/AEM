@@ -180,7 +180,8 @@ always passes the current appearance so native and web stay in the same theme.
 ## Desktop and phone↔PC
 
 - The web **Transfer** tab is informative only (`Capacitor.isNativePlatform()` guard). Desktop shows an extra Explainer: double-click `.apk/.apks/.xapk/.apkm` or `File → Open APK…` forwards to the emulator (`aem:openApkFile`). Drag-and-drop into the emulator and `adb push/pull` also work.
-- Direct phone↔PC over the same Wi-Fi LAN without emulator is not yet a full TCP fallback — the current link is Wi-Fi Direct phone↔phone (port 38177). Planned: LAN NSD (`_aemtransfer._tcp` over mDNS) so desktop can advertise and a phone can discover it on the same router without Wi-Fi Direct. Until then, use phone→phone, then USB to PC, or install straight to emulator from the AEM catalog.
+- Direct phone↔PC over the same Wi-Fi LAN is now supported from the Windows desktop Transfer tab: discover phones on the LAN, send files to phone, receive files from phone, SHA-256 verified, resumable, pause/cancel/resume. The link is local-only (UDP beacon discovery + TCP data channel); nothing goes to Supabase or the internet.
+- Under the hood the desktop uses the same protocol family as the phone app (port 38178 beacon discovery, port 38179 data channel, SHA-256, offset resume). Real device-to-device discovery/transfer requires physical phones on the same LAN.
 
 ## Troubleshooting
 
