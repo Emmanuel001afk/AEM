@@ -51,9 +51,10 @@ app.whenReady().then(async()=>{
     console.log('::notice title=AEM managed emulator runtime::Real API 34 x86_64 AVD created by AEM, acceleration/resource diagnostics passed, booted, rejected wrong certificate, installed signed APK, launched accessible UI, uninstalled, stopped and deleted AVD. Linux KVM only; SDK preinstalled by CI, not the AEM downloader.');
     app.exit(0);
   } catch(error) {
-    console.error((await manager.getLogs(30)).join('\n'));
+    fs.writeFileSync('aem-runtime-failure.txt',String(error));
+    fs.writeFileSync('aem-runtime-manager.log',(await manager.getLogs(50)).join('\n'));
     console.error('::error title=AEM managed emulator runtime::'+String(error).replaceAll('\n','%0A'));
     try {await manager.stop();}catch{}
     app.exit(1);
   }
-}).catch(error=>{console.error('::error title=AEM runtime initialization::'+String(error).replaceAll('\n','%0A'));app.exit(1);});
+}).catch(error=>{fs.writeFileSync('aem-runtime-failure.txt',String(error));console.error('::error title=AEM runtime initialization::'+String(error).replaceAll('\n','%0A'));app.exit(1);});

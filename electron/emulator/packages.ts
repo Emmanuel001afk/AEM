@@ -86,7 +86,7 @@ export async function inspectApk(file:string, root:string):Promise<PackageMetada
   const {stdout}=await exec(findBuildTool(root,'aapt'),['dump','badging',file],{timeout:20000,maxBuffer:4*1024**2,windowsHide:true});
   const cmd=sdkCommand(findBuildTool(root,'apksigner'),['verify','--print-certs',file]);
   const signature=await exec(cmd.file,cmd.args,{timeout:30000,maxBuffer:1024**2,windowsHide:true});
-  const certificates=[...signature.stdout.matchAll(/Signer #\d+ certificate SHA-256 digest: ([a-fA-F0-9]{64})/g)].map(m=>m[1].toLowerCase()).sort();
+  const certificates=parseSignerCertificates(signature.stdout+'\n'+signature.stderr);
   if(!certificates.length) throw new Error(`APK signer certificate output was not recognized from ${cmd.file}: ${(signature.stdout+'\n'+signature.stderr).slice(-2500)}`);
   return {...parseBadging(stdout),file,certificate:certificates.join(',')};
 }
@@ -97,4 +97,8 @@ export function assertCatalogCertificate(actual:string,expected:unknown):void {
   if(typeof expected!=='string')throw new Error('Invalid catalog signing certificate');
   const normalized=expected.replace(/:/g,'').toLowerCase();
   if(!/^[a-f0-9]{64}$/.test(normalized)||!actual.split(',').includes(normalized))throw new Error('Catalog signing certificate mismatch');
+}
+
+export function parseSignerCertificates(output:string):string[] {
+  return [...new Set([...output.matchAll(/^Signer #\d+ certificate SHA-?256 digest:\s*([a-f0-9]{64})\s*$/gmi)].map(m=>m[1].toLowerCase()))].sort();
 }

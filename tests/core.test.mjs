@@ -88,3 +88,11 @@ test('catalog signing certificate check is separate from APK signature validity'
  assert.doesNotThrow(()=>assertCatalogCertificate(cert,undefined));
  for(const expected of ['cd'.repeat(32),'xyz',{},1])assert.throws(()=>assertCatalogCertificate(cert,expected));
 });
+
+test('signer output parsing accepts SDK spacing/CRLF and rejects unrelated digests',()=>{
+ const {parseSignerCertificates}=require('../dist-electron/emulator/packages.js');
+ const cert='ab'.repeat(32);
+ assert.deepEqual(parseSignerCertificates(`Signer #1 certificate SHA-256 digest: ${cert}\r\n`),[cert]);
+ assert.deepEqual(parseSignerCertificates(`Signer #1 certificate SHA256 digest:  ${cert.toUpperCase()}\n`),[cert]);
+ assert.deepEqual(parseSignerCertificates(`Source Stamp certificate SHA-256 digest: ${cert}\nSigner #1 public key SHA-256 digest: ${cert}\n`),[]);
+});
