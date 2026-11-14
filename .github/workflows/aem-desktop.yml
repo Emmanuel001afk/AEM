@@ -50,6 +50,31 @@ jobs:
           }
       - name: Verify PE structure
         run: node --input-type=module -e "import {verifyPE} from './scripts/verify-release.mjs'; import fs from 'node:fs'; for (const f of fs.readdirSync('release').filter(f=>f.endsWith('.exe'))) verifyPE('release/'+f); verifyPE('release/win-unpacked/AEM Store.exe')"
+      - name: Find previous successful build on this branch for upgrade regression
+        id: previous
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          SOURCE_BRANCH: ${{ github.head_ref || github.ref_name }}
+        run: |
+          $runs = (gh api "repos/$env:GH_REPO/actions/workflows/aem-store-combined-release.yml/runs?status=success&per_page=20" | ConvertFrom-Json).workflow_runs
+          foreach ($run in $runs) {
+            if ($run.head_branch -ne $env:SOURCE_BRANCH) { continue }
+            $artifacts = (gh api "repos/$env:GH_REPO/actions/runs/$($run.id)/artifacts" | ConvertFrom-Json).artifacts
+            if ($artifacts | Where-Object { $_.name -eq 'aem-store-windows' -and !$_.expired }) {
+              "run=$($run.id)" >> $env:GITHUB_OUTPUT
+              break
+            }
+          }
+      - name: Download previous verified Windows build
+        if: steps.previous.outputs.run != ''
+        uses: actions/download-artifact@v4
+        with:
+          name: aem-store-windows
+          path: previous-release
+          run-id: ${{ steps.previous.outputs.run }}
+          github-token: ${{ github.token }}
       - name: Installed and portable application smoke tests
         shell: pwsh
         run: |
@@ -57,6 +82,17 @@ jobs:
           catch {
             $message = ($_.Exception.Message + "`n" + $_.ScriptStackTrace).Replace('%','%25').Replace("`r",'%0D').Replace("`n",'%0A')
             Write-Host "::error title=Windows installation smoke failure::$message"
+            exit 1
+          }
+      - uses: actions/setup-dotnet@v4
+        with: { dotnet-version: '8.0.x' }
+      - name: Native source delivery integration smoke
+        shell: pwsh
+        run: |
+          try { ./scripts/native-windows-smoke.ps1 }
+          catch {
+            $message = ($_.Exception.Message + "`n" + $_.ScriptStackTrace).Replace('%','%25').Replace("`r",'%0D').Replace("`n",'%0A')
+            Write-Host "::error title=Native source smoke failure::$message"
             exit 1
           }
       - uses: actions/upload-artifact@v4

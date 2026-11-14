@@ -52,3 +52,14 @@ test('Windows variants remain discoverable without changing Android version orde
  assert.equal(selectLatestWindowsRelease([release('2.0.0',4,'beta'),release('1.0.10',1)]).id,'1.0.10');
  assert.equal(selectLatestWindowsRelease([{...release('9.0.0',1),artifacts:[{...artifact,sha256:''}]}]),undefined);
 });
+
+test('Windows application and APK-association icons are real multi-resolution ICO files',()=>{
+ for(const name of ['icon.ico','apk.ico']){
+  const b=fs.readFileSync(new URL('../resources/icons/'+name,import.meta.url));
+  assert.equal(b.readUInt16LE(0),0);assert.equal(b.readUInt16LE(2),1);
+  const count=b.readUInt16LE(4);assert.ok(count>1&&count<=32);
+  const sizes=[];
+  for(let i=0;i<count;i++){const offset=6+i*16;sizes.push(b[offset]||256);const bytes=b.readUInt32LE(offset+8),start=b.readUInt32LE(offset+12);assert.ok(start>=6+count*16&&start+bytes<=b.length);}
+  assert.ok(sizes.includes(32)&&sizes.includes(256));
+ }
+});

@@ -1,0 +1,11 @@
+{
+  "schema": 1,
+  "familyId": "com.aem.pipelinefixture",
+  "windowsAppId": "com.aem.pipelinefixture.windows",
+  "displayName": "AEM Native Fixture",
+  "version": "1.0.0",
+  "project": "NativeFixture.csproj",
+  "executable": "AemNativeFixture.exe",
+  "sourceRevision": "AEM repository test fixture at workflow source revision",
+  "license": "MIT - test fixture only"
+}

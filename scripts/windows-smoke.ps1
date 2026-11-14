@@ -20,11 +20,47 @@ function Assert-Launch($exe) {
     Remove-Item Env:AEM_SMOKE_TEST, Env:AEM_SMOKE_RESULT -ErrorAction SilentlyContinue
   }
 }
+$upgradeMarker = $null
+$priorData = $null
+$version = (Get-Content package.json | ConvertFrom-Json).version
+if (Test-Path previous-release) {
+  $previous = @(Get-ChildItem previous-release/*-Setup-x64.exe)
+  if ($previous.Count -eq 1 -and $previous[0].Name -match 'AEM-Store-(\d+\.\d+\.\d+)-Setup-x64.exe') {
+    $priorVersion = $Matches[1]
+    if ([version]$priorVersion -ge [version]'0.2.11' -and [version]$priorVersion -lt [version]$version) {
+      $p = Start-Process $previous[0].FullName -ArgumentList @('/S', "/D=$installDir") -Wait -PassThru
+      if ($p.ExitCode -ne 0) { throw 'Previous version installation failed' }
+      $prior = Assert-Launch (Join-Path $installDir 'AEM Store.exe')
+      $priorData = $prior.userData
+      if (!$priorData) { throw 'Previous app did not report actual data path' }
+      $upgradeMarker = Join-Path $priorData 'aem-upgrade-preservation.txt'
+      Set-Content $upgradeMarker 'preserve-across-version-upgrade'
+    }
+  }
+}
 $p = Start-Process $setup[0].FullName -ArgumentList @('/S', "/D=$installDir") -Wait -PassThru
 if ($p.ExitCode -ne 0) { throw "Setup exit $($p.ExitCode)" }
 $exe = Join-Path $installDir 'AEM Store.exe'
 if (!(Test-Path $exe)) { throw 'Installed executable missing' }
 if ((Get-Item $exe).VersionInfo.ProductName -ne 'AEM Store') { throw 'Executable product resources missing' }
+Add-Type -AssemblyName System.Drawing
+$actualIcon = [System.Drawing.Icon]::ExtractAssociatedIcon($exe)
+if (!$actualIcon) { throw 'Installed executable has no extractable icon' }
+$expectedIcon = [System.Drawing.Icon]::new((Resolve-Path resources/icons/icon.ico).Path, $actualIcon.Size)
+$actualBitmap = $actualIcon.ToBitmap()
+$expectedBitmap = $expectedIcon.ToBitmap()
+$compared = 0; $different = 0
+for ($x = 0; $x -lt $expectedBitmap.Width; $x++) {
+  for ($y = 0; $y -lt $expectedBitmap.Height; $y++) {
+    $expected = $expectedBitmap.GetPixel($x, $y)
+    if ($expected.A -lt 128) { continue }
+    $actual = $actualBitmap.GetPixel($x, $y)
+    $compared++
+    if ([Math]::Abs([int]$expected.R - [int]$actual.R) -gt 8 -or [Math]::Abs([int]$expected.G - [int]$actual.G) -gt 8 -or [Math]::Abs([int]$expected.B - [int]$actual.B) -gt 8) { $different++ }
+  }
+}
+$actualBitmap.Dispose(); $expectedBitmap.Dispose(); $actualIcon.Dispose(); $expectedIcon.Dispose()
+if ($compared -eq 0 -or $different / $compared -gt 0.05) { throw 'Installed application icon does not match AEM branding' }
 $start = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\AEM Store.lnk'
 $desktop = Join-Path ([Environment]::GetFolderPath('Desktop')) 'AEM Store.lnk'
 foreach ($link in @($start, $desktop)) {
@@ -39,6 +75,14 @@ $registration = Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersio
 }
 if (!$registration) { throw 'Uninstall registration missing' }
 $firstLaunch = Assert-Launch $exe
+if ($firstLaunch.version -ne $version) { throw 'Installed application version differs from the build' }
+if ($upgradeMarker) {
+  if (!(Test-Path $upgradeMarker) -or $firstLaunch.userData -ne $priorData) { throw 'Cross-version upgrade lost data or changed its location' }
+  Remove-Item $upgradeMarker
+  Write-Host "::notice title=Windows upgrade regression::Upgraded $priorVersion to $version, launched the installed app and preserved its actual user-data directory."
+} else {
+  Write-Host '::notice title=Windows upgrade regression::Cross-version test skipped: no previous compatible smoke-enabled artifact. Same-version reinstall still tested.'
+}
 # Same-version reinstall exercises preservation; cross-version upgrades still need hardware QA.
 $data = $firstLaunch.userData
 if (!$data) { throw 'Application did not report its actual user-data directory' }
