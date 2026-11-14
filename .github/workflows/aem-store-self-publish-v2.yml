@@ -1,6 +1,10 @@
 name: AEM Store Self Publish V2
 
 on:
+  pull_request:
+    paths:
+      - '.github/workflows/aem-store-self-publish-v2.yml'
+      - 'scripts/catalog_*.py'
   workflow_run:
     workflows: ["AEM Store Combined Release"]
     types: [completed]
@@ -10,10 +14,24 @@ permissions:
   contents: read
 
 concurrency:
-  group: aem-store-stable-publish
+  group: aem-store-stable-publish-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
+  readiness:
+    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Read metadata of the actual latest published release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release download --pattern release.json --dir catalog-check
+      - name: Check catalog gateway without uploading or publishing
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/catalog_readiness.py
   publish:
     if: ${{ github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main' && github.event.workflow_run.event != 'pull_request' }}
     runs-on: ubuntu-latest
@@ -32,19 +50,16 @@ jobs:
           APK: release/app-release.apk
           GH_TOKEN: ${{ github.token }}
         run: |
-          set -euo pipefail
+          set -eEuo pipefail
+          phase="APK metadata"
+          trap 'python3 scripts/catalog_error.py "$phase" local /dev/null' ERR
           APKSIGNER="$(command -v apksigner || true)"
           if [ -z "$APKSIGNER" ]; then
             APKSIGNER="$(find "${ANDROID_HOME:-/opt/android-sdk}" -type f -name apksigner 2>/dev/null | sort -V | tail -n 1 || true)"
           fi
-          signing_cert=""
-          if [ -n "$APKSIGNER" ] && [ -x "$APKSIGNER" ]; then
-            signing_cert="$("$APKSIGNER" verify --print-certs "$APK" 2>/dev/null | sed -n 's/.*Signer #1 certificate SHA-256 digest: //p' | head -n 1 || true)"
-          fi
-          if [ -z "$signing_cert" ]; then
-            signing_cert="$(keytool -printcert -jarfile "$APK" 2>/dev/null | sed -n '/SHA256:/{s/^[[:space:]]*SHA256:[[:space:]]*//;p;q}' || true)"
-          fi
-          signing_cert="$(printf '%s' "$signing_cert" | tr -d ':' | tr '[:upper:]' '[:lower:]')"
+          test -n "$APKSIGNER" && test -x "$APKSIGNER"
+          "$APKSIGNER" verify --verbose --print-certs "$APK" > signer-output.txt
+          signing_cert="$(sed -nE 's/^Signer #[0-9]+ certificate SHA-?256 digest:[[:space:]]*([[:xdigit:]]{64})[[:space:]]*$/\1/p' signer-output.txt | head -n 1 | tr '[:upper:]' '[:lower:]')"
           test -n "$signing_cert"
           SUPABASE_KEY="$(sed -n 's/.*DEFAULT_PUBLISHABLE_KEY="\([^"]*\)".*/\1/p' src/services/supabase/client.ts)"
           AAPT="$(find "${ANDROID_HOME:-/opt/android-sdk}" -type f -name aapt | sort -V | tail -n 1)"
@@ -86,6 +101,7 @@ jobs:
                 rm -f "$response_file"
                 return 0
               fi
+              python3 scripts/catalog_error.py "prepare attempt $prepare_attempt" "$status" "$response_file"
               echo "Prepare attempt $prepare_attempt failed with HTTP $status" >&2
               cat "$response_file" >&2
               if [[ "$status" == "409" ]]; then
@@ -107,6 +123,7 @@ jobs:
             return 1
           }
 
+          phase="prepare upload"
           PREPARE="$(prepare_upload)" || {
             echo "Unable to prepare Supabase upload after retries" >&2
             exit 1
@@ -116,6 +133,7 @@ jobs:
           upload_response="$(mktemp)"
           upload_headers="$(mktemp)"
           apk_size="$size_bytes"
+          phase="upload bytes"
           for attempt in 1 2 3; do
             status="$(
               curl -sS -D "$upload_headers" -o "$upload_response" -w '%{http_code}' \
@@ -131,6 +149,7 @@ jobs:
               cat "$upload_response"
               break
             fi
+            python3 scripts/catalog_error.py "upload attempt $attempt" "$status" "$upload_response"
             echo "APK upload attempt $attempt failed with HTTP $status" >&2
             echo "Response headers:" >&2
             cat "$upload_headers" >&2
@@ -173,6 +192,7 @@ jobs:
             --argjson size_bytes "$size_bytes" \
             --arg sha256 "$sha256" \
             '{action:$action,repo:$repo,run_id:$run_id,filename:$filename,application_name:$application_name,version_name:$version_name,version_code:$version_code,channel:$channel,package_identity:$package_identity,title:$title,source_release_id:$source_release_id,signing_certificate_sha256:$signing_certificate_sha256,object_path:$object_path,path:$path,size_bytes:$size_bytes,sha256:$sha256}')"
+          phase="finalize catalog"
           finalize_response="$(mktemp)"
           finalize_headers="$(mktemp)"
           finalize_status="$(
@@ -184,6 +204,7 @@ jobs:
               --data "$FINALIZE"
           )" || finalize_status="000"
           if [[ ! "$finalize_status" =~ ^2[0-9][0-9]$ ]]; then
+            python3 scripts/catalog_error.py "finalize" "$finalize_status" "$finalize_response"
             echo "Finalize failed with HTTP $finalize_status" >&2
             echo "Response headers:" >&2
             cat "$finalize_headers" >&2
