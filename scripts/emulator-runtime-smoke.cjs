@@ -36,11 +36,16 @@ app.whenReady().then(async()=>{
     assert.equal((await manager.launchApp('com.aem.store','.MainActivity')).success,true);
     const adb=path.join(sdk,'platform-tools','adb');
     let visible=false;
-    for(let i=0;i<12;i++){
-      await exec(adb,['-s',status.adbSerial,'shell','uiautomator','dump','/sdcard/aem-ui.xml'],{timeout:15000});
-      const {stdout}=await exec(adb,['-s',status.adbSerial,'shell','cat','/sdcard/aem-ui.xml'],{timeout:10000});
-      fs.writeFileSync('aem-managed-window.xml',stdout);
-      if(/text="(AEM|AEM Store|Home|Your software)/.test(stdout)){visible=true;break;}
+    for(const setting of ['window_animation_scale','transition_animation_scale','animator_duration_scale'])await exec(adb,['-s',status.adbSerial,'shell','settings','put','global',setting,'0']);
+    for(let i=0;i<15;i++){
+      // UIAutomator may return exit 0 with no XML while Android is still animating.
+      // Retry transient dump/cat failures; only the actual accessible Store UI can pass.
+      try {
+        await exec(adb,['-s',status.adbSerial,'shell','uiautomator','dump','/sdcard/aem-ui.xml'],{timeout:15000});
+        const {stdout}=await exec(adb,['-s',status.adbSerial,'shell','cat','/sdcard/aem-ui.xml'],{timeout:10000});
+        fs.writeFileSync('aem-managed-window.xml',stdout);
+        if(/text="(AEM|AEM Store|Home|Your software)/.test(stdout)){visible=true;break;}
+      } catch(error) {fs.writeFileSync('aem-ui-retry.log',String(error));}
       await new Promise(r=>setTimeout(r,2000));
     }
     assert.equal(visible,true,'AEM-managed emulator must show accessible Store UI');
