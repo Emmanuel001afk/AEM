@@ -75,7 +75,9 @@ export function selectPackageSet(parts:PackageMetadata[], target:{api:number;abi
 }
 export function findBuildTool(root:string, name:string):string {
   const dir=path.join(root,'build-tools');
-  const versions=fs.existsSync(dir)?fs.readdirSync(dir).sort((a,b)=>b.localeCompare(a,undefined,{numeric:true})):[];
+  const available=fs.existsSync(dir)?fs.readdirSync(dir).sort((a,b)=>b.localeCompare(a,undefined,{numeric:true})):[];
+  // Prefer the build-tools revision installed and validated by AEM over unrelated host tools.
+  const versions=available.includes('34.0.0')?['34.0.0',...available.filter(v=>v!=='34.0.0')]:available;
   const ext=process.platform==='win32'?(name==='apksigner'?'.bat':'.exe'):'';
   for(const v of versions){const file=path.join(dir,v,name+ext);if(fs.existsSync(file))return file;}
   throw new Error(`Android SDK ${name} is missing. Install build-tools before package inspection.`);
@@ -85,7 +87,7 @@ export async function inspectApk(file:string, root:string):Promise<PackageMetada
   const cmd=sdkCommand(findBuildTool(root,'apksigner'),['verify','--print-certs',file]);
   const signature=await exec(cmd.file,cmd.args,{timeout:30000,maxBuffer:1024**2,windowsHide:true});
   const certificates=[...signature.stdout.matchAll(/Signer #\d+ certificate SHA-256 digest: ([a-fA-F0-9]{64})/g)].map(m=>m[1].toLowerCase()).sort();
-  if(!certificates.length) throw new Error('APK signature could not be verified');
+  if(!certificates.length) throw new Error(`APK signer certificate output was not recognized from ${cmd.file}: ${(signature.stdout+'\n'+signature.stderr).slice(-2500)}`);
   return {...parseBadging(stdout),file,certificate:certificates.join(',')};
 }
 
