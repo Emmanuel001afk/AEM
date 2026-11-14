@@ -54,7 +54,8 @@ The desktop retains the full web store: **Home, Apps, Emulator, Updates, Transfe
 - **Apps** — full catalog with search and category filters. Each card shows **INSTALL / UPDATE / OPEN** and an **EMULATOR** shortcut on desktop.
 - **Emulator** — manages the local Android environment (see `docs/emulator/README.md`).
 - **Updates** — apps with newer catalog releases vs. locally installed versions (scanned via Android PackageManager on device, via ADB on emulator).
-- **Transfer** — phone-to-phone Wi-Fi Direct (Android only; web/desktop shows explainer).
+- **Transfer** — bidirectional phone ↔ PC transfer on desktop (discover phones on the LAN, send files to phone, receive files from phone, SHA-256 verified, resumable); phone-to-phone Wi-Fi Direct remains on the Android app.
+- **Execution methods** — each app card/detail shows the available ways to run it: Android emulator, native Windows (EXE/MSIX), or phone-powered desktop, with a recommendation and clear reasons when a method is unavailable.
 - **Settings** — appearance, notifications, downloads, storage, security, and a **Desktop & emulator** section.
 
 ### File & App Access
@@ -68,6 +69,17 @@ The desktop retains the full web store: **Home, Apps, Emulator, Updates, Transfe
 
 - Catalog updates are live from Supabase — no app update needed.
 - Desktop app updates are delivered via GitHub Releases. The app checks `api.github.com/repos/Emmanuel001afk/AEM/releases/latest` and shows a banner when a newer version is available. Download is manual (NSIS installer will auto-uninstall old version).
+
+### Native Windows Delivery
+
+Not every Android app can become native Windows. AEM Store reports this honestly per app:
+
+- If a Windows artifact (EXE/MSIX) is published for the app, the **Native Windows** method is available — install and run directly, no emulator.
+- If no Windows artifact exists, AEM Store shows a **"cannot convert"** note explaining that a Windows build must be authored and published; it is not derived automatically from the Android APK.
+
+### Cross-Platform Recognition (AEM side only)
+
+AEM Store recognizes sister AEM-family products on the device — **AEM Store, EMA, OEA, Phormi, Central Hub** — so you can see coherent "installed elsewhere" status and hand off between them. Each product owns its own database and identity; **AEM Store never merges identities or databases**, and makes no changes to any other repository.
 
 ### Troubleshooting
 

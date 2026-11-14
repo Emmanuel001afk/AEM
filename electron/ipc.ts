@@ -1,9 +1,31 @@
-import { ipcMain, dialog, shell, app, BrowserWindow } from "electron";
+import { ipcMain, dialog, shell, app, BrowserWindow, WebContents } from "electron";
 import path from "path";
 import { EmulatorManager } from "./emulator/manager";
+import { TransferService } from "./transfer/service";
 
 export function registerIpc(mainWindow: BrowserWindow) {
   const emu = EmulatorManager.getInstance();
+  const transfer = new TransferService();
+
+  // Track per-session progress subscriptions so we can forward events to the renderer.
+  const progressSubs = new Map<string, Set<WebContents>>();
+
+  const forwardProgress = (ev: any) => {
+    const cbs = progressSubs.get(ev.sessionId);
+    if (!cbs) return;
+    cbs.forEach((wc) => {
+      try { if (!wc.isDestroyed()) wc.send("transfer:progress", ev); } catch {}
+    });
+  };
+
+  const forwardSession = (s: any) => {
+    try {
+      if (!mainWindow.webContents.isDestroyed())
+        mainWindow.webContents.send("transfer:session", s);
+    } catch {}
+  };
+
+  transfer.onSessionChange(forwardSession);
 
   // System
   ipcMain.handle("aem:openExternal", async (_e, url: string) => {
@@ -19,7 +41,6 @@ export function registerIpc(mainWindow: BrowserWindow) {
   });
   ipcMain.handle("aem:getVersion", async () => app.getVersion());
   ipcMain.handle("aem:checkForUpdates", async () => {
-    // Simple GitHub releases check
     try {
       const https = await import("https");
       const data: any = await new Promise((resolve, reject) => {
@@ -82,6 +103,7 @@ export function registerIpc(mainWindow: BrowserWindow) {
   ipcMain.handle("emulator:listAvds", async () => emu.listAvds());
   ipcMain.handle("emulator:getAvdInfo", async (_e, name: string) => emu.getAvdInfo(name));
   ipcMain.handle("emulator:listSystemImages", async () => emu.listSystemImages());
+  ipcMain.handle("emulator:getResourceProfiles", async () => emu.getResourceProfiles());
   ipcMain.handle("emulator:createAvd", async (_e, opts: any) => emu.createAvd(opts));
   ipcMain.handle("emulator:deleteAvd", async (_e, name: string) => emu.deleteAvd(name));
   ipcMain.handle("emulator:wipeAvd", async (_e, name: string) => emu.wipeAvd(name));
@@ -115,5 +137,36 @@ export function registerIpc(mainWindow: BrowserWindow) {
 
   ipcMain.handle("emulator:installStoreArtifact", async (_e, artifact: { url: string; filename: string }) => {
     return emu.installApkFromUrl(artifact.url, artifact.filename);
+  });
+
+  // Transfer (bidirectional phone <-> PC)
+  ipcMain.handle("transfer:discover", async (_e, opts?: { timeoutMs?: number }) => transfer.discover(opts));
+  ipcMain.handle("transfer:startReceiving", async (_e, opts?: { downloadDir?: string }) => transfer.startReceiving(opts));
+  ipcMain.handle("transfer:stop", async () => transfer.stop());
+  ipcMain.handle("transfer:send", async (_e, opts: { peerId: string; filePaths: string[] }) => transfer.send(opts));
+  ipcMain.handle("transfer:listSessions", async () => transfer.listSessions());
+  ipcMain.handle("transfer:cancel", async (_e, sessionId: string) => transfer.cancel(sessionId));
+  ipcMain.handle("transfer:pause", async (_e, sessionId: string) => transfer.pause(sessionId));
+  ipcMain.handle("transfer:resume", async (_e, sessionId: string) => transfer.resume(sessionId));
+
+  ipcMain.handle("transfer:onProgress", async (_e, sessionId: string) => {
+    const wc = _e.sender as WebContents;
+    let cbs = progressSubs.get(sessionId);
+    if (!cbs) { cbs = new Set(); progressSubs.set(sessionId, cbs); }
+    cbs.add(wc);
+    const unsub = transfer.onProgress(sessionId, forwardProgress);
+    // Auto-cleanup when the renderer unsubscribes or the webContents is destroyed.
+    const onceUnsub = () => {
+      cbs.delete(wc);
+      if (cbs.size === 0) { progressSubs.delete(sessionId); unsub(); }
+    };
+    wc.on("destroyed", onceUnsub);
+    return { subscribed: true };
+  });
+
+  ipcMain.on("transfer:offProgress", (_e, sessionId: string) => {
+    const wc = _e.sender as WebContents;
+    const cbs = progressSubs.get(sessionId);
+    if (cbs) { cbs.delete(wc); if (cbs.size === 0) { progressSubs.delete(sessionId); } }
   });
 }

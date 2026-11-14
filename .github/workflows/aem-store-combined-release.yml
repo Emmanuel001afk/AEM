@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
   actions: read
 
 concurrency:
@@ -18,11 +18,13 @@ concurrency:
 jobs:
   android:
     name: Build and sign Android APK
+    if: github.event_name != 'pull_request'
     uses: ./.github/workflows/aem-android-final.yml
     secrets: inherit
 
   windows:
     name: Build and verify Windows EXEs
+    if: github.event_name != 'pull_request'
     uses: ./.github/workflows/aem-desktop.yml
     secrets: inherit
 
@@ -30,6 +32,7 @@ jobs:
     name: Verify both platforms and package release artifacts
     runs-on: ubuntu-latest
     needs: [android, windows]
+    if: github.event_name != 'pull_request'
     steps:
       - name: Download APK and Windows outputs from this run
         uses: actions/download-artifact@v4
@@ -72,3 +75,70 @@ jobs:
           path: release/**
           if-no-files-found: error
           retention-days: 30
+
+  publish-release:
+    name: Create GitHub Release with APK and Windows EXEs
+    runs-on: ubuntu-latest
+    needs: [verify-and-package]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push' && needs.verify-and-package.result == 'success'
+    steps:
+      - name: Download verified release bundle
+        uses: actions/download-artifact@v4
+        with:
+          name: aem-store-complete-release
+          path: release
+      - name: Confirm deliverables before publishing
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s release/app-release.apk || { echo "APK missing"; exit 1; }
+          mapfile -t exes < <(find release -maxdepth 1 -type f -name '*.exe' -size +9999999c | sort)
+          if [ "${#exes[@]}" -lt 2 ]; then
+            echo "Expected at least 2 genuine Windows EXE deliverables"; exit 1
+          fi
+          test -s release/SHA256SUMS.txt || { echo "Checksums missing"; exit 1; }
+          echo "Publishing: $(ls -1 release | tr '\n' ' ')"
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          RELEASE_TAG="v0.1.0-ci-${GITHUB_RUN_NUMBER}"
+          RELEASE_TITLE="AEM Store v0.1.0 (build ${GITHUB_RUN_NUMBER})"
+          # Build release notes inline (single-quoted strings are safe inside YAML block scalars)
+          {
+            printf '%s\n' 'AEM Store v0.1.0 — multi-platform release (build '"${GITHUB_RUN_NUMBER}"', commit '"${GITHUB_SHA}"').'
+            printf '%s\n' ''
+            printf '%s\n' '## Downloads'
+            printf '%s\n' ''
+            printf '%s\n' '| File | What it is |'
+            printf '%s\n' '|------|------------|'
+            printf '%s\n' '| `app-release.apk` | **Android** — signed AEM Store APK (`com.aem.store`). Install on Android devices. |'
+            printf '%s\n' '| `AEM-Store-*-Setup-x64.exe` | **Windows** — Setup installer. Normal installation with Start Menu shortcut, desktop shortcut, app icon, file associations, and uninstall. |'
+            printf '%s\n' '| `AEM-Store-*-Portable-x64.exe` | **Windows** — Portable application. No installation required; run directly. |'
+            printf '%s\n' '| `SHA256SUMS.txt` | SHA-256 checksums for every file above. Verify after download. |'
+            printf '%s\n' ''
+            printf '%s\n' '## Installation'
+            printf '%s\n' ''
+            printf '%s\n' '- **Android:** download `app-release.apk`, open it, and install (enable “Install unknown apps” for your browser or file manager when prompted).'
+            printf '%s\n' '- **Windows:** download the Setup EXE, run it, and follow the installer. The portable EXE is an install-free alternative.'
+            printf '%s\n' ''
+            printf '%s\n' '## Integrity'
+            printf '%s\n' ''
+            printf '%s\n' 'Run `sha256sum -c SHA256SUMS.txt` in the folder containing the downloaded files.'
+            printf '%s\n' ''
+            printf '%s\n' 'Built by GitHub Actions from the AEM repository (Emmanuel001afk/AEM).'
+          } > release/release-notes.md
+          if gh release view "$RELEASE_TAG" --repo Emmanuel001afk/AEM >/dev/null 2>&1; then
+            echo "Release $RELEASE_TAG already exists; replacing it."
+            gh release delete "$RELEASE_TAG" --repo Emmanuel001afk/AEM --yes --cleanup-tags
+          fi
+          gh release create "$RELEASE_TAG" --repo Emmanuel001afk/AEM \
+            --title "$RELEASE_TITLE" \
+            --notes-file release/release-notes.md \
+            release/app-release.apk release/*.exe release/SHA256SUMS.txt
+      - name: Show release URL
+        shell: bash
+        run: |
+          echo "RELEASE_TAG=v0.1.0-ci-${{ github.run_number }}" >> "$GITHUB_ENV"
+          gh release view "v0.1.0-ci-${{ github.run_number }}" --repo Emmanuel001afk/AEM --json url,tagName,createdAt

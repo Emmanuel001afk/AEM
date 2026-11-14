@@ -7,8 +7,9 @@ import { getSdkStatus, installSdk, listSystemImages } from "./sdk";
 import { listAvds, getAvdInfo, createAvd, deleteAvd, wipeAvd, updateAvdConfig } from "./avd";
 import { EmulatorInstance } from "./instance";
 import { adbInstall, adbInstallMultiple, adbListInstalledApps, adbLaunchApp, adbUninstall, adbDevices, adbGetPackageInfo, adbGrantPermission, adbRevokePermission, adbClearData, adbForceStop, adbPush, adbPull, adbShell, adbGetPermissions, adbExec, adbStartServer } from "./adb";
-import type { EmulatorStatus, SdkStatus, DiagnosticsResult, AvdInfo, AvdCreateOptions, InstalledApp, InstallResult, EmulatorLaunchOptions, ApkInfo } from "./types";
+import type { EmulatorStatus, SdkStatus, DiagnosticsResult, AvdInfo, AvdCreateOptions, InstalledApp, InstallResult, EmulatorLaunchOptions, ApkInfo, GpuMode } from "./types";
 import { createHash } from "crypto";
+import { getResourceProfiles, avdOptionsForProfile, profileById, type ResourceProfileId, type ResourceRecommendation } from "./resources";
 
 let instance: EmulatorManager | null = null;
 
@@ -92,7 +93,7 @@ export class EmulatorManager {
     return avd;
   }
 
-  async ensureDefaultAvd(): Promise<AvdInfo> {
+  async ensureDefaultAvd(profileId?: ResourceProfileId | null): Promise<AvdInfo> {
     const existing = await getAvdInfo(DEFAULT_AVD_NAME);
     if (existing) return existing;
     const sdk = await getSdkStatus(this.sdkRoot);
@@ -100,17 +101,13 @@ export class EmulatorManager {
     // Determine best available system image
     const images = await listSystemImages();
     const preferred = images.find(i => i.id === DEFAULT_SYSTEM_IMAGE && i.installed) || images.find(i => i.installed) || { id: DEFAULT_SYSTEM_IMAGE } as any;
-    return this.createAvd({
-      name: DEFAULT_AVD_NAME,
-      systemImage: preferred.id || DEFAULT_SYSTEM_IMAGE,
-      device: "pixel_7",
-      ramMB: 3072,
-      heapMB: 512,
-      storageMB: 8192,
-      cores: 4,
-      gpuMode: "auto",
-      snapshot: true,
-    });
+    const options = avdOptionsForProfile((profileId ?? "balanced") as ResourceProfileId, preferred.id || DEFAULT_SYSTEM_IMAGE, DEFAULT_AVD_NAME);
+    this.log(`Creating default AVD ${DEFAULT_AVD_NAME} with profile ${options.ramMB} MB RAM / ${options.cores} cores`);
+    return this.createAvd(options);
+  }
+
+  async getResourceProfiles(): Promise<ResourceRecommendation> {
+    return getResourceProfiles();
   }
 
   async deleteAvd(name: string): Promise<boolean> {

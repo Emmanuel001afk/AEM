@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback, useRef } from "react";
 import { isDesktop, getDesktop } from "../../services/emulator/contract";
 import { mockEmulatorBridge } from "../../services/emulator/mock";
-import type { EmulatorStatus, DiagnosticsResult, SdkStatus, AvdInfo, InstalledApp } from "../../services/emulator/contract";
+import type { EmulatorStatus, DiagnosticsResult, SdkStatus, AvdInfo, InstalledApp, ResourceRecommendation } from "../../services/emulator/contract";
 
 function useDesktopBridge() {
   const isDesk = isDesktop();
@@ -24,6 +24,7 @@ export default function EmulatorView() {
   const [sdkProgress, setSdkProgress] = useState<{ phase: string; percent: number; message: string } | null>(null);
   const [selectedAvd, setSelectedAvd] = useState<string>("");
   const [systemImages, setSystemImages] = useState<any[]>([]);
+  const [recommendation, setRecommendation] = useState<ResourceRecommendation | null>(null);
   const [createForm, setCreateForm] = useState({ name: "aem_pixel_7", ramMB: 3072, cores: 4, storageMB: 8192, gpuMode: "auto" });
   const fileInputRef = useRef<HTMLInputElement>(null);
   const pollRef = useRef<number | null>(null);
@@ -31,11 +32,12 @@ export default function EmulatorView() {
   const refreshAll = useCallback(async () => {
     if (!bridge) return;
     try {
-      const [st, diag, sdkSt, avdList] = await Promise.all([
+      const [st, diag, sdkSt, avdList, rec] = await Promise.all([
         bridge.getStatus().catch(() => null),
         bridge.getDiagnostics().catch(() => null),
         bridge.getSdkStatus().catch(() => null),
         bridge.listAvds().catch(() => []),
+        bridge.getResourceProfiles().catch(() => null),
       ]);
       if (st) setStatus(st);
       if (diag) setDiagnostics(diag);
@@ -45,6 +47,12 @@ export default function EmulatorView() {
         if (avdList.length && !selectedAvd) setSelectedAvd(avdList[0].name);
       }
       try { const imgs = await bridge.listSystemImages(); setSystemImages(imgs || []); } catch {}
+      if (rec) {
+        setRecommendation(rec);
+        // Pre-fill the AVD creation form with the host-recommended profile
+        const p = rec.profiles.find((x: { id: string }) => x.id === rec.recommended);
+        if (p) setCreateForm({ name: "aem_pixel_7", ramMB: p.ramMB, cores: p.cores, storageMB: p.storageMB, gpuMode: p.gpuMode });
+      }
       if (st?.state === "running") {
         try { const a = await bridge.getInstalledApps(); setApps(a); } catch {}
         try { const l = await bridge.getLogs(100); setLogs(l); } catch {}
@@ -256,6 +264,33 @@ export default function EmulatorView() {
           <p className="fine">Storage, networking and permissions are managed by Android. See diagnostics for hardware integration.</p>
         </div>
       </div>
+
+      {/* Host resource recommendation */}
+      <div className="setting open" style={{ marginTop: 12 }}>
+        <button className="setting-head"><strong>Recommended emulator configuration</strong><span>{recommendation ? recommendation.recommended : "checking…"}</span></button>
+        <div className="setting-body">
+          {!recommendation ? <p>Evaluating host resources…</p> : <>
+            <p>
+              {recommendation.host.cpuModel} · {recommendation.host.cpuCores} cores ·
+              {recommendation.host.totalMemMB} MB RAM ({recommendation.host.freeMemMB} MB free) ·
+              {recommendation.host.diskFreeMB == null ? "disk unknown" : (recommendation.host.diskFreeMB / 1024).toFixed(1) + " GB free"} ·
+              {recommendation.host.virtualizationEnabled == null ? "virtualization unknown" : recommendation.host.virtualizationEnabled ? "virtualization enabled" : "virtualization disabled"}
+            </p>
+            <p><strong>Recommended:</strong> {recommendation.profiles.find((p: any) => p.id === recommendation.recommended)?.name} — this allocation keeps Windows responsive while the emulator runs.</p>
+            {recommendation.reasons.map((r: string, i: number) => <p key={`reason-${i}`} style={{ marginTop: 6 }}>• {r}</p>)}
+            {recommendation.limitations.length > 0 && <div style={{ marginTop: 8 }}>
+              <strong>Limitations:</strong>
+              {recommendation.limitations.map((l: string, i: number) => <p key={`limit-${i}`} style={{ marginTop: 4, color: "var(--aem-warn, #f04444)" }}>⚠ {l}</p>)}
+            </div>}
+            <div className="choice-row" style={{ marginTop: 10 }}>
+              <button className="choice" onClick={() => bridge.getResourceProfiles().then((r: any) => setRecommendation(r))}>RE-EVALUATE</button>
+              <button className="install" onClick={() => { const p = recommendation.profiles.find((x: any) => x.id === recommendation.recommended); if (p) setCreateForm({ name: "aem_pixel_7", ramMB: p.ramMB, cores: p.cores, storageMB: p.storageMB, gpuMode: p.gpuMode }); }} disabled={!sdk?.installed}>APPLY TO AVD FORM</button>
+            </div>
+          </>}
+        </div>
+      </div>
+
+      {/* Diagnostics */}
 
       {/* Diagnostics */}
       <div className="setting open" style={{ marginTop: 16 }}>
