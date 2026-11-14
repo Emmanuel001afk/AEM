@@ -4,6 +4,7 @@ const fs=require('fs');const path=require('path');const crypto=require('crypto')
 const assert=require('assert/strict');
 const {TransferService}=require('../dist-electron/transfer/service.js');
 let service,win;
+app.on('window-all-closed',()=>{}); // only explicit app.exit after assertions determines the test result
 const wait=ms=>new Promise(r=>setTimeout(r,ms));
 async function until(expression){for(let i=0;i<100;i++){const r=await win.webContents.executeJavaScript(expression);if(r)return r;await wait(100);}throw new Error('Browser condition timed out: '+expression+' status='+await win.webContents.executeJavaScript('document.getElementById("status").textContent'));}
 app.whenReady().then(async()=>{
@@ -30,6 +31,7 @@ app.whenReady().then(async()=>{
   await until(`document.querySelector('#files a')!==null`);
   const hash=await win.webContents.executeJavaScript(`(async()=>{const b=await (await fetch(document.querySelector('#files a').href)).arrayBuffer();return Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',b))).map(x=>x.toString(16).padStart(2,'0')).join('');})()`);
   assert.equal(hash,crypto.createHash('sha256').update(bytes).digest('hex'));
+  fs.writeFileSync('aem-lan-browser-success.json',JSON.stringify({paired:true,uploadedBytes:expected.length,downloadedBytes:bytes.length,downloadSha256:hash}));
   console.log('::notice title=LAN browser runtime::Real Chromium paired over certificate-pinned HTTPS, uploaded a multi-chunk file to PC, and downloaded/verified a PC file before exposing Save. No platform-name allowlist. Consent auto-approval exists only in this test fixture; physical mobile/browser/firewall tests remain separate.');
   win.destroy();await service.stop();fs.rmSync(root,{recursive:true,force:true});app.exit(0);
  }catch(e){fs.writeFileSync('aem-lan-browser-failure.txt',String(e));console.error(e);win?.destroy();if(service)await service.stop().catch(()=>{});app.exit(1);}

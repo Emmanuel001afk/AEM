@@ -100,7 +100,7 @@ jobs:
           name: aem-store-windows
           path: |
             release/*.exe
-            release/*.yml
+            release/latest.yml
             release/*.blockmap
           if-no-files-found: error
       - name: Upload diagnostics bundle

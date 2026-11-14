@@ -101,7 +101,10 @@ jobs:
             node -e "const fs=require('fs');console.log('::error title=LAN browser runtime::'+(fs.existsSync('aem-lan-browser-failure.txt')?fs.readFileSync('aem-lan-browser-failure.txt','utf8'):fs.readFileSync('aem-lan-browser.log','utf8')).slice(-6000).replaceAll('%','%25').replaceAll('\\r','%0D').replaceAll('\\n','%0A'))"
             exit 1
           fi
+          test ! -f aem-lan-browser-failure.txt
+          test -f aem-lan-browser-success.json
           cat aem-lan-browser.log
+          node -e "const r=require('./aem-lan-browser-success.json');if(!r.paired||r.uploadedBytes!==1234567||r.downloadedBytes!==54321)process.exit(1);console.log('::notice title=Verified LAN browser bytes::Paired Chromium transferred '+r.uploadedBytes+' bytes to PC and verified '+r.downloadedBytes+' bytes from PC, SHA-256 '+r.downloadSha256)"
       - name: Exercise AEM diagnostics, AVD creation, install, launch and teardown
         run: |
           if ! xvfb-run -a node_modules/.bin/electron scripts/emulator-runtime-smoke.cjs > aem-electron-runtime.log 2>&1; then
@@ -115,6 +118,7 @@ jobs:
         with:
           name: aem-managed-emulator-diagnostics
           path: |
+            aem-lan-browser-success.json
             aem-lan-browser.log
             aem-lan-browser-failure.txt
             aem-runtime-failure.txt
@@ -180,6 +184,7 @@ jobs:
           version="$(jq -r .version release/release.json)"
           tag="v$version"
           (cd release && zip -q "AEM-Store-$version-Complete.zip" app-release.apk *.exe SHA256SUMS.txt INSTALL.md release.json)
+          (cd release && sha256sum "AEM-Store-$version-Complete.zip" >> SHA256SUMS.txt)
           if gh release view "$tag" --json isDraft --jq .isDraft > is-draft.txt; then
             test "$(cat is-draft.txt)" = true || { echo "Refusing to overwrite a published release"; exit 1; }
           else
@@ -187,7 +192,7 @@ jobs:
           fi
           gh release upload "$tag" release/* --clobber
           mkdir downloaded
-          gh release download "$tag" --dir downloaded --pattern '*.exe' --pattern '*.apk' --pattern SHA256SUMS.txt
-          (cd downloaded && sha256sum -c SHA256SUMS.txt)
+          gh release download "$tag" --dir downloaded --pattern '*.exe' --pattern '*.apk' --pattern SHA256SUMS.txt --pattern '*-Complete.zip'
+          (cd downloaded && sha256sum -c SHA256SUMS.txt && unzip -t "AEM-Store-$version-Complete.zip")
           # This is deliberately last: any failed build/download leaves a draft, never a latest release.
           gh release edit "$tag" --draft=false --latest

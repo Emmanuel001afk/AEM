@@ -185,9 +185,9 @@ Current branch: Devices provides explicit Android-authorized ADB discovery, veri
 
 ### Historical desktop state
 
-- The web **Transfer** tab is informative only (`Capacitor.isNativePlatform()` guard). Desktop shows an extra Explainer: double-click `.apk/.apks/.xapk/.apkm` or `File → Open APK…` forwards to the emulator (`aem:openApkFile`). Drag-and-drop into the emulator and `adb push/pull` also work.
-- Direct phone↔PC over the same Wi-Fi LAN is now supported from the Windows desktop Transfer tab: discover phones on the LAN, send files to phone, receive files from phone, SHA-256 verified, resumable, pause/cancel/resume. The link is local-only (UDP beacon discovery + TCP data channel); nothing goes to Supabase or the internet.
-- Under the hood the desktop uses the same protocol family as the phone app (port 38178 beacon discovery, port 38179 data channel, SHA-256, offset resume). Real device-to-device discovery/transfer requires physical phones on the same LAN.
+- The desktop **Transfer** tab runs the separate application-neutral HTTPS companion described in [LAN transfer](lan-transfer.md). Any compatible browser can pair with explicit consent and exchange verified files. Native Android Wi-Fi Direct remains separate on port 38177.
+- The companion uses an ephemeral HTTPS port and optional mDNS advertisement, not the old proposed UDP 38178/TCP 38179 protocol. Uploads resume after interruption within the server session; browser downloads resume only while their tab remains open. No Android protocol-6 compatibility is claimed.
+- The ordinary non-desktop web Store retains its Android transfer explainer. Devices offers authorized ADB file transfer and split export as an independent route.
 
 ## Troubleshooting
 
