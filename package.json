@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
-  "description": "AEM Store — personal software distribution store with integrated Android emulator for Windows",
+  "description": "AEM Store \u2014 personal software distribution store with integrated Android emulator for Windows",
   "author": "AEM Team <aem@aem.store>",
   "license": "MIT",
   "productName": "AEM Store",
@@ -58,7 +58,7 @@
   "build": {
     "appId": "com.aem.store",
     "productName": "AEM Store",
-    "copyright": "Copyright © 2025 AEM Team",
+    "copyright": "Copyright \u00a9 2025 AEM Team",
     "directories": {
       "output": "release",
       "buildResources": "resources"
@@ -94,9 +94,11 @@
         }
       ],
       "icon": "resources/icons/icon.ico",
-      "publisherName": "AEM Team",
       "verifyUpdateCodeSignature": false,
-      "signAndEditExecutable": true
+      "signAndEditExecutable": true,
+      "signtoolOptions": {
+        "publisherName": "AEM Team"
+      }
     },
     "nsis": {
       "oneClick": false,
