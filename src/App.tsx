@@ -72,7 +72,7 @@ export default function App(){
      if (st.state !== "running") { setStatusMessage("Start the emulator first, then install to it"); setTab("Emulator"); return; }
      setStatusMessage(`Installing ${app.name} to emulator…`);
      setInstallStatus({ status: "downloading", message: `Installing ${app.name} to emulator…` });
-     const res = await bridge.installStoreArtifact({url:artifact.downloadUrl, filename:artifact.filename, sha256:artifact.sha256, packageIdentity:artifact.packageIdentity});
+     const res = await bridge.installStoreArtifact({url:artifact.downloadUrl, filename:artifact.filename, sha256:artifact.sha256, packageIdentity:artifact.packageIdentity, signingCertificateSha256:artifact.signingCertificateSha256});
      if (res.success) {
        setStatusMessage(`✓ ${app.name} installed to emulator — launch it from Emulator tab`);
        setInstallStatus({ status: "completed", message: `${app.name} installed to emulator` });

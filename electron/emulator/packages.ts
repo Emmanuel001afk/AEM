@@ -88,3 +88,11 @@ export async function inspectApk(file:string, root:string):Promise<PackageMetada
   if(!certificates.length) throw new Error('APK signature could not be verified');
   return {...parseBadging(stdout),file,certificate:certificates.join(',')};
 }
+
+/** A verified APK signature and a catalog certificate are distinct checks. */
+export function assertCatalogCertificate(actual:string,expected:unknown):void {
+  if(expected===undefined||expected===null||expected==='')return;
+  if(typeof expected!=='string')throw new Error('Invalid catalog signing certificate');
+  const normalized=expected.replace(/:/g,'').toLowerCase();
+  if(!/^[a-f0-9]{64}$/.test(normalized)||!actual.split(',').includes(normalized))throw new Error('Catalog signing certificate mismatch');
+}

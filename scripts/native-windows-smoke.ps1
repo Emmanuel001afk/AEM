@@ -28,6 +28,10 @@ $link = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\AEM Native
 if (!(Test-Path $link)) { throw 'Native Start Menu entry missing' }
 $registration = Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\com.aem.pipelinefixture.windows'
 if ($registration.DisplayVersion -ne '1.0.0') { throw 'Native uninstall registration missing' }
+node -e "const assert=require('assert/strict'); const {getNativeInstallations,nativeUpdateState}=require('./dist-electron/native-registry.js'); getNativeInstallations('com.aem.pipelinefixture.windows').then(r=>{assert.equal(r.length,1);assert.equal(r[0].version,'1.0.0');assert.equal(r[0].installLocation,process.argv[1]);assert.equal(nativeUpdateState(r,'1.0.0'),'current');assert.equal(nativeUpdateState(r,'1.0.1'),'update');assert.equal(nativeUpdateState(r,'0.9.0'),'newer-installed')}).catch(e=>{console.error(e);process.exit(1)})" $install
+if ($LASTEXITCODE -ne 0) { throw 'Native registry and version detection failed' }
 $p = Start-Process (Join-Path $install 'Uninstall.exe') -ArgumentList @('/S', "_?=$install") -Wait -PassThru
 if ($p.ExitCode -ne 0 -or (Test-Path $exe) -or (Test-Path $link)) { throw 'Native fixture uninstall failed' }
-Write-Host '::notice title=Native source route smoke::Repository-owned WinForms test source built, NSIS Setup verified, installed, native window shown, Start Menu/registration checked and uninstalled. This is not a third-party Android port.'
+node -e "const assert=require('assert/strict');require('./dist-electron/native-registry.js').getNativeInstallations('com.aem.pipelinefixture.windows').then(r=>assert.equal(r.length,0)).catch(e=>{console.error(e);process.exit(1)})"
+if ($LASTEXITCODE -ne 0) { throw 'Native registry still reports uninstalled fixture' }
+Write-Host '::notice title=Native source route smoke::Repository-owned WinForms test source built, NSIS Setup verified, installed, native window shown, Start Menu/registration, real installed-version and update/downgrade comparison checked and uninstalled. This is not a third-party Android port.'

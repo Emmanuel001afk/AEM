@@ -34,7 +34,7 @@ const api = {
     ipcRenderer.invoke("aem:pickFile", opts),
   saveFile: (opts: { title?: string; defaultPath?: string; filters?: any[] }) => ipcRenderer.invoke("aem:saveFile", opts),
 
-  native: { build: () => ipcRenderer.invoke("native:build"), install: (artifact: {url:string;filename:string;sha256:string;packageIdentity:string}) => ipcRenderer.invoke("native:install",artifact) },
+  native: { status: (identity:string,version:string) => ipcRenderer.invoke("native:status",identity,version), build: () => ipcRenderer.invoke("native:build"), install: (artifact: {url:string;filename:string;sha256:string;packageIdentity:string;version:string}) => ipcRenderer.invoke("native:install",artifact) },
   phone: {
     devices: () => ipcRenderer.invoke("phone:devices"),
     status: () => ipcRenderer.invoke("phone:status"),
@@ -92,7 +92,7 @@ const api = {
     getLogs: (limit?: number) => ipcRenderer.invoke("emulator:getLogs", limit),
 
     // Store integration: install latest artifact from AEM catalog directly to emulator
-    installStoreArtifact: (artifact: { url: string; filename: string; packageIdentity?: string; sha256?: string }) =>
+    installStoreArtifact: (artifact: { url: string; filename: string; packageIdentity?: string; sha256?: string; signingCertificateSha256?: string }) =>
       ipcRenderer.invoke("emulator:installStoreArtifact", artifact),
   },
 };

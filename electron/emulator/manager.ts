@@ -1,5 +1,5 @@
 import fs from "fs";
-import { extractPackage, inspectApk, selectPackageSet } from "./packages";
+import { extractPackage, inspectApk, selectPackageSet, assertCatalogCertificate } from "./packages";
 import { downloadVerified } from "../download";
 import { validateAllocation } from "./resources";
 import path from "path";
@@ -176,12 +176,8 @@ export class EmulatorManager {
 
   private async requireSerial(): Promise<string> {
     const s = this.emu.getStatus();
-    if (s.adbSerial) return s.adbSerial;
-    // Fallback: query adb devices
-    const devices = await adbDevices(this.sdkRoot);
-    const emu = devices.find(d => d.startsWith("emulator-"));
-    if (emu) return emu;
-    throw new Error("Emulator not running — no ADB device found. Start emulator first.");
+    if (s.state === "running" && s.bootCompleted && s.adbSerial) return s.adbSerial;
+    throw new Error("Managed emulator is not running. Start it in AEM first; other emulators are not selected implicitly.");
   }
 
   async getInstalledApps(): Promise<InstalledApp[]> {
@@ -189,7 +185,7 @@ export class EmulatorManager {
     return adbListInstalledApps(this.sdkRoot, serial);
   }
 
-  async installApk(filePath: string, options: { reinstall?: boolean; grantPermissions?: boolean; allowDowngrade?: boolean; packageIdentity?: string } = {}): Promise<InstallResult> {
+  async installApk(filePath: string, options: { reinstall?: boolean; grantPermissions?: boolean; allowDowngrade?: boolean; packageIdentity?: string; signingCertificateSha256?: string } = {}): Promise<InstallResult> {
     const start = Date.now();
     if (!fs.statSync(filePath).isFile()) throw new Error("Select a package file");
     const serial = await this.requireSerial();
@@ -204,6 +200,7 @@ export class EmulatorManager {
       const selected = selectPackageSet(metadata,{api:Number(api.stdout.trim()),abis:abi.stdout.trim().split(",")});
       const base = selected.find(p=>!p.split)!;
       if (options.packageIdentity && options.packageIdentity !== base.packageName) throw new Error("Catalog package identity mismatch");
+      assertCatalogCertificate(base.certificate,options.signingCertificateSha256);
       const result = selected.length === 1
         ? await adbInstall(this.sdkRoot, serial, selected[0].file, { ...options, reinstall: options.reinstall ?? true })
         : await adbInstallMultiple(this.sdkRoot, serial, selected.map(p=>p.file), { ...options, reinstall: options.reinstall ?? true });
@@ -211,14 +208,14 @@ export class EmulatorManager {
     } finally { await fs.promises.rm(staging,{recursive:true,force:true}); }
   }
 
-  async installApkFromUrl(url: string, fileName: string, sha256?: string, packageIdentity?: string): Promise<InstallResult> {
+  async installApkFromUrl(url: string, fileName: string, sha256?: string, packageIdentity?: string, signingCertificateSha256?: string): Promise<InstallResult> {
     const dir = await fs.promises.mkdtemp(path.join(app.getPath("temp"), "aem-download-"));
     try {
       const safeName = path.basename(fileName).replace(/[^A-Za-z0-9._-]/g,"_");
       if (!/\.(apk|apks|xapk|apkm)$/i.test(safeName)) throw new Error("Unsupported package extension");
       const file = path.join(dir,safeName);
       await downloadVerified(url,file,sha256);
-      return await this.installApk(file,{packageIdentity});
+      return await this.installApk(file,{packageIdentity,signingCertificateSha256});
     } finally { await fs.promises.rm(dir,{recursive:true,force:true}); }
   }
 

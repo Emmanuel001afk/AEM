@@ -3,6 +3,7 @@ import path from 'path';
 import {execFile} from 'child_process';
 import {promisify} from 'util';
 import {downloadVerified} from './download';
+import {validateNativeIdentity} from './native-registry';
 const exec=promisify(execFile);
 export interface NativeRecipe {
   schema:1; familyId:string; androidPackage?:string; windowsAppId:string;
@@ -47,6 +48,7 @@ Section
   WriteUninstaller "$INSTDIR\\Uninstall.exe"
   CreateShortcut "$SMPROGRAMS\\${r.displayName}.lnk" "$INSTDIR\\${r.executable}"
   WriteRegStr HKCU "Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\${r.windowsAppId}" "DisplayName" "${r.displayName}"
+  WriteRegStr HKCU "Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\${r.windowsAppId}" "InstallLocation" "$INSTDIR"
   WriteRegStr HKCU "Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\${r.windowsAppId}" "DisplayVersion" "${r.version}"
   WriteRegStr HKCU "Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\${r.windowsAppId}" "DisplayIcon" "$INSTDIR\\${r.executable}"
   WriteRegStr HKCU "Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\${r.windowsAppId}" "UninstallString" '${String.fromCharCode(36,92,34)}$INSTDIR\\Uninstall.exe${String.fromCharCode(36,92,34)}'
@@ -88,8 +90,10 @@ export async function buildNativeSource(recipePath:string,makensis:string,output
     return {path:setup,manifest:result};
   }catch(e:any){throw new Error(`Native build failed: ${e.message}. Logs/output retained at ${work}`);}
 }
-export interface WindowsArtifact {url:string;filename:string;sha256:string;packageIdentity:string}
+export interface WindowsArtifact {url:string;filename:string;sha256:string;packageIdentity:string;version:string}
 export function validateWindowsArtifact(a:WindowsArtifact){
+  if(!a||typeof a.version!=='string'||!/^\d+\.\d+\.\d+$/.test(a.version))throw new Error('Windows variant requires a numeric platform version');
+  validateNativeIdentity(a.packageIdentity);
   if(!a||typeof a.filename!=='string'||!/^[\w.-]+\.exe$/i.test(a.filename)||!/^([a-f\d]{64})$/i.test(a.sha256)||!a.packageIdentity||!/^https:\/\//.test(a.url))throw new Error('Windows variant requires HTTPS, EXE filename, SHA-256 and platform package identity');
 }
 export async function stageWindowsArtifact(a:WindowsArtifact,root:string){

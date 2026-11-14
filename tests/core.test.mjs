@@ -34,7 +34,7 @@ test('phone package and path shell injection denied',()=>{assert.equal(packageId
 const recipe={schema:1,familyId:'org.example.notes',androidPackage:'org.example.notes.android',windowsAppId:'org.example.notes.windows',displayName:'Example Notes',version:'1.2.3',project:'windows/Notes.csproj',executable:'Notes.exe',sourceRevision:'reviewed-commit',license:'MIT'};
 test('native build requires explicit identities, source provenance and safe paths',()=>{assert.deepEqual(validateRecipe(recipe),recipe);for(const patch of [{project:'../bad.csproj'},{displayName:'A$INSTDIR'},{license:''},{executable:'../bad.exe'},{version:'1.2.999999'},{schema:2}])assert.throws(()=>validateRecipe({...recipe,...patch}));});
 test('native installer registers executable and uninstall without deleting app data',()=>{const s=installerScript(recipe,'C:\\work\\app','C:\\work\\Setup.exe');assert.match(s,/CreateShortcut/);assert.match(s,/WriteUninstaller/);assert.match(s,/DisplayVersion/);assert.match(s,/Application data.*retained/);assert.ok(s.includes('$\\"$INSTDIR\\Uninstall.exe$\\"'));assert.throws(()=>installerScript(recipe,'C:\\$bad','C:\\out'));});
-test('native catalog delivery rejects missing integrity/identity and insecure URLs',()=>{const artifact={url:'https://example.org/a.exe',filename:'a.exe',sha256:'a'.repeat(64),packageIdentity:'org.example.app'};assert.doesNotThrow(()=>validateWindowsArtifact(artifact));for(const patch of [{sha256:''},{packageIdentity:''},{url:'http://example.org/a.exe'},{filename:'../a.exe'}])assert.throws(()=>validateWindowsArtifact({...artifact,...patch}));});
+test('native catalog delivery rejects missing integrity/identity and insecure URLs',()=>{const artifact={url:'https://example.org/a.exe',filename:'a.exe',sha256:'a'.repeat(64),packageIdentity:'org.example.app',version:'1.0.0'};assert.doesNotThrow(()=>validateWindowsArtifact(artifact));for(const patch of [{version:undefined},{version:'1.2.3-beta'},{sha256:''},{packageIdentity:''},{url:'http://example.org/a.exe'},{filename:'../a.exe'}])assert.throws(()=>validateWindowsArtifact({...artifact,...patch}));});
 test('unified methods preserve manual choices and do not invent native availability',async()=>{const {executionMethods}=await domain('delivery.ts');const c={hasAndroidPackage:true,emulatorRunning:false,emulatorCanRun:true,nativeArtifactVerified:false,phoneAuthorized:true,phoneHasApp:true,phoneDisplayAvailable:true};const p=executionMethods(c);assert.equal(p.recommended,'phone');assert.equal(p.options.filter(o=>o.available).length,2);assert.equal(executionMethods({...c,nativeArtifactVerified:true}).recommended,'windows-native');assert.equal(executionMethods({...c,phoneHasApp:false,emulatorCanRun:false}).recommended,null);});
 test('partner contracts deny expired, revoked, spoofed and ungranted capabilities',async()=>{const {authorizeCapability}=await domain('ecosystem.ts');const r={protocol:'aem-capabilities/1',peerId:'org.ema',deviceId:'device-12345678901',requestId:'request-123456789',capability:'transfer.offer'};const auth={peerId:r.peerId,deviceId:r.deviceId};const g={...auth,capability:r.capability,expiresAt:200,revoked:false};assert.equal(authorizeCapability(r,auth,[g],100),true);assert.equal(authorizeCapability(r,auth,[],100),false);assert.equal(authorizeCapability(r,{...auth,peerId:'org.phormi'},[g],100),false);assert.equal(authorizeCapability(r,auth,[{...g,revoked:true}],100),false);assert.equal(authorizeCapability(r,auth,[g],300),false);});
 
@@ -62,4 +62,29 @@ test('Windows application and APK-association icons are real multi-resolution IC
   for(let i=0;i<count;i++){const offset=6+i*16;sizes.push(b[offset]||256);const bytes=b.readUInt32LE(offset+8),start=b.readUInt32LE(offset+12);assert.ok(start>=6+count*16&&start+bytes<=b.length);}
   assert.ok(sizes.includes(32)&&sizes.includes(256));
  }
+});
+
+const {validateNativeIdentity,normalizeNativeRegistrations,nativeUpdateState}=require('../dist-electron/native-registry.js');
+test('native registry uses exact validated identity and unambiguous registrations',()=>{
+ for(const value of ['../key','org.app; echo injected','org.app\\child','*',null,{}])assert.throws(()=>validateNativeIdentity(value));
+ assert.equal(validateNativeIdentity('com.publisher.app'),'com.publisher.app');
+ assert.doesNotThrow(()=>validateNativeIdentity('{12345678-1234-1234-1234-123456789ABC}'));
+ const r={packageIdentity:'com.publisher.app',displayName:'App',version:'1.0.0',scope:'user'};
+ assert.equal(normalizeNativeRegistrations([r,{...r,packageIdentity:'other.app'},{...r,version:'unknown'}],r.packageIdentity).length,1);
+});
+test('native updates compare actual platform versions, reject downgrade, and never equate launch with install',()=>{
+ const row=v=>({packageIdentity:'com.publisher.app',displayName:'App',version:v,installLocation:'',scope:'user'});
+ assert.equal(nativeUpdateState([],'1.0.0'),'not-installed');
+ assert.equal(nativeUpdateState([row('1.0.9')],'1.0.10'),'update');
+ assert.equal(nativeUpdateState([row('1.0.10.0')],'1.0.10'),'current');
+ assert.equal(nativeUpdateState([row('1.0.10.1')],'1.0.10'),'newer-installed');
+ assert.equal(nativeUpdateState([row('1.0.9'),row('2.0.0')],'1.0.10'),'newer-installed');
+ assert.equal(nativeUpdateState([row('1.0.10')],'beta'),'unknown');
+});
+test('catalog signing certificate check is separate from APK signature validity',()=>{
+ const {assertCatalogCertificate}=require('../dist-electron/emulator/packages.js');
+ const cert='ab'.repeat(32);
+ assert.doesNotThrow(()=>assertCatalogCertificate(cert,cert.toUpperCase().match(/../g).join(':')));
+ assert.doesNotThrow(()=>assertCatalogCertificate(cert,undefined));
+ for(const expected of ['cd'.repeat(32),'xyz',{},1])assert.throws(()=>assertCatalogCertificate(cert,expected));
 });

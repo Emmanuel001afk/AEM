@@ -34,4 +34,54 @@ Preservation boundaries: com.aem.store, existing icon assets, Android signing se
 
 ## Acceptance status
 
-This ledger is not a completion certificate. See the final verification section below for changes and executed checks. All Android install/launch/signing regression, Windows installer/shortcut/icon/upgrade/uninstall validation, SDK/AVD startup and installed-app launches, two-phone and phone/PC transfer, phone mirroring, OEM desktop mode and Dell Latitude 3190 performance require additional CI/hardware evidence.
+This ledger is not a completion certificate. See the final verification section below for changes and executed checks. The CI evidence below supersedes the initial unverified baseline. Physical two-phone/phone-PC transfers, phone mirroring/OEM desktop mode and Dell Latitude 3190 performance still require hardware evidence.
+
+
+## Executed repair and acceptance evidence — 2026-11-14
+
+- Fixed existing Android `active` receive-scope compilation error in `native/AemTransferActivity.java`; preserved package/signing identity and Wi-Fi Direct flow.
+- Repaired NSIS custom syntax, executable resource editing and electron-builder 26 configuration. Fixed a smoke-test false negative: NSIS default DisplayName includes the version. Converted mislabelled PNG `apk.ico` to real six-size ICO using the existing artwork. `icon.ico` is valid; the unused macOS `icon.icns` remains a mislabelled PNG and macOS delivery is not validated.
+- Added shared release version stamping, Android signing/package verification, PE/signature-header checks, complete three-file checksums, gated main-only GitHub publication and draft download validation. No release has been published or PR merged in this session.
+- Replaced fixed emulator allocations with measured host/free RAM/CPU/disk and actual acceleration diagnostics. Added safe package extraction, API/ABI/signer preflight and SDK/process improvements; no universal APK compatibility claims.
+- Added Android-authorized ADB file copies both directions, SHA-256 verification, base/split export and separately consented scrcpy phone-powered display. Fake-ADB orchestration tests are labelled test doubles, not physical-device evidence.
+- Added independent Windows catalog-version selection, manual/recommended execution methods, trusted native source build and consented native EXE delivery. Added actual Windows registry-version discovery and update/downgrade comparison; never count opening an installer as installed success.
+- Added AEM-side partner identity/capability contracts. **These remain contracts only**, not live authenticated integrations.
+
+### Successful workflow runs
+
+1. [43583736280](https://github.com/Emmanuel001afk/AEM/actions/runs/43583736280), source head `b0d80ae`, version **0.2.11**: signed APK and real Setup/Portable EXEs; Windows install/renderer/registration/shortcuts/same-version reinstall/user-data preservation/portable/uninstall passed; signed Android APK installed, accessible Store UI detected, same-version reinstall/relaunch passed on API 29 x86_64 AVD; complete bundle checksum verification passed.
+2. [43584297929](https://github.com/Emmanuel001afk/AEM/actions/runs/43584297929), source head `17f280d`, version **0.2.12**: all above plus installed icon pixel comparison, **cross-version Windows upgrade 0.2.11 → 0.2.12** with actual user-data preservation, and real native fixture build/install/window/shortcut/registration/uninstall. 37 unit tests and six JVM archive scenarios passed. These jobs exercised real Windows/Android runtimes, not only compilation.
+
+Both are PR builds; `release.json` records the tested GitHub PR merge revision. Main-only publish correctly skipped. Windows binaries are not Authenticode-signed.
+
+### Downloadable 0.2.12 CI artifacts
+
+GitHub login may be required. Artifacts expire; these are not permanent GitHub Releases.
+
+- [Complete deliverable set](https://github.com/Emmanuel001afk/AEM/actions/runs/43584297929/artifacts/14109424760) (239,255,595-byte GitHub artifact ZIP).
+- [Setup + Portable](https://github.com/Emmanuel001afk/AEM/actions/runs/43584297929/artifacts/14109254747).
+- [Signed Android APK](https://github.com/Emmanuel001afk/AEM/actions/runs/43584297929/artifacts/14109074856).
+
+Verified by the workflow after downloading all platform artifacts into its bundling job:
+
+```text
+22b6f816384ce4922f03503fa6e1dea4688a90d0f660adf52a9a19e76a5b85b0  app-release.apk
+5554ce0aaf8d98e47aa6d8184b1f6520996e77e1ff77aa4053b9b88c51033fb0  AEM-Store-0.2.12-Setup-x64.exe
+bc7d905f4befae701b466de0be3dcc5058ab986e2439e79b93f848b76041341f  AEM-Store-0.2.12-Portable-x64.exe
+```
+
+Local retrieval via `gh run download` was attempted and failed at the Azure artifact host (EOF, outside this sandbox's outbound allowlist). Do not claim locally downloaded/rehashed files. CI did download and hash them successfully. Published-release re-download verification awaits an authorized main build/publication.
+
+### Additional work awaiting CI at this ledger revision
+
+40 local unit/integration-double tests and renderer/Electron builds pass. Added expected catalog signing-certificate enforcement, native registry detection with Windows runtime assertions, and a real AEM-managed API 34 AVD lifecycle job under Electron/Linux KVM. This job uses a CI-provisioned SDK and will not establish Windows hypervisor, AEM SDK downloader or physical Latitude behavior. Its outcome must be recorded separately.
+
+### Explicitly incomplete
+
+- Secure AEM-to-AEM LAN discovery/pairing, encrypted transport, bidirectional progress/resume and interruption/authentication tests: **not implemented**. Existing phone-phone path retained; authorized ADB copies are not a substitute for LAN/resume.
+- A licensed third-party Android application adapted to native Windows source: **not delivered**. WinForms fixture proves tooling only. Arbitrary proprietary APKs cannot supply missing source/components or entitlements.
+- Live authorized EMA/OEA/Phormi/Central Hub transport/consent UI: **not implemented**. No external repository or database changed/merged.
+- Supabase sync/publish currently ingests Android artifacts only; native Windows artifacts require a catalog publishing extension or curated records. Do not imply published native variants exist merely because a selector/build route exists.
+- Android physical install/update/permissions/settings, physical Wi-Fi Direct, both physical transfer directions, interruption recovery, phone-powered display, OEM desktop, DRM-restricted apps, cross-version Android updates and Dell Latitude 3190 4GB usability: **not verified**. No attached devices or Windows laptop available locally. CI runtime checks cover narrower cases only.
+- Main release publication and permanent latest download page: code is gated, but publication not executed; draft PR #10 remains unmerged.
+- Dependency audit: 6 moderate development/build-time issues; production audit has no advisories. Avoid a forced incompatible builder downgrade.

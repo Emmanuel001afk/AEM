@@ -100,7 +100,7 @@ export interface EmulatorBridge {
   setLocation(lat: number, lng: number): Promise<boolean>;
   rotate(r: number): Promise<boolean>;
   getLogs(limit?: number): Promise<string[]>;
-  installStoreArtifact(artifact: { url: string; filename: string; packageIdentity?: string; sha256?: string }): Promise<{ success: boolean; message: string }>;
+  installStoreArtifact(artifact: { url: string; filename: string; packageIdentity?: string; sha256?: string; signingCertificateSha256?: string }): Promise<{ success: boolean; message: string }>;
 }
 
 export interface PhoneBridge {
@@ -115,7 +115,7 @@ export interface PhoneBridge {
   exportPackage(serial:string,pkg:string): Promise<{path:string;sha256:string;components:number}|null>;
 }
 export interface DesktopBridge {
-  native: {build():Promise<{path:string}|null>;install(artifact:{url:string;filename:string;sha256:string;packageIdentity:string}):Promise<{path:string;launched:boolean}|null>};
+  native: {status(identity:string,version:string):Promise<{installed:{packageIdentity:string;displayName:string;version:string;installLocation:string;scope:'user'|'machine'}[];state:'not-installed'|'update'|'current'|'newer-installed'|'unknown'}>;build():Promise<{path:string}|null>;install(artifact:{url:string;filename:string;sha256:string;packageIdentity:string;version:string}):Promise<{path:string;launched:boolean}|null>};
   phone: PhoneBridge;
   isDesktop: boolean;
   platform: NodeJS.Platform;

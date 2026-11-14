@@ -1,6 +1,7 @@
+import {getNativeInstallations,nativeUpdateState} from "./native-registry";
 import { ipcMain, dialog, shell, app, BrowserWindow } from "electron";
 import path from "path";
-import { buildNativeSource, stageWindowsArtifact, validateRecipe, type WindowsArtifact } from "./native-delivery";
+import { buildNativeSource, stageWindowsArtifact, validateWindowsArtifact, validateRecipe, type WindowsArtifact } from "./native-delivery";
 import fs from "fs";
 import { phoneManager, configurePhoneTools } from "./phone-runtime";
 import { isAllowedExternal, isTrustedRenderer, newerStableVersion } from "./security";
@@ -94,7 +95,15 @@ export function registerIpc(mainWindow: BrowserWindow) {
     if(path.basename(compiler.filePaths[0]).toLowerCase()!=="makensis.exe")throw new Error("Select the NSIS compiler makensis.exe");
     return buildNativeSource(pick.filePaths[0],compiler.filePaths[0],path.join(app.getPath("downloads"),"AEM Native Builds"));
   });
+  handle("native:status",async(_e,identity:string,version:string)=>{
+    const installed=await getNativeInstallations(identity);
+    return {installed,state:nativeUpdateState(installed,version)};
+  });
   handle("native:install",async(_e,artifact:WindowsArtifact)=>{
+    validateWindowsArtifact(artifact);
+    const installed=await getNativeInstallations(artifact.packageIdentity);
+    const state=nativeUpdateState(installed,artifact.version);
+    if(state==='newer-installed')throw new Error('A newer registered Windows version is already installed. AEM will not initiate a downgrade.');
     const consent=await dialog.showMessageBox(mainWindow,{type:"warning",buttons:["Cancel","Download verified installer"],defaultId:0,cancelId:0,message:"Install a publisher-provided Windows application?",detail:`${String(artifact?.packageIdentity).slice(0,200)} — ${String(artifact?.filename).slice(0,200)}. SHA-256 verifies catalog integrity, not publisher trust. Review the publisher and Windows security prompt; AEM does not silently execute installers.`});
     if(consent.response!==1)return null;
     const file=await stageWindowsArtifact(artifact,app.getPath("temp"));
@@ -177,8 +186,8 @@ export function registerIpc(mainWindow: BrowserWindow) {
 
   handle("emulator:getLogs", async (_e, limit?: number) => emu.getLogs(limit));
 
-  handle("emulator:installStoreArtifact", async (_e, artifact: { url: string; filename: string; sha256?: string; packageIdentity?: string }) => {
+  handle("emulator:installStoreArtifact", async (_e, artifact: { url: string; filename: string; sha256?: string; packageIdentity?: string; signingCertificateSha256?: string }) => {
     if (!artifact.sha256) throw new Error("Catalog artifact is missing SHA-256; refresh verified release metadata before installation");
-    return emu.installApkFromUrl(artifact.url, artifact.filename, artifact.sha256, artifact.packageIdentity);
+    return emu.installApkFromUrl(artifact.url, artifact.filename, artifact.sha256, artifact.packageIdentity, artifact.signingCertificateSha256);
   });
 }
