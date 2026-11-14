@@ -5,7 +5,7 @@ export default function ExecutionPicker({application,onEmulator}:{application:an
   const desktop=getDesktop()!;
   const artifacts=application.latest?.artifacts||[];
   const android=artifacts.find((a:any)=>a.platform==='android'&&['apk','apks','xapk','apkm'].includes(a.kind));
-  const native=artifacts.find((a:any)=>a.platform==='windows'&&a.kind==='exe'&&a.packageIdentity&&/^[a-f\d]{64}$/i.test(a.sha256||'')&&/^https:\/\//.test(a.downloadUrl));
+  const native=(application.windowsLatest?.artifacts||artifacts).find((a:any)=>a.platform==='windows'&&a.kind==='exe'&&a.packageIdentity&&/^[a-f\d]{64}$/i.test(a.sha256||'')&&/^https:\/\//.test(a.downloadUrl));
   const pkg=android?.packageIdentity||application.packageIdentity;
   const [context,setContext]=useState<DeliveryContext>({hasAndroidPackage:!!android,emulatorRunning:false,emulatorCanRun:false,nativeArtifactVerified:!!native&&desktop.platform==='win32',phoneAuthorized:false,phoneHasApp:false,phoneDisplayAvailable:false});
   const [method,setMethod]=useState<ExecutionMethod|null>(null),[serial,setSerial]=useState(''),[phones,setPhones]=useState<{serial:string;model:string}[]>([]),[message,setMessage]=useState(''),[busy,setBusy]=useState(false);
@@ -19,7 +19,7 @@ export default function ExecutionPicker({application,onEmulator}:{application:an
     const c={hasAndroidPackage:!!android,emulatorRunning:value(0)?.state==='running',emulatorCanRun:!!value(1)?.summary.canRun,nativeArtifactVerified:!!native&&desktop.platform==='win32',phoneAuthorized:!!phone,phoneHasApp:!!pkg&&phoneApps.includes(pkg),phoneDisplayAvailable:!!value(3)?.scrcpyAvailable};
     setContext(c);setMethod(m=>executionMethods(c).options.some(o=>o.method===m&&o.available)?m:executionMethods(c).recommended);setBusy(false);setMessage('Compatibility is a preflight assessment, not a guarantee that protected or hardware-dependent applications will run.');
   };
-  useEffect(()=>{setMethod(null);setPhones([]);setSerial('');setContext({hasAndroidPackage:!!android,emulatorRunning:false,emulatorCanRun:false,nativeArtifactVerified:!!native&&desktop.platform==='win32',phoneAuthorized:false,phoneHasApp:false,phoneDisplayAvailable:false});},[application.id?.project,application.latest?.id]);
+  useEffect(()=>{setMethod(null);setPhones([]);setSerial('');setContext({hasAndroidPackage:!!android,emulatorRunning:false,emulatorCanRun:false,nativeArtifactVerified:!!native&&desktop.platform==='win32',phoneAuthorized:false,phoneHasApp:false,phoneDisplayAvailable:false});},[application.id?.project,application.latest?.id,application.windowsLatest?.id]);
   const plan=executionMethods(context);
   const run=async()=>{setBusy(true);try{if(method==='emulator')await onEmulator();else if(method==='phone')await desktop.phone.start(serial,pkg);else if(method==='windows-native'){await desktop.native.install({url:native.downloadUrl,filename:native.filename,sha256:native.sha256,packageIdentity:native.packageIdentity});}setMessage('Request processed. Verify the installer or application window; starting a process is not proof of a completed installation.');}catch(e){setMessage(e instanceof Error?e.message:String(e));}finally{setBusy(false);}};
   return <div className="setting open"><div className="setting-body"><h3>Choose execution & delivery</h3>

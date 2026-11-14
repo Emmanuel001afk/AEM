@@ -7,6 +7,7 @@ export default function DevicesView(){
   const [remote,setRemote]=useState('/sdcard/Download/'),[message,setMessage]=useState(''),[busy,setBusy]=useState(false);
   const [status,setStatus]=useState<Awaited<ReturnType<typeof desktop.phone.status>>|null>(null);
   const [received,setReceived]=useState('');
+  const [update,setUpdate]=useState<Awaited<ReturnType<typeof desktop.checkForUpdates>>|null>(null);
   const act=async(fn:()=>Promise<unknown>)=>{setBusy(true);setMessage('Working…');try{const result=await fn();setMessage(result===null?'Cancelled':typeof result==='string'?result:'Operation finished.');}catch(e){setMessage(e instanceof Error?e.message:String(e));}finally{setBusy(false);}};
   const refresh=async()=>{const list=await desktop.phone.devices();setDevices(list);setSerial(s=>list.some(d=>d.serial===s)?s:list.find(d=>d.state==='device')?.serial||'');return `${list.length} phone(s) discovered. Authorization is controlled by Android.`;};
   useEffect(()=>{let active=true;const poll=()=>desktop.phone.status().then(s=>{if(active)setStatus(s);}).catch(()=>{});void poll();const timer=setInterval(poll,1500);return()=>{active=false;clearInterval(timer);};},[]);
@@ -35,6 +36,12 @@ export default function DevicesView(){
       {status&&<p aria-live="polite">{status.progress.phase} · {status.progress.completed}/{status.progress.total} items · {status.progress.message}</p>}
       {received&&<button className="choice" onClick={()=>desktop.showItemInFolder(received)}>SHOW RECEIVED FILE</button>}
       <p className="fine">Packages only: no account data, Play ownership, licences or DRM transfer. Interrupted ADB copies must be retried; they are not reported as completed. Installing a received package on Android still uses its system installer and permissions.</p>
+    </div></div>
+    <div className="setting open"><div className="setting-body"><h3>AEM Store desktop updates</h3>
+      <button className="choice" disabled={busy} onClick={()=>act(async()=>{const r=await desktop.checkForUpdates();setUpdate(r);return r.error||r.available? (r.error||`New AEM Store release ${r.latest}`) : 'No newer stable desktop release is available.';})}>CHECK STABLE RELEASE</button>
+      {update&&<p>Installed: {update.current||'unknown'} · latest: {update.latest||'no published release'}</p>}
+      {update?.available&&update.url&&<button className="install" onClick={()=>desktop.openExternal(update.url!)}>OPEN GITHUB RELEASE DOWNLOAD PAGE</button>}
+      <p className="fine">Download the Setup EXE and compare its SHA-256 with the release checksums before upgrading. No downgrade or unattended installer is triggered. Native third-party installed-version tracking is not yet implemented.</p>
     </div></div>
     <div className="setting open"><div className="setting-body"><h3>Build a genuine Windows variant</h3><p>For developers with licensed, adapted WinForms/WPF source, AEM invokes your local .NET SDK and NSIS to build a Windows application and Setup EXE. An APK or a source URL alone is insufficient. The recipe preserves the family relationship, separate package identities, source revision and licence.</p><button className="choice" disabled={busy||desktop.platform!=='win32'} onClick={()=>act(async()=>{const r=await desktop.native.build();if(r){await desktop.showItemInFolder(r.path);return `Built ${r.path}. Installation and launch still require verification.`;}return null;})}>BUILD ADAPTED WINDOWS SOURCE</button><p className="fine">Requires a schema-1 aem-native recipe (see docs/native-delivery.md), .NET SDK, trusted source, an application icon and local NSIS. AEM cannot port proprietary Android-only code without access to the necessary source/components.</p></div></div>
   </section>;

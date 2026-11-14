@@ -13,6 +13,7 @@ function Assert-Launch($exe) {
     if (!(Test-Path $env:AEM_SMOKE_RESULT)) { throw 'Renderer did not acknowledge installed launch' }
     $result = Get-Content $env:AEM_SMOKE_RESULT | ConvertFrom-Json
     if (!$result.ok) { throw 'Renderer smoke test failed' }
+    return $result
   } finally {
     if (!$p.HasExited) { Stop-Process -Id $p.Id -Force }
     Remove-Item $env:AEM_SMOKE_RESULT -ErrorAction SilentlyContinue
@@ -31,11 +32,16 @@ foreach ($link in @($start, $desktop)) {
   $shortcut = (New-Object -ComObject WScript.Shell).CreateShortcut($link)
   if ($shortcut.TargetPath -ne $exe) { throw "Wrong shortcut target: $link" }
 }
-$registration = Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*' | Where-Object { $_.DisplayName -eq 'AEM Store' }
+$version = (Get-Content package.json | ConvertFrom-Json).version
+$registration = Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*' | Where-Object {
+  $_.DisplayName -in @('AEM Store', "AEM Store $version") -and $_.DisplayVersion -eq $version -and
+  $_.UninstallString -and $_.UninstallString.IndexOf($installDir, [StringComparison]::OrdinalIgnoreCase) -ge 0
+}
 if (!$registration) { throw 'Uninstall registration missing' }
-Assert-Launch $exe
+$firstLaunch = Assert-Launch $exe
 # Same-version reinstall exercises preservation; cross-version upgrades still need hardware QA.
-$data = Join-Path $env:APPDATA 'aem-store'
+$data = $firstLaunch.userData
+if (!$data) { throw 'Application did not report its actual user-data directory' }
 New-Item -ItemType Directory -Force $data | Out-Null
 $marker = Join-Path $data 'smoke-preservation.txt'
 Set-Content $marker 'preserve'

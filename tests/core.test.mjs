@@ -43,3 +43,12 @@ test('Windows packaging configuration matches installed electron-builder schema'
   const config=JSON.parse(fs.readFileSync(new URL('../package.json',import.meta.url),'utf8')).build;
   await validateConfiguration(config,{isEnabled:false,add(){}});
 });
+
+test('Windows variants remain discoverable without changing Android version ordering',async()=>{
+ const {selectLatestWindowsRelease}=await domain('version.ts');
+ const artifact={platform:'windows',kind:'exe',packageIdentity:'com.example.win',sha256:'a'.repeat(64),downloadUrl:'https://example.org/app.exe'};
+ const release=(name,code,channel='stable')=>({id:name,version:{name,code},status:'published',channel,artifacts:[artifact]});
+ assert.equal(selectLatestWindowsRelease([release('1.0.9',99999),release('1.0.10',1)]).id,'1.0.10');
+ assert.equal(selectLatestWindowsRelease([release('2.0.0',4,'beta'),release('1.0.10',1)]).id,'1.0.10');
+ assert.equal(selectLatestWindowsRelease([{...release('9.0.0',1),artifacts:[{...artifact,sha256:''}]}]),undefined);
+});

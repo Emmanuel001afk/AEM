@@ -95,6 +95,16 @@ export function validateWindowsArtifact(a:WindowsArtifact){
 export async function stageWindowsArtifact(a:WindowsArtifact,root:string){
   validateWindowsArtifact(a);if(process.platform!=='win32')throw new Error('Windows installers can only run on Windows');
   const dir=await fs.promises.mkdtemp(path.join(root,'native-install-'));const file=path.join(dir,a.filename);
-  try{await downloadVerified(a.url,file,a.sha256);const fd=await fs.promises.open(file,'r');const header=Buffer.alloc(64);try{await fd.read(header,0,64,0);}finally{await fd.close();}if(header.toString('ascii',0,2)!=='MZ')throw new Error('Downloaded file is not a Windows executable');return file;}
+  try{await downloadVerified(a.url,file,a.sha256);const fd=await fs.promises.open(file,'r');const header=Buffer.alloc(64);
+    try {
+      const stat=await fd.stat();
+      const read=await fd.read(header,0,64,0);
+      if(read.bytesRead!==64||header.toString('ascii',0,2)!=='MZ')throw new Error('Downloaded file is not a Windows executable');
+      const offset=header.readUInt32LE(60);
+      if(offset<64||offset+26>stat.size)throw new Error('Invalid Windows PE offset');
+      const pe=Buffer.alloc(26);await fd.read(pe,0,26,offset);
+      if(!pe.subarray(0,4).equals(Buffer.from([80,69,0,0]))||![0x14c,0x8664].includes(pe.readUInt16LE(4))||!(pe.readUInt16LE(22)&2)||![0x10b,0x20b].includes(pe.readUInt16LE(24)))throw new Error('Invalid Windows PE executable');
+    } finally {await fd.close();}
+    return file;}
   catch(e){await fs.promises.rm(dir,{recursive:true,force:true});throw e;}
 }

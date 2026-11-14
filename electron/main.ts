@@ -175,7 +175,7 @@ async function createWindow(): Promise<BrowserWindow> {
         setTimeout(check, 100);
       }; check();
     })`);
-    fs.writeFileSync(process.env.AEM_SMOKE_RESULT, JSON.stringify({ ok, version: app.getVersion(), executable: process.execPath }));
+    fs.writeFileSync(process.env.AEM_SMOKE_RESULT, JSON.stringify({ ok, version: app.getVersion(), executable: process.execPath, userData: app.getPath("userData") }));
     app.quit();
   }
 
