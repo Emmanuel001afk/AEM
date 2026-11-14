@@ -1,5 +1,37 @@
 # AEM multi-platform implementation and verification ledger
 
+## Latest verified checkpoint — 0.2.19
+
+**Full combined run [43587692645](https://github.com/Emmanuel001afk/AEM/actions/runs/43587692645) succeeded for implementation head `6725047284972eee65f57269f9fba26490cb750f`.** All release-build, Android runtime, AEM-managed emulator runtime, Windows lifecycle/native-source and complete-artifact verification gates passed. Publishing correctly skipped on this draft PR. This is a verified implementation checkpoint, **not completion of the entire requested ecosystem**; explicit gaps are listed below.
+
+- [Complete APK + Setup + Portable bundle](https://github.com/Emmanuel001afk/AEM/actions/runs/43587692645/artifacts/14111202000)
+- [Signed APK](https://github.com/Emmanuel001afk/AEM/actions/runs/43587692645/artifacts/14111290970)
+- [Windows Setup and Portable](https://github.com/Emmanuel001afk/AEM/actions/runs/43587692645/artifacts/14111605512)
+
+These are temporary, GitHub-authenticated CI artifact downloads, not a published Release. GitHub wraps artifacts in ZIP files: extract and then run the EXE or install the APK. The complete artifact is 239,262,529 bytes. CI downloaded and rehashed the binaries; this sandbox cannot access the Azure artifact CDN, so local retrieval verification remains unavailable.
+
+| Executed check | Result and scope |
+|---|---|
+| Local renderer/Electron build and automated tests | Passed; **41** tests, including policy/security, real file/ZIP IO and explicitly labelled fake-ADB orchestration |
+| Java archive safety tests | Six JVM scenarios passed in CI |
+| Android API 29 | Signed APK installation, accessible Store UI, same-version reinstall/relaunch passed |
+| **AEM-managed Android API 34** | Actual Electron manager: KVM/resource diagnostics, AVD creation, duplicate-create rejection, boot, wrong-certificate rejection, signed APK installation, accessible Store UI, uninstall, stop and AVD deletion passed |
+| Windows AEM Store | Real Setup/Portable PE checks, installation, icon comparison, shortcuts, versioned uninstall registration, renderer launch, reinstall/portable/uninstall passed |
+| Windows cross-version upgrade | **0.2.12 → 0.2.19**, installed launch and actual user-data preservation passed |
+| Native-source fixture | Real .NET/NSIS build, install, native window, shortcut/registration, actual registry-version detection, update/downgrade comparison and uninstall passed; **fixture is not a third-party Android port** |
+| Complete delivery | APK + Setup + Portable downloaded and checksum-verified by CI; shared version/revision metadata generated |
+| Production dependency audit | Zero advisories; full audit retains six moderate development/build-time advisories |
+
+AEM-managed runtime was tested on **Linux KVM with a CI-provisioned SDK**, not a Windows hypervisor, the AEM SDK downloader, or a physical Latitude. No physical-device benchmark is implied.
+
+```text
+2ab2f571d141cc508fecdec473a8a58b477abc1de6c9b7f20c3a8a7d33d74c38  app-release.apk
+5a8309686541eaf6d3a30435d18567e15f05312c98c0b79d1cf380d61076ee23  AEM-Store-0.2.19-Setup-x64.exe
+01205987fe07f3dd885c6edd46679bb4b2afd1b99055ea50859efde1c8ef3b52  AEM-Store-0.2.19-Portable-x64.exe
+```
+
+The following historical sections retain the investigation and intermediate failures rather than erasing them.
+
 ## Baseline — 2026-11-14, base 89df759
 
 Repository inspected: shared React catalog/installer/version/download services; Capacitor Java installer and 4,686-line Wi-Fi Direct transfer activity; Electron main/preload/IPC; SDK, AVD, ADB and emulator process management; icons/NSIS; all eight workflows; Supabase migrations/functions and signing worker; legacy Gradle `app/` and in-repository `oea/` module. The shipping Android workflow generates a Capacitor project from `native/` and `src/`, **not** the root Compose application. No changes to separate application repositories are authorized.
@@ -72,9 +104,9 @@ bc7d905f4befae701b466de0be3dcc5058ab986e2439e79b93f848b76041341f  AEM-Store-0.2.
 
 Local retrieval via `gh run download` was attempted and failed at the Azure artifact host (EOF, outside this sandbox's outbound allowlist). Do not claim locally downloaded/rehashed files. CI did download and hash them successfully. Published-release re-download verification awaits an authorized main build/publication.
 
-### Additional work awaiting CI at this ledger revision
+### Intermediate checkpoint (subsequently verified in 0.2.19)
 
-40 local unit/integration-double tests and renderer/Electron builds pass. Added expected catalog signing-certificate enforcement, native registry detection with Windows runtime assertions, and a real AEM-managed API 34 AVD lifecycle job under Electron/Linux KVM. This job uses a CI-provisioned SDK and will not establish Windows hypervisor, AEM SDK downloader or physical Latitude behavior. Its outcome must be recorded separately.
+At this intermediate point, 40 local unit/integration-double tests and renderer/Electron builds passed. Added expected catalog signing-certificate enforcement, native registry detection with Windows runtime assertions, and a real AEM-managed API 34 AVD lifecycle job under Electron/Linux KVM. This job uses a CI-provisioned SDK and does not establish Windows hypervisor, AEM SDK downloader or physical Latitude behavior. Its successful final outcome is recorded at the top of this document.
 
 ### Explicitly incomplete
 
@@ -88,3 +120,10 @@ Local retrieval via `gh run download` was attempted and failed at the Azure arti
 
 
 Run [43585276138](https://github.com/Emmanuel001afk/AEM/actions/runs/43585276138), head `c6ad941`: Windows native registry/current/update/downgrade/uninstall checks and Windows 0.2.12 → 0.2.13 upgrade passed; signed APK/API29 smoke passed. Overall run failed before the new managed emulator test: `android-actions/setup-android@v3` failed (log download blocked; precise setup cause unknown). Replaced the redundant setup action with the runner's existing SDK manager and explicit setup-failure annotations. No managed-AVD success is claimed from this run.
+
+
+### Managed-emulator investigation follow-through
+
+Subsequent runtime-gate attempts exposed Linux CI Electron sandbox-helper permissions, SDK signer-output parsing/tool-version sensitivity and a transient API34 UIAutomator dump with no XML before the UI became idle. The runner now installs/configures its sandbox helper without disabling sandboxing; AEM prefers its required build-tools revision, accepts supported certificate whitespace/SHA256 labels from the successful verifier output, and still rejects wrong certificate fingerprints. The UI test retries transient dump failures but requires actual accessible Store UI before passing. Failed runs were not published; the complete green 0.2.19 run includes every gate.
+
+The emulator manager now binds ADB operations to its named managed AVD instead of choosing the first unrelated emulator, and does not equate a responsive shell with completed Android boot. These paths were exercised in the final managed lifecycle test.

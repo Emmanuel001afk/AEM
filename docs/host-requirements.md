@@ -28,3 +28,8 @@ Prefer phone-powered execution or an available genuine native Windows implementa
 Record exact CPU, Windows build, RAM available after login, disk type/free space, GPU driver and acceleration probe. Measure cold/quick boot to Android boot completion, peak working set/commit, host responsiveness and idle/active CPU; repeat with a real signed APK and a native-library app. Test shutdown, failed-start recovery, snapshots, hardware sleep and low-storage conditions. Do not disable Windows security or antivirus to obtain favorable numbers.
 
 SDK installation requires Java, acceptance of Google's terms and HTTPS access to Google repositories. This sandbox cannot access those repositories. HAXM is not the recommended modern Windows route; use a currently supported hypervisor compatible with the installed emulator. Graphics auto mode does not guarantee hardware acceleration or automatic recovery from driver failure.
+
+
+## Executed CI runtime check
+
+Combined run 43587692645 exercised AEM's actual Electron emulator manager on Linux KVM: measured diagnostics, managed API34 Google APIs x86_64 AVD creation/boot with 2048 MB and two cores, signer rejection/acceptance, signed APK installation and accessible UI launch, uninstall/stop/delete. SDK tools/image were provisioned by CI, not the AEM SDK downloader. This is not Windows hypervisor coverage, a performance tier certification or a Latitude 3190 benchmark.
