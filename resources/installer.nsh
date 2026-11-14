@@ -4,4 +4,5 @@
 !macro customInstall
   SetOutPath "$INSTDIR\resources"
   File /oname=README.txt "${BUILD_RESOURCES_DIR}\README.txt"
+  SetOutPath "$INSTDIR"
 !macroend

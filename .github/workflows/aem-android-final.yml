@@ -6,7 +6,7 @@ on:
 
 concurrency:
   group: aem-store-android-build-${{ github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   android:
@@ -149,6 +149,7 @@ jobs:
           for attempt in 1 2 3 4 5; do
             echo "Release build attempt $attempt/5"
             if ./gradlew --max-workers=2 assembleRelease 2>&1 | tee ../android-build.log; then exit 0; fi
+            if grep -qE "error:|Compilation failed" ../android-build.log; then break; fi
             if [ "$attempt" -lt 5 ]; then sleep $((attempt * 20)); fi
           done
           python3 - <<'PYERROR'

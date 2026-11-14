@@ -5,7 +5,7 @@ on:
 
 concurrency:
   group: aem-desktop-${{ github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   verify:
@@ -40,7 +40,14 @@ jobs:
       - name: Build Windows Installer and Portable EXE
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: npm run build:win
+        shell: pwsh
+        run: |
+          npm run build:win 2>&1 | Tee-Object windows-build.log
+          if ($LASTEXITCODE -ne 0) {
+            $message = ((Get-Content windows-build.log -Tail 90) -join "`n").Replace('%','%25').Replace("`r",'%0D').Replace("`n",'%0A')
+            Write-Host "::error title=Windows packaging failure::$message"
+            exit 1
+          }
       - name: Verify PE structure
         run: node --input-type=module -e "import {verifyPE} from './scripts/verify-release.mjs'; import fs from 'node:fs'; for (const f of fs.readdirSync('release').filter(f=>f.endsWith('.exe'))) verifyPE('release/'+f); verifyPE('release/win-unpacked/AEM Store.exe')"
       - name: Installed and portable application smoke tests

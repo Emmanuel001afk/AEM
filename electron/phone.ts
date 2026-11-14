@@ -18,7 +18,7 @@ export function packageId(value:string):string {
   if(typeof value!=='string'||!/^[A-Za-z]\w*(\.[A-Za-z]\w*)+$/.test(value))throw new Error('Invalid Android package identity');return value;
 }
 export function remoteFile(value:string):string {
-  if(typeof value!=='string'||!/^\/(sdcard|storage\/emulated\/0|data\/app)\/[A-Za-z0-9_./ ~+@=,()-]+$/.test(value)||value.split('/').includes('..'))throw new Error('Only accessible shared-storage files or installed package files may be read');return value;
+  if(typeof value!=='string'||value.length>4096||!/^\/(sdcard|storage\/emulated\/0|data\/app)\/[A-Za-z0-9_./ ~+@=,()-]+$/.test(value)||value.split('/').includes('..'))throw new Error('Only accessible shared-storage files or installed package files may be read');return value;
 }
 const quote=(value:string)=>`'${remoteFile(value)}'`;
 export async function hashFile(file:string):Promise<string>{const h=createHash('sha256');for await(const c of fs.createReadStream(file))h.update(c);return h.digest('hex');}
