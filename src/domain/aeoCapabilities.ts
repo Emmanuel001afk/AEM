@@ -117,6 +117,6 @@ export function validateAeoCapabilityManifest(
     entry.sourceProtocol === ECOSYSTEM_PROTOCOL &&
     CAPABILITIES.includes(entry.sourceCapabilityId) &&
     entry.id === entry.sourceCapabilityId &&
-    entry.title === TITLES[entry.sourceCapabilityId],
+    entry.title === TITLES[entry.sourceCapabilityId as Capability],
   );
 }
