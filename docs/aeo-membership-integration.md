@@ -10,6 +10,6 @@ AEM Store keeps its existing `aem-capabilities/1` registration and capability-gr
 
 The adapter verifies ecosystem membership only. It does not prove that an installed binary is genuine, authenticate a device, or grant capabilities. Existing `aem-capabilities/1` peer authentication and scoped grants remain separate. Do not treat an AEO membership proof as a capability grant.
 
-No production trust key or credential is included. AEM must not accept AEO membership until an approved trust bundle and fresh revocation data are supplied. Unknown or unavailable revocation status fails closed.
+No production trust key or credential is included. The adapter now verifies a root-signed trust bundle against pinned root public keys, validates issuer-key records and the revocation list, and rejects expired or rolled-back bundle versions. The caller must persist the highest accepted bundle version and supply it as `minimumVersion`; this function does not persist state. Unknown or unavailable revocation status fails closed. Root-key rotation/recovery and live issuer/revocation distribution remain production prerequisites.
 
 Tests generate an ephemeral Ed25519 test key and cover signature, issuer, audience, expiry, revocation, protocol and registration-identity failures. No live credentials are generated.
