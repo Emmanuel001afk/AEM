@@ -177,8 +177,8 @@ export async function verifyAeoMembershipCredential(
   const publicKey = typeof key.publicKey === 'string' ? decodeBase64Url(key.publicKey, 'trusted public key') : key.publicKey;
   if (!(publicKey instanceof Uint8Array) || publicKey.length !== 32) fail('invalid_trust_key', 'Ed25519 public key must be 32 bytes');
   try {
-    const imported = await crypto.subtle.importKey('raw', publicKey, { name: 'Ed25519' }, false, ['verify']);
-    const valid = await crypto.subtle.verify({ name: 'Ed25519' }, imported, signature,
+    const imported = await crypto.subtle.importKey('raw', publicKey.slice().buffer as ArrayBuffer, { name: 'Ed25519' }, false, ['verify']);
+    const valid = await crypto.subtle.verify({ name: 'Ed25519' }, imported, signature.slice().buffer as ArrayBuffer,
       new TextEncoder().encode(encodedHeader + '.' + encodedPayload));
     if (!valid) fail('invalid_signature', 'Credential signature is invalid');
   } catch (error) {
@@ -310,8 +310,8 @@ export async function verifyAeoTrustBundle(
     fail('invalid_trust_key', 'Pinned root public key must be 32 bytes');
   }
   try {
-    const imported = await crypto.subtle.importKey('raw', rootPublicKey, { name: 'Ed25519' }, false, ['verify']);
-    const valid = await crypto.subtle.verify({ name: 'Ed25519' }, imported, signature,
+    const imported = await crypto.subtle.importKey('raw', rootPublicKey.slice().buffer as ArrayBuffer, { name: 'Ed25519' }, false, ['verify']);
+    const valid = await crypto.subtle.verify({ name: 'Ed25519' }, imported, signature.slice().buffer as ArrayBuffer,
       new TextEncoder().encode(encodedHeader + '.' + encodedPayload));
     if (!valid) fail('invalid_trust_bundle_signature', 'Trust bundle signature is invalid');
   } catch (error) {
