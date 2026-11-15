@@ -85,3 +85,57 @@ test('rejects a registration identity that differs from the signed credential', 
   }, { trustedKeys: [key], isCredentialRevoked: async () => false, nowSeconds: now }),
   (error) => error.code === 'registration_identity_mismatch');
 });
+
+const rootPair = await crypto.subtle.generateKey('Ed25519', true, ['sign', 'verify']);
+const rootPublicKey = new Uint8Array(await crypto.subtle.exportKey('raw', rootPair.publicKey));
+const pinnedRoot = {
+  kid: 'aeo-root-test-2026', issuer: 'AEO', algorithm: 'Ed25519',
+  publicKey: rootPublicKey, notBefore: now - 10_000, notAfter: now + 10_000_000,
+};
+const bundlePayload = () => ({
+  iss: 'AEO', aud: AEO_TRUST_BUNDLE_AUDIENCE,
+  bundle_type: 'aeo-trust-bundle', bundle_version: 1, version: 7,
+  iat: now - 30, nbf: now - 30, exp: now + 86_370,
+  keys: [{
+    kid: key.kid, issuer: key.issuer, algorithm: 'Ed25519',
+    publicKey: b64url(publicKey), notBefore: now - 10_000, notAfter: now + 10_000_000,
+  }],
+  revokedCredentialIds: [],
+});
+async function signBundle(payload = bundlePayload()) {
+  const h = jsonPart({ alg: 'EdDSA', typ: AEO_TRUST_BUNDLE_TYP, kid: pinnedRoot.kid });
+  const p = jsonPart(payload);
+  const input = h + '.' + p;
+  const signature = new Uint8Array(await crypto.subtle.sign('Ed25519', rootPair.privateKey, encoder.encode(input)));
+  return input + '.' + b64url(signature);
+}
+
+test('verifies a root-signed AEO trust bundle and returns trusted issuer keys', async () => {
+  const bundle = await verifyAeoTrustBundle(await signBundle(), {
+    pinnedRootKeys: [pinnedRoot], nowSeconds: now,
+  });
+  assert.equal(bundle.version, 7);
+  assert.equal(bundle.trustedKeys.length, 1);
+  assert.equal(bundle.trustedKeys[0].kid, key.kid);
+  assert.equal(bundle.isCredentialRevoked({ issuer: key.issuer, jti: claims.jti, platformId: claims.sub }), false);
+});
+
+test('rejects trust-bundle rollback below the locally persisted minimum version', async () => {
+  await assert.rejects(() => verifyAeoTrustBundle(await signBundle(), {
+    pinnedRootKeys: [pinnedRoot], minimumVersion: 8, nowSeconds: now,
+  }));
+});
+
+test('rejects an unpinned trust-bundle root', async () => {
+  await assert.rejects(() => verifyAeoTrustBundle(await signBundle(), {
+    pinnedRootKeys: [], nowSeconds: now,
+  }));
+});
+
+test('rejects trust-bundle signature tampering', async () => {
+  const parts = (await signBundle()).split('.');
+  parts[2] = b64url(new Uint8Array(64));
+  await assert.rejects(() => verifyAeoTrustBundle(parts.join('.'), {
+    pinnedRootKeys: [pinnedRoot], nowSeconds: now,
+  }));
+});
