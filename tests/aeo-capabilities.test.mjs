@@ -10,7 +10,7 @@ const js = ts.transpileModule(source, {
 const shim = `const CAPABILITIES = ["application.metadata.read", "delivery.request", "transfer.offer", "phone.session.request"];
 const ECOSYSTEM_PROTOCOL = "aem-capabilities/1";
 function validPlatformId(value) { return typeof value === "string" && /^[a-zA-Z][\\w-]*(\\.[a-zA-Z][\\w-]*)+$/.test(value) && value.length <= 128; }`;
-const bundled = js.replace(/import \\{[\\s\\S]*?\\} from ["']\\.\\/ecosystem["'];/, shim);
+const bundled = js.replace(/import[\s\S]*?from ["']\.\/ecosystem["'];/, shim);
 const aeo = await import('data:text/javascript;base64,' + Buffer.from(bundled).toString('base64'));
 
 test('projects the existing AEM capability catalogue into a UCCS manifest', () => {
