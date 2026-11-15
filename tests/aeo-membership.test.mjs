@@ -8,8 +8,9 @@ globalThis.crypto ??= webcrypto;
 const source = fs.readFileSync(new URL('../src/domain/aeoMembership.ts', import.meta.url), 'utf8');
 const js = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } }).outputText;
 const aeo = await import('data:text/javascript;base64,' + Buffer.from(js).toString('base64'));
-const { AEO_FRAMEWORK_AUDIENCE, AEO_MEMBERSHIP_TYP, AEO_UCCS_PROTOCOL, AeoCredentialError,
-  verifyAeoMembershipCredential, verifyAeoPeerRegistration } = aeo;
+const { AEO_FRAMEWORK_AUDIENCE, AEO_MEMBERSHIP_TYP, AEO_UCCS_PROTOCOL,
+  AEO_TRUST_BUNDLE_TYP, AEO_TRUST_BUNDLE_AUDIENCE, AeoCredentialError,
+  verifyAeoMembershipCredential, verifyAeoPeerRegistration, verifyAeoTrustBundle } = aeo;
 const now = 1_800_000_000;
 const encoder = new TextEncoder();
 const b64url = (bytes) => Buffer.from(bytes).toString('base64url');
