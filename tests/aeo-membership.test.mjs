@@ -121,13 +121,15 @@ test('verifies a root-signed AEO trust bundle and returns trusted issuer keys', 
 });
 
 test('rejects trust-bundle rollback below the locally persisted minimum version', async () => {
-  await assert.rejects(() => verifyAeoTrustBundle(await signBundle(), {
+  const token = await signBundle();
+  await assert.rejects(() => verifyAeoTrustBundle(token, {
     pinnedRootKeys: [pinnedRoot], minimumVersion: 8, nowSeconds: now,
   }));
 });
 
 test('rejects an unpinned trust-bundle root', async () => {
-  await assert.rejects(() => verifyAeoTrustBundle(await signBundle(), {
+  const token = await signBundle();
+  await assert.rejects(() => verifyAeoTrustBundle(token, {
     pinnedRootKeys: [], nowSeconds: now,
   }));
 });
