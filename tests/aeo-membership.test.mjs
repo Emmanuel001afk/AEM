@@ -78,9 +78,10 @@ test('verifies AEO/UCCS registration while preserving the platform registration 
   assert.equal(result.protocol, 'uccs/1');
 });
 test('rejects a registration identity that differs from the signed credential', async () => {
+  const membershipCredential = await sign();
   await assert.rejects(() => verifyAeoPeerRegistration({
     ecosystem: 'AEO', protocol: AEO_UCCS_PROTOCOL, platformId: 'com.phormi.browser',
-    displayName: 'Phormi', membershipCredential: sign(),
+    displayName: 'Phormi', membershipCredential,
   }, { trustedKeys: [key], isCredentialRevoked: async () => false, nowSeconds: now }),
   (error) => error.code === 'registration_identity_mismatch');
 });
