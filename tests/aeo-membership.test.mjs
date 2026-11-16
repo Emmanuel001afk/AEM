@@ -152,10 +152,16 @@ test('accepts the shared AEO cross-platform trust, membership and registration v
   });
   assert.equal(bundle.version, vector.expected.trustBundleVersion);
   assert.equal(bundle.trustedKeys[0].kid, vector.expected.issuerKeyId);
+  assert.equal(typeof bundle.isCredentialRevoked, 'function');
+  assert.equal(bundle.isCredentialRevoked({
+    issuer: 'https://test-issuer.aeo.example',
+    jti: vector.expected.activeCredentialId,
+    platformId: vector.expected.membershipPlatformId,
+  }), false);
   const options = {
     trustedKeys: bundle.trustedKeys,
     nowSeconds: vector.nowSeconds,
-    isCredentialRevoked: bundle.isCredentialRevoked,
+    isCredentialRevoked: (input) => bundle.isCredentialRevoked(input),
   };
   const membership = await verifyAeoMembershipCredential(vector.membershipCredential, options);
   assert.equal(membership.platformId, vector.expected.membershipPlatformId);
