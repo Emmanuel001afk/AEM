@@ -146,7 +146,7 @@ test('rejects trust-bundle signature tampering', async () => {
 
 test('accepts the shared AEO cross-platform trust, membership and registration vector', async () => {
   const vector = JSON.parse(fs.readFileSync(new URL('./fixtures/aeo-conformance-vectors-v1.json', import.meta.url), 'utf8'));
-  const bundle = verifyAeoTrustBundle(vector.trustBundle, {
+  const bundle = await verifyAeoTrustBundle(vector.trustBundle, {
     pinnedRootKeys: vector.pinnedRootKeys,
     nowSeconds: vector.nowSeconds,
   });
