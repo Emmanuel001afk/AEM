@@ -18,7 +18,7 @@ const TITLES: Record<Capability, string> = {
 export interface AeoCapabilityManifestEntry {
   id: string;
   title: string;
-  sourceProtocol: typeof ECOSYSTEM_PROTOCOL;
+  sourceRegistry: typeof ECOSYSTEM_PROTOCOL;
   sourceCapabilityId: Capability;
 }
 
@@ -60,7 +60,7 @@ export function createAemAeoCapabilityManifest(
   const capabilities = CAPABILITIES.map((capability) => Object.freeze({
     id: capability,
     title: TITLES[capability],
-    sourceProtocol: ECOSYSTEM_PROTOCOL,
+    sourceRegistry: ECOSYSTEM_PROTOCOL,
     sourceCapabilityId: capability,
   }));
   return Object.freeze({
