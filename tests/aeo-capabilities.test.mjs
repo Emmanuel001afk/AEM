@@ -19,7 +19,7 @@ test('projects the existing AEM capability catalogue into a UCCS manifest', () =
   }, 1_800_000_000);
   assert.equal(aeo.validateAeoCapabilityManifest(manifest, 1_800_000_001), true);
   assert.equal(manifest.capabilities.length, 4);
-  assert.equal(manifest.capabilities[0].sourceProtocol, 'aem-capabilities/1');
+  assert.equal(manifest.capabilities[0].sourceRegistry, 'aem-capabilities/1');
 });
 
 test('rejects expired, altered and duplicate capability manifests', () => {
