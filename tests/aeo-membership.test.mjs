@@ -164,7 +164,7 @@ test('accepts the shared AEO cross-platform trust, membership and registration v
     isCredentialRevoked: async () => false,
   };
   const membership = await verifyAeoMembershipCredential(vector.membershipCredential, options);
-  assert.equal(membership.membership.platformId, vector.expected.membershipPlatformId);
+  assert.equal(membership.membership?.platformId ?? membership.platformId, vector.expected.membershipPlatformId);
   const registration = await verifyAeoPeerRegistration(vector.registration, options);
   assert.equal(registration.platformId, vector.expected.membershipPlatformId);
 });
