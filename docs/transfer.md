@@ -1,4 +1,7 @@
-> For the generic desktop ↔ phone/browser HTTPS companion, see [LAN transfer](lan-transfer.md). The Android Wi-Fi Direct protocol described below is separate and unchanged.
+> Three separate local channels. For the generic desktop ↔ phone/browser HTTPS companion, see
+> [LAN transfer](lan-transfer.md); for AEM desktop ↔ AEM desktop pairing, see
+> [PC-to-PC transfer](pc-transfer.md). The Android Wi-Fi Direct protocol described below is separate and
+> unchanged: it never shares a port, token format or consent flow with either PC channel.
 
 # AEM Transfer
 

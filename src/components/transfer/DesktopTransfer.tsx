@@ -1,8 +1,9 @@
 import {useEffect,useState} from 'react';
+import PeerTransfer from './PeerTransfer';
 import {getDesktop} from '../../services/emulator/contract';
 import type {LanStatus} from '../../services/transfer/contract';
-/** One generic local companion: no publisher/platform-name allowlist. */
-export default function DesktopTransfer(){
+/** Browser companion panel (`aem-lan/1`): one generic local companion, no publisher/platform-name allowlist. */
+function LanCompanion(){
   const bridge=getDesktop()?.transfer;
   const [state,setState]=useState<LanStatus|null>(null),[message,setMessage]=useState(''),[busy,setBusy]=useState(false);
   useEffect(()=>{let live=true;const poll=()=>bridge?.status().then(s=>{if(live)setState(s);}).catch(()=>{});void poll();const timer=setInterval(poll,1500);return()=>{live=false;clearInterval(timer);};},[bridge]);
@@ -30,4 +31,21 @@ export default function DesktopTransfer(){
       <p className="fine">256 MiB per file, 2 GiB receive quota per session. Uploads resume by reselecting the same file after a network interruption; browser downloads resume while that tab stays open. Stop/revoke invalidates grants and removes unfinished uploads. No automatic installation. mDNS advertises aem-lan/1 to compatible discovery clients; manual addresses work without discovery support. This is not the Android Wi-Fi Direct wire protocol.</p>
     </div></div>
   </section>;
+}
+
+/** Desktop Transfer screen: AEM PC ↔ AEM PC pairing, or the generic browser companion. */
+export default function DesktopTransfer(){
+  const [mode,setMode]=useState<'pc'|'lan'>(()=>localStorage.getItem('aem-transfer-mode')==='lan'?'lan':'pc');
+  useEffect(()=>{localStorage.setItem('aem-transfer-mode',mode);},[mode]);
+  if(!getDesktop())return null;
+  return <>
+    <section className="content"><div className="section-head"><div><span>TRANSFER CHANNEL</span><h2>Move files without the cloud</h2></div></div>
+      <div className="choice-row">
+        <button className={mode==='pc'?'choice active-choice':'choice'} onClick={()=>setMode('pc')} aria-pressed={mode==='pc'}>AEM PC ↔ AEM PC</button>
+        <button className={mode==='lan'?'choice active-choice':'choice'} onClick={()=>setMode('lan')} aria-pressed={mode==='lan'}>PHONE / TABLET / BROWSER ↔ PC</button>
+      </div>
+      <p className="fine">Both channels are local only: files never leave your network, nothing is uploaded, and a received file is never installed or executed by AEM Transfer. Android phone-to-phone Wi-Fi Direct stays in the Android app; authorized USB/ADB transfer lives in the Devices tab.</p>
+    </section>
+    {mode==='pc'?<PeerTransfer/>:<LanCompanion/>}
+  </>;
 }

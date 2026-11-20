@@ -1,3 +1,30 @@
+# AEM PC ↔ PC transfer (`aem-peer/1`) — 2026-11-20
+
+A separately versioned desktop-to-desktop channel now exists: two AEM Store installs pair over the LAN with a
+one-use invitation code, a 6-digit confirmation code displayed and approved by a native dialog on **both** PCs,
+a persistent pinned identity certificate per PC, and HMAC-signed requests (per-peer key, timestamp window,
+fresh nonce) so neither a browser nor a same-LAN attacker can forge or replay a transfer. Files flow in both
+directions with per-chunk and whole-file SHA-256, exact committed-offset resume inside a session, quotas,
+Windows-safe destination naming with `<transferId>-` prefixes, and a local history. `Downloads/AEM Transfer`
+stays the single receive directory shared with the other channels; a received file is never installed or
+executed by this service. Identity/peer/history state lives in `userData/aem-peer` with owner-only file modes.
+
+The Android Wi-Fi Direct protocol 6 flow and the `aem-lan/1` browser companion are unchanged and keep their own
+ports, credentials and consent prompts; the shared primitives moved to `electron/transfer/protocol.ts` and both
+channels now close the socket with any error reply, so an oversized or aborted request can never leave a
+half-read message on a reused connection. See [`pc-transfer.md`](pc-transfer.md) for the exact wire format,
+limits, security model and troubleshooting.
+
+Local evidence: `npm run typecheck`, `npm run typecheck:electron`, `npm run build`, `npm run verify` and
+**60 tests** pass, including nine new `tests/peer.test.mjs` cases that pair two real services over loopback TLS
+and check byte-exact bidirectional transfers, replay/re-key/clock-skew refusal, chunk-hash and offset smuggling,
+declined receives, manifest/path rejection, the consent lock, cancel semantics, mid-transfer receiver death,
+restart behaviour and identity-file permissions. **Not** verified on hardware: two physical Windows PCs behind a
+real router, the first-run Windows Firewall prompt, sleep/resume during a multi-GB transfer, throughput on
+2.4 GHz Wi-Fi, multicast discovery on isolated APs, and re-pairing after a client reinstall.
+
+---
+
 # Generalization and reconciliation update — 2026-11-14
 
 The previous checkpoint below is historical. PR #10 is being reconciled with main's PR #11 without discarding the verified release/emulator gates. Brand allowlists have been removed from both ecosystem registration and cross-platform recognition. Any independently owned reverse-DNS application ID and a validated display name can register; names never grant authority and databases remain independent.

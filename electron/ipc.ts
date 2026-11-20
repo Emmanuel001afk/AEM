@@ -1,4 +1,5 @@
 import {TransferService} from "./transfer/service";
+import {PeerTransferService} from "./transfer/peer";
 import {getNativeInstallations,nativeUpdateState} from "./native-registry";
 import { ipcMain, dialog, shell, app, BrowserWindow } from "electron";
 import path from "path";
@@ -16,6 +17,19 @@ export function registerIpc(mainWindow: BrowserWindow) {
     return result.response===1;
   }});
   mainWindow.once('closed',()=>{void transfer.stop();});
+  // AEM ↔ AEM desktop pairing. Shares the receive folder with the LAN companion and Android client,
+  // but runs its own server, identity key and consent prompts (docs/pc-transfer.md).
+  const peerStateRoot=path.join(app.getPath('userData'),'aem-peer');
+  const peer=new PeerTransferService({root:transferRoot,stateDir:peerStateRoot,consent:async request=>{
+    if(request.kind==='receive'){
+      const result=await dialog.showMessageBox(mainWindow,{type:'question',buttons:['Decline','Accept and save'],defaultId:0,cancelId:0,message:'Receive this file from a paired PC?',detail:`${request.name} — ${request.size} bytes\nFrom paired PC: ${request.peer}\nSHA-256: ${request.sha256}\n\nThis saves a file in Downloads/AEM Transfer after a full checksum match. Nothing is executed or installed.`});
+      return result.response===1;
+    }
+    const outgoing=request.kind==='pair-out';
+    const result=await dialog.showMessageBox(mainWindow,{type:'question',buttons:['Reject','Pair'],defaultId:0,cancelId:0,message:outgoing?'Pair this AEM PC with that AEM PC?':'Another AEM PC wants to pair with this one',detail:`${request.peer} · ${request.address}\nCertificate SHA-256: ${request.fingerprint}\nConfirmation code: ${request.sas}\n\nAsk the person on the other PC to read their code aloud and approve only if both codes match. Device labels are user-declared, not verified identities. A pairing grants file transfer only — no screen, input, registry, database or installer access.`});
+    return result.response===1;
+  },onEvent:event=>{try{mainWindow.webContents.send('aem:peerEvent',event);}catch{}}});
+  mainWindow.once('closed',()=>{void peer.stop();});
   const handle: typeof ipcMain.handle = (channel, listener) => {
     ipcMain.removeHandler(channel);
     ipcMain.handle(channel, (event, ...args) => {
@@ -133,6 +147,33 @@ export function registerIpc(mainWindow: BrowserWindow) {
     const pick=await dialog.showOpenDialog(mainWindow,{title:'Share selected files with paired LAN devices',properties:['openFile','multiSelections']});
     return pick.canceled?null:transfer.offer(pick.filePaths);
   });
+
+  // PC ↔ PC (aem-peer/1). Every privileged action is confirmed by a native dialog on both PCs.
+  handle('peer:status',async()=>peer.status());
+  handle('peer:start',async()=>{
+    const c=await dialog.showMessageBox(mainWindow,{type:'warning',buttons:['Cancel','Start PC-to-PC sharing'],defaultId:0,cancelId:0,message:'Open the AEM PC-to-PC transfer endpoint?',detail:'This PC listens on your local network for one paired AEM PC at a time. Pairing needs an invitation you create, a matching confirmation code on both PCs and your approval here. Only files you explicitly select can move; nothing is ever installed. Use a trusted private network and do not forward this port on your router.'});
+    return c.response===1?peer.start():null;
+  });
+  handle('peer:stop',async()=>{await peer.stop();return peer.status();});
+  handle('peer:invite',async()=>peer.newInvite());
+  handle('peer:name',async(_e,name:string)=>peer.setName(String(name??'')));
+  handle('peer:pair',async(_e,code:string)=>{
+    const status=await peer.pairWith(String(code??''));
+    const sas=status.peers[0]?.sas??'n/a';
+    dialog.showMessageBox(mainWindow,{type:'info',buttons:['OK'],message:'Paired with the other AEM PC',detail:`If the 6-digit code on the other screen was not ${sas}, unpair now — a mismatch means something else is on that address.\n\nThis pairing only allows consented file copies: no screen, input or app data is shared.`}).catch(()=>{});
+    return status;
+  });
+  handle('peer:unpair',async(_e,id:string)=>peer.unpair(String(id??'')));
+  handle('peer:send',async(_e,peerId:string)=>{
+    const pick=await dialog.showOpenDialog(mainWindow,{title:'Send files to the paired AEM PC',properties:['openFile','multiSelections']});
+    return pick.canceled?null:peer.send(String(peerId),pick.filePaths);
+  });
+  handle('peer:resume',async(_e,id:string)=>peer.resume(String(id)));
+  handle('peer:cancel',async(_e,id:string)=>peer.cancel(String(id)));
+  handle('peer:remove',async(_e,id:string)=>peer.remove(String(id)));
+  handle('peer:clearHistory',async()=>peer.clearHistory());
+  handle('peer:probe',async(_e,address:string,port:number)=>peer.probe({address:String(address),port:Number(port)}));
+  handle('peer:showFolder',async()=>{await fs.promises.mkdir(transferRoot,{recursive:true});const e=await shell.openPath(transferRoot);if(e)throw new Error(e);});
 
   // Phone operations are independent of the emulator and use Android-authorized ADB only.
   handle("phone:devices", () => phoneManager().devices());

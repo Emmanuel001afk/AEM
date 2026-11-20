@@ -57,7 +57,7 @@ The desktop retains the full web store: **Home, Apps, Devices, Emulator, Updates
 - **Emulator** — manages the local Android environment (see `docs/emulator/README.md`).
 - **Updates** — apps with newer catalog releases vs. locally installed versions (scanned via Android PackageManager on device, emulator apps are managed separately in the Emulator view; desktop Updates is not yet a unified native/emulator inventory).
 - **Devices** — authorized physical-phone scrcpy display, SHA-256-verified ADB push/pull and base/split export; native adapted source builds.
-- **Transfer** — preserves phone-to-phone Wi-Fi Direct (Android); desktop links to Devices. LAN AEM-to-AEM transfer remains incomplete.
+- **Transfer** — two local-only desktop channels: **AEM PC ↔ AEM PC** (`aem-peer/1`: invitation pairing, confirmation code on both PCs, pinned certificates, per-chunk + whole-file SHA-256, resume; see `docs/pc-transfer.md`) and the **browser companion** (`aem-lan/1`: any phone/tablet/computer browser; see `docs/lan-transfer.md`). Phone-to-phone Wi-Fi Direct stays in the Android app and authorized USB/ADB transfer stays in **Devices**. Received files land in `Downloads/AEM Transfer` and are never installed or executed by Transfer.
 - **Settings** — appearance, notifications, downloads, storage, security, and a **Desktop & emulator** section.
 
 ### File & App Access
@@ -79,7 +79,8 @@ The desktop retains the full web store: **Home, Apps, Devices, Emulator, Updates
 | Installer blocked by SmartScreen | Verify the download source and checksum first. Windows builds are unsigned; AEM does not bypass SmartScreen. |
 | App shows blank white screen | Check `logs/` in userData, or run with `AEM_STORE_DEBUG=1 AEM-Store.exe`. |
 | “APK opened” not going to emulator | Ensure emulator is **Running** (green badge). Non-running shows a hint. |
-| Transfer tab says “Android app” | Transfer is Android-to-Android only; desktop shows info. Use Emulator for APK testing. |
+| Transfer pairing never arrives | Both PCs must be on the same private network and AEM must be allowed on **private** networks in Windows Firewall. See the troubleshooting table in `docs/pc-transfer.md`. |
+| “Peer TLS certificate does not match the pinned fingerprint” | The other PC rebuilt its identity (fresh profile/reinstall) or the code came from another machine. Unpair and re-pair with a new invitation. |
 
 ---
 

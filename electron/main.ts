@@ -97,6 +97,13 @@ function createMenu() {
       ],
     },
     {
+      label: "Transfer",
+      submenu: [
+        { label: "AEM PC ↔ PC transfer", click: () => mainWindow?.webContents.send("aem:menuAction", "peer:open") },
+        { label: "Open received files folder", click: () => mainWindow?.webContents.send("aem:menuAction", "peer:folder") },
+      ],
+    },
+    {
       label: "Help",
       submenu: [
         { label: "About AEM Store", click: () => shell.openExternal("https://github.com/Emmanuel001afk/AEM") },
