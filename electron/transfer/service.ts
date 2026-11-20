@@ -1,5 +1,6 @@
 /** Application-neutral LAN companion. HTTPS + one-use out-of-band invitation + explicit local consent.
  * Separate from Android Wi-Fi Direct protocol 6. Never accepts that protocol's unauthenticated tokens.
+ * AEM-to-AEM desktop pairing lives in ./peer.ts and shares only the primitives in ./protocol.ts.
  */
 import https from 'https';
 import type {IncomingMessage,ServerResponse} from 'http';
@@ -9,30 +10,12 @@ import os from 'os';
 import crypto from 'crypto';
 import {generate} from 'selfsigned';
 import {Bonjour} from 'bonjour-service';
-
-const CHUNK=1024*1024, MAX_FILE=256*1024*1024, MAX_TOTAL=2*1024**3;
-const sha=(v:crypto.BinaryLike)=>crypto.createHash('sha256').update(v).digest('hex');
-const id=()=>crypto.randomBytes(16).toString('hex');
-const secret=()=>crypto.randomBytes(32).toString('base64url');
-const equal=(a:string,b:string)=>crypto.timingSafeEqual(Buffer.from(sha(a)),Buffer.from(sha(b)));
-class HttpError extends Error {constructor(public status:number,message:string){super(message);}}
-interface Peer {id:string;name:string;address:string;expiresAt:number}
-interface FileEntry {id:string;name:string;size:number;sha256:string;offset:number;state:'pending'|'complete';owner:string;direction:'receive'|'send';file:string;busy?:boolean}
+import {LAN_CHUNK as CHUNK,LAN_MAX_FILE as MAX_FILE,LAN_MAX_TOTAL as MAX_TOTAL,json,jsonBody,readBody as body,sha,equal,randomId as id,secret,hashFile,validateManifest,HttpError} from './protocol';
+export {validateManifest};
 export interface TransferConsent {kind:'pair'|'receive';name:string;address:string;size?:number;sha256?:string}
 export interface TransferOptions {root:string;assets:string;consent:(request:TransferConsent)=>Promise<boolean>;advertise?:boolean;bindHost?:string;port?:number}
-async function hashFile(file:string){const h=crypto.createHash('sha256');for await(const chunk of fs.createReadStream(file))h.update(chunk);return h.digest('hex');}
-export function validateManifest(v:any):{name:string;size:number;sha256:string}{
-  if(!v||typeof v.name!=='string'||v.name.length<1||v.name.length>120||/[\\/<>:"|?*\x00-\x1f]/.test(v.name)||/[. ]$/.test(v.name)||/^(con|prn|aux|nul|com[1-9]|lpt[1-9])(\.|$)/i.test(v.name)||v.name==='.'||v.name==='..')throw new HttpError(400,'Unsafe filename');
-  if(!Number.isSafeInteger(v.size)||v.size<0||v.size>MAX_FILE||typeof v.sha256!=='string'||!/^\w{64}$/.test(v.sha256)||!/^[a-f0-9]{64}$/.test(v.sha256))throw new HttpError(400,'Invalid size/hash; maximum file size is 256 MiB');
-  return {name:v.name,size:v.size,sha256:v.sha256};
-}
-async function body(req:IncomingMessage,max:number){
-  const chunks:Buffer[]=[];let n=0;
-  for await(const chunk of req){n+=chunk.length;if(n>max)throw new HttpError(413,'Request too large');chunks.push(chunk);}
-  return Buffer.concat(chunks);
-}
-async function jsonBody(req:IncomingMessage){try{return JSON.parse((await body(req,4096)).toString());}catch(e){if(e instanceof HttpError)throw e;throw new HttpError(400,'Invalid JSON');}}
-function json(res:ServerResponse,data:unknown,status=200){res.writeHead(status,{'Content-Type':'application/json'});res.end(JSON.stringify(data));}
+interface Peer {id:string;name:string;address:string;expiresAt:number}
+interface FileEntry {id:string;name:string;size:number;sha256:string;offset:number;state:'pending'|'complete';owner:string;direction:'receive'|'send';file:string;busy?:boolean}
 export class TransferService {
   private server:https.Server|null=null;
   private starting:Promise<ReturnType<TransferService["status"]>>|null=null;
@@ -63,7 +46,7 @@ export class TransferService {
     const hosts=[...this.addresses,'127.0.0.1'];
     const cert=await new Promise<{private:string;cert:string}>((resolve,reject)=>generate([{name:'commonName',value:'AEM Local Transfer'}],{keySize:2048,days:1,algorithm:'sha256',extensions:[{name:'basicConstraints',cA:false},{name:'keyUsage',digitalSignature:true,keyEncipherment:true},{name:'extKeyUsage',serverAuth:true},{name:'subjectAltName',altNames:hosts.map(ip=>({type:7,ip}))}]},(e,r)=>e?reject(e):resolve(r)));
     this.ca=cert.cert;this.fingerprint=new crypto.X509Certificate(cert.cert).fingerprint256;
-    const server=https.createServer({key:cert.private,cert:cert.cert,minVersion:'TLSv1.2'},(req,res)=>{void this.route(req,res).catch(e=>{if(!res.headersSent)json(res,{error:e instanceof HttpError?e.message:'Transfer operation failed'},e instanceof HttpError?e.status:500);else res.destroy();});});
+    const server=https.createServer({key:cert.private,cert:cert.cert,minVersion:'TLSv1.2'},(req,res)=>{void this.route(req,res).catch(e=>{const status=e instanceof HttpError?e.status:500;if(!res.headersSent){res.setHeader('Connection','close');json(res,{error:e instanceof HttpError?e.message:'Transfer operation failed'},status);}else res.destroy();});});
     server.requestTimeout=30000;server.headersTimeout=15000;server.maxHeadersCount=30;server.maxConnections=32;
     await new Promise<void>((resolve,reject)=>{server.once('error',reject);server.listen(this.options.port??0,this.options.bindHost??'0.0.0.0',()=>{server.removeListener('error',reject);resolve();});});
     server.on('error',()=>{void this.stop();});this.server=server;

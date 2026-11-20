@@ -49,6 +49,7 @@ export default function App(){
    });
    const off2 = desktopBridge?.onMenuAction?.((action: string)=>{
      if (action.startsWith("emulator:")) setTab("Emulator");
+     if (action.startsWith("peer:")) { setTab("Transfer"); if (action === "peer:folder") void desktopBridge?.peer?.showFolder(); }
    });
    return ()=>{ off?.(); off2?.(); };
  },[isDesktop]);
@@ -153,8 +154,8 @@ export default function App(){
       <span className="transfer-pill">Transfer opens in the Android app</span>
     </div>
     {isDesktop && <div className="transfer-note" style={{ marginTop: 12, borderStyle: 'dashed' }}>
-      <div><strong>Phone ↔ PC transfer and phone-powered display</strong><p>Use Devices for Android-authorized ADB file transfer in both directions, SHA-256 verification, installed base/split APK export and phone-powered display. AEM-to-AEM LAN pairing/discovery and interrupted desktop-transfer resume remain under development. Android phone-to-phone Wi-Fi Direct remains available in the Android app.</p></div>
-      <button className="choice" onClick={()=>setTab("Devices")}>OPEN DEVICES</button>
+      <div><strong>PC ↔ PC, phone ↔ PC and phone-powered display</strong><p>AEM Store on a second computer can pair with this one under <em>Transfer → AEM PC ↔ AEM PC</em>: invitation code, confirmation code on both screens, per-chunk and whole-file SHA-256, and resume from the receiver’s committed offset. Use Devices for Android-authorized ADB file transfer in both directions, installed base/split APK export and phone-powered display. Android phone-to-phone Wi-Fi Direct remains available in the Android app.</p></div>
+      <button className="choice" onClick={()=>setTab("Transfer")}>OPEN PC-TO-PC TRANSFER</button>
     </div>}
     {!isDesktop && <div className="transfer-note" style={{ marginTop: 12 }}>
       <div><strong>Why your Tecno/Infinix may not see each other</strong><p>Infinix Smart 8 (Android 13): grant <em>Nearby devices</em> when prompted. Tecno Spark 3 (Android 12 and below): swipe down → <em>Location ON</em> is mandatory for Wi-Fi Direct. One phone must show <em>Receive → Listening</em>, the other picks files then <em>Send → Nearby phones</em>. Keep &lt;1 m apart, screens on. Still empty: toggle Wi-Fi off/on on both and Scan again — XOS/HiOS can delay first discovery 5–15 s.</p></div>

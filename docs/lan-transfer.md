@@ -16,7 +16,7 @@ Enter the one-use, 256-bit invitation within two minutes; the PC must approve th
 
 256 MiB per file, 1 MiB chunks, 2 GiB receive quota per server session, 64 queued files, 8 peers, 512 MiB free-space reserve, bounded JSON, request timeouts, pairing rate limits, exact offsets, UUID destination prefixes, path/reserved-name checks and no overwrite. Files are never exposed by arbitrary pathname. Host/Origin allowlists prevent cross-origin browser requests and DNS-rebinding hostnames.
 
-mDNS advertises `_aem-transfer._tcp` with protocol `aem-lan/1`, but advertisement is not authorization. Compatible discovery clients can use it; browsers normally use the displayed address. This is not automatic browser mDNS discovery and not Android's DNS-SD/Wi-Fi Direct protocol 6. The existing Android native phone-phone transfer remains unchanged. PC byte transfer is independent of the emulator.
+mDNS advertises `_aem-transfer._tcp` with protocol `aem-lan/1`, but advertisement is not authorization. Compatible discovery clients can use it; browsers normally use the displayed address. This is not automatic browser mDNS discovery and not Android's DNS-SD/Wi-Fi Direct protocol 6. The existing Android native phone-phone transfer remains unchanged. PC byte transfer is independent of the emulator. **AEM desktop to AEM desktop** is a third, separately versioned channel (`aem-peer/1`, mutual pinned certificates, HMAC-signed requests): see [PC-to-PC transfer](pc-transfer.md).
 
 ## Interoperability API
 

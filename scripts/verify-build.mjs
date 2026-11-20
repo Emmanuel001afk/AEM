@@ -26,6 +26,26 @@ check("Emulator UI exists", () => {
   if (!fs.existsSync("src/components/emulator/EmulatorView.tsx")) throw new Error("EmulatorView missing");
   if (!fs.existsSync("src/services/emulator/contract.ts")) throw new Error("emulator contract missing");
 });
+check("PC ↔ PC (aem-peer/1) transfer surface exists and is wired", () => {
+  const files = ["electron/transfer/protocol.ts","electron/transfer/peer.ts","src/components/transfer/PeerTransfer.tsx","src/components/transfer/DesktopTransfer.tsx","src/services/transfer/contract.ts","docs/pc-transfer.md","tests/peer.test.mjs"];
+  for (const f of files) if (!fs.existsSync(f)) throw new Error(f+" missing");
+  const preload = fs.readFileSync("electron/preload.ts","utf8");
+  if (!/peer:\s*\{/.test(preload)) throw new Error("preload must expose the peer bridge");
+  if (!/aem:peerEvent/.test(preload)) throw new Error("preload must forward peer progress events");
+  const ipc = fs.readFileSync("electron/ipc.ts","utf8");
+  for (const channel of ["peer:start","peer:stop","peer:invite","peer:pair","peer:unpair","peer:send","peer:resume","peer:cancel","peer:showFolder"])
+    if (!ipc.includes(`"${channel}"`.replace(/"/g,"'")) && !ipc.includes(`'${channel}'`)) throw new Error(`ipc is missing ${channel}`);
+  const contract = fs.readFileSync("src/services/transfer/contract.ts","utf8");
+  if (!/aem-peer\/1/.test(contract)) throw new Error("the transfer contract must name the aem-peer/1 protocol");
+  const peer = fs.readFileSync("electron/transfer/peer.ts","utf8");
+  for (const guard of ["signPeerRequest","derivePairSecret","shortAuthCode","X-Chunk-Sha256","statfs"])
+    if (!peer.includes(guard)) throw new Error(`peer transfer lost a safety guard: ${guard}`);
+  const protocol = fs.readFileSync("electron/transfer/protocol.ts","utf8");
+  for (const guard of ["timingSafeEqual","hkdfSync"])
+    if (!protocol.includes(guard)) throw new Error(`transfer primitives lost a cryptographic guard: ${guard}`);
+  const docs = fs.readFileSync("docs/pc-transfer.md","utf8");
+  if (!/6-digit confirmation code/.test(docs) || !/aem-peer\/1/.test(docs)) throw new Error("pc-transfer docs must describe pairing and the protocol id");
+});
 check("Renderer build configuration exists", () => {
   if (!fs.existsSync("vite.config.ts")) throw new Error("vite.config.ts missing");
 });

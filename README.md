@@ -75,7 +75,9 @@ The Android wrapper uses the AEM launcher mark, Android package visibility limit
 Installer progress and cancellation are emitted by the native Android layer so the Store can show live file state instead of raw byte counters.
 
 ### AEM Transfer
-AEM Transfer is the Store's direct phone-to-phone channel. Two Android phones build a Wi-Fi Direct link, the receiver explicitly accepts the request, and every file is SHA-256 verified before it is saved to `Downloads/AEM Transfer`. Nothing is uploaded and no catalog row is written.
+AEM Transfer is the Store's direct, local-only file channel. Android ↔ Android uses Wi-Fi Direct: two phones build the link, the receiver explicitly accepts the request, and every file is SHA-256 verified before it is saved to `Downloads/AEM Transfer`. **PC ↔ PC** (`aem-peer/1`) pairs two AEM desktop installs with a one-use invitation, a 6-digit confirmation code shown on both screens, pinned identity certificates, HMAC-signed requests, per-chunk and whole-file SHA-256, exact resume offsets and quotas — see [`docs/pc-transfer.md`](docs/pc-transfer.md). A browser on any phone, tablet or second computer can pair with a PC through the separate `aem-lan/1` companion ([`docs/lan-transfer.md`](docs/lan-transfer.md)). Nothing is uploaded and no catalog row is written by any of the three.
+
+PC pairing stores this device's identity key and the peer list in the app's user profile (`userData/aem-peer`) with owner-only permissions; unpairing deletes the key. Files received over any channel are never installed or executed by Transfer.
 
 The screen uses the same visual language as the Store (red `#F04444` accent, radial dark backdrop, 20–22 dp cards, eyebrow labels) and is organised as **Transfer**, **Downloads** and **History**. A foreground service keeps receive sessions alive in the background.
 
@@ -146,12 +148,15 @@ Unsupported features, diagnostics and workarounds are documented in:
 src/                    — shared React web UI (Home, Apps, Updates, Transfer, Settings, Emulator)
   App.tsx               — main router (nav gated on isDesktop())
   components/emulator/  — EmulatorView.tsx + emulator.css (desktop-integrated capability)
+  components/transfer/  — DesktopTransfer.tsx channel switch + PeerTransfer.tsx (PC ↔ PC)
   services/
     catalog/            — Supabase + mock catalog
     emulator/           — contract.ts + desktop/mock bridges
+    transfer/           — contract.ts for aem-lan/1 and aem-peer/1
 electron/               — Windows desktop main process
   main.ts / preload.ts / ipc.ts / config.ts
   emulator/             — manager, sdk, avd, instance, adb, diagnostics (genuine Android)
+  transfer/             — protocol.ts primitives, service.ts (aem-lan/1 browser), peer.ts (aem-peer/1 PCs)
 resources/icons/        — app icons (ico/png/icns, file associations)
 scripts/               — verify-build.mjs, verify-emulator.mjs
 docs/

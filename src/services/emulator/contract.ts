@@ -154,6 +154,7 @@ export interface PhoneBridge {
 }
 export interface DesktopBridge {
   transfer:import('../transfer/contract').TransferBridge;
+  peer:import('../transfer/contract').PeerBridge;
   native: {status(identity:string,version:string):Promise<{installed:{packageIdentity:string;displayName:string;version:string;installLocation:string;scope:'user'|'machine'}[];state:'not-installed'|'update'|'current'|'newer-installed'|'unknown'}>;build():Promise<{path:string}|null>;install(artifact:{url:string;filename:string;sha256:string;packageIdentity:string;version:string}):Promise<{path:string;launched:boolean}|null>};
   phone: PhoneBridge;
   isDesktop: boolean;

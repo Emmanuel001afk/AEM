@@ -40,6 +40,17 @@ const api = {
     offer:()=>ipcRenderer.invoke('transfer:offer'),revoke:(id:string)=>ipcRenderer.invoke('transfer:revoke',id),
     remove:(id:string)=>ipcRenderer.invoke('transfer:remove',id),showFolder:()=>ipcRenderer.invoke('transfer:showFolder'),
   },
+  // AEM desktop ↔ desktop file transfer (aem-peer/1).
+  peer: {
+    status:()=>ipcRenderer.invoke('peer:status'),start:()=>ipcRenderer.invoke('peer:start'),stop:()=>ipcRenderer.invoke('peer:stop'),
+    invite:()=>ipcRenderer.invoke('peer:invite'),name:(name:string)=>ipcRenderer.invoke('peer:name',name),
+    pair:(code:string)=>ipcRenderer.invoke('peer:pair',code),unpair:(id:string)=>ipcRenderer.invoke('peer:unpair',id),
+    send:(peerId:string)=>ipcRenderer.invoke('peer:send',peerId),resume:(id:string)=>ipcRenderer.invoke('peer:resume',id),
+    cancel:(id:string)=>ipcRenderer.invoke('peer:cancel',id),remove:(id:string)=>ipcRenderer.invoke('peer:remove',id),
+    clearHistory:()=>ipcRenderer.invoke('peer:clearHistory'),probe:(address:string,port:number)=>ipcRenderer.invoke('peer:probe',address,port),
+    showFolder:()=>ipcRenderer.invoke('peer:showFolder'),
+    onEvent:(cb:(event:unknown)=>void)=>{const h=(_:any,event:any)=>cb(event);ipcRenderer.on('aem:peerEvent',h);return()=>ipcRenderer.removeListener('aem:peerEvent',h);},
+  },
   native: { status: (identity:string,version:string) => ipcRenderer.invoke("native:status",identity,version), build: () => ipcRenderer.invoke("native:build"), install: (artifact: {url:string;filename:string;sha256:string;packageIdentity:string;version:string}) => ipcRenderer.invoke("native:install",artifact) },
   phone: {
     devices: () => ipcRenderer.invoke("phone:devices"),
