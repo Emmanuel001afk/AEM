@@ -8,7 +8,7 @@ Updated 2026-11-22. This records observed setup and remaining limitations. No se
 - No historical database rows or Storage objects were transferred. The destination bucket was empty before the controlled discovery test.
 - `aem_functional_core_bootstrap` created the ten AEM public tables, policies/RLS, triggers/RPCs, `aem-artifacts`, and `pgcrypto`, `pg_net`, `pg_cron`.
 - `aem_storage_budget_guard` and `aem_service_role_table_grants` are applied. A database trigger rejects new/replaced `aem-artifacts` objects once the bucket would exceed 900 MiB, reserving about 100 MiB under the stated 1 GiB allowance. Service-role SQL grants were necessary for Edge Function writes.
-- Latest readback after retention cleanup: 15 Storage objects / 142,268,566 bytes. The 900 MiB guard prevents quota overrun; the deployed sync also prunes obsolete APK objects via the Storage API.
+- Latest readback after retention and signing: 14 Storage objects / 142,522,732 bytes (14 APKs). The 900 MiB guard prevents quota overrun; the deployed sync also prunes obsolete APK objects via the Storage API.
 - Vault contains `aem_project_url`, `aem_publishable_key`, and `aem_sync_secret`. Edge secrets `AEM_GITHUB_TOKEN` and `AEM_GITHUB_DISPATCH_TOKEN` are configured; values are not recorded.
 
 ## Automatic repository discovery — first completed run
@@ -26,11 +26,11 @@ The deployed v15 sync keeps APK artifacts from the two newest APK-bearing releas
 
 A 565-byte fixture `test.apk` and its otherwise-empty repository-binary release were removed through the Storage API and service-side cleanup. The live catalog's real APKs remain pending central signing. APK package identity and version metadata are extracted by v15 for valid source APKs. Do not claim Android installability until a real APK is signed and verified.
 
-## Signing: required owner action
+## Signing: catalog APKs verified; device test remains
 
 The original Android keystore is unavailable. A new RSA PKCS#12 signing kit exists at `/home/user/AEM/AEM-Signing-Kit.zip`, with its current secret values in `/home/user/AEM/AEM-Signing-Secrets.txt`; both files are Git-ignored. The newly generated key is **different from any values the user may have entered earlier** and will not update APKs signed by the old certificate.
 
-The owner reports these GitHub Actions repository secrets were already installed from the current secrets document: `AEM_KEYSTORE_BASE64`, `AEM_KEYSTORE_PASSWORD`, `AEM_KEY_ALIAS`, and `AEM_KEY_PASSWORD`. A later workflow run (`45003739840`) confirms the `Configure AEM signing key` step succeeded, including base64 decoding; do not ask the owner to add them again or add the keystore secrets to Supabase. That run reached `Get GitHub OIDC token` successfully and then failed in `Sign pending AEM Android APKs` while claiming/signing artifacts. GitHub log retrieval returned EOF, so the precise request error is not yet known. A successful end-to-end signing run remains outstanding; investigate the Supabase claim/OIDC path and workflow logs, not secret setup. Do not paste secret values in chat.
+The owner had already installed the GitHub Actions repository secrets from the current secrets document: `AEM_KEYSTORE_BASE64`, `AEM_KEYSTORE_PASSWORD`, `AEM_KEY_ALIAS`, and `AEM_KEY_PASSWORD`. Do not ask the owner to add them again or place the keystore secrets in Supabase. Workflow run `45005131734` completed successfully: key configuration, OIDC authentication, claiming and signing all succeeded. Database verification shows all 14 current APK artifacts have `signing_status=ready`, `signing_authority=aem`, and one shared certificate fingerprint; AEM Store versions v0.2.57 and v0.2.24 are both ready under `com.aem.store`. The original signing key is still unavailable; the replacement key cannot update apps installed from old-key APKs. Keep the signing kit backup private and never paste secret values in chat.
 
 ## Destination endpoints and application changes
 
@@ -54,5 +54,5 @@ The revised in-app inbox focuses on release/update and security/withdrawal alert
 - `npm run test:unit` passed: 60 tests.
 - `esbuild` transpile checks passed for the sync and signing Edge Function sources.
 - The fully completed discovery check is recorded in `source_sync_state` (`success`, 10 scanned, 4 new app rows, 7 releases, 21 artifacts). Future scans continue via the five-minute cron.
-- GitHub Actions signing secrets are installed; workflow run `45003739840` confirms key configuration and OIDC token retrieval passed, but the signing/claim step failed. Diagnose that gateway call and then complete a real signing/install test before saying the Android migration is fully ready.
+- The full GitHub Actions signing workflow passed in run `45005131734`, and all 14 database APK artifacts are `ready` under the replacement key. The owner should now test install/update behavior on a target Android device; old-key installed apps cannot update across the certificate change without uninstall/reinstall.
 - `AEM-Signing-Kit.zip` and `AEM-Signing-Secrets.txt` are ignored and must never be staged.
