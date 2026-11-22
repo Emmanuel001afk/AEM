@@ -1,7 +1,6 @@
-import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
 
-const PROJECT_URL = "https://wfvvmyixqcwosmuldxoq.supabase.co";
+const PROJECT_URL = "https://zaaauldrktvytskerpmc.supabase.co";
 const REPO = "Emmanuel001afk/AEM";
 const cors = {
   "Access-Control-Allow-Origin": "*",
@@ -32,8 +31,8 @@ Deno.serve(async (req) => {
       return json({ ok: false, error: "Unauthorized trigger caller." }, 401);
     }
 
-    const token = (Deno.env.get("AEM_GITHUB_TOKEN") || Deno.env.get("GITHUB_TOKEN") || "").trim();
-    if (!token) return json({ ok: false, error: "GitHub token is not configured." }, 503);
+    const token = (Deno.env.get("AEM_GITHUB_DISPATCH_TOKEN") || "").trim();
+    if (!token) return json({ ok: false, error: "AEM_GITHUB_DISPATCH_TOKEN is not configured." }, 503);
 
     const body = await req.json().catch(() => ({}));
     const artifactId = Number(body.artifact_id || 0) || null;

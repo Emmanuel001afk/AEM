@@ -76,7 +76,7 @@ jobs:
               status="$(
                 curl -sS -o "$response_file" -w '%{http_code}' \
                   --connect-timeout 30 --max-time 60 \
-                  -X POST "https://wfvvmyixqcwosmuldxoq.supabase.co/functions/v1/aem-publish-github-artifact" \
+                  -X POST "https://zaaauldrktvytskerpmc.supabase.co/functions/v1/aem-publish-github-artifact" \
                   -H "apikey: $SUPABASE_KEY" -H "Authorization: Bearer $SUPABASE_KEY" \
                   -H "Content-Type: application/json" -H "x-github-token: $GH_TOKEN" \
                   --data "$META"
@@ -136,7 +136,7 @@ jobs:
             cat "$upload_headers" >&2
             echo "Response body:" >&2
             cat "$upload_response" >&2
-            public_url="https://wfvvmyixqcwosmuldxoq.supabase.co/storage/v1/object/public/aem-artifacts/$object_path"
+            public_url="https://zaaauldrktvytskerpmc.supabase.co/storage/v1/object/public/aem-artifacts/$object_path"
             verify_headers="$(mktemp)"
             verify_status="$(curl -sS -D "$verify_headers" -o /dev/null -w '%{http_code}' --connect-timeout 30 --max-time 60 "$public_url")" || verify_status="000"
             verify_size="$(awk 'BEGIN{IGNORECASE=1} /^content-length:/{gsub("\r","",$2); print $2; exit}' "$verify_headers")"
@@ -178,7 +178,7 @@ jobs:
           finalize_status="$(
             curl -sS -D "$finalize_headers" -o "$finalize_response" -w '%{http_code}' \
               --connect-timeout 30 --max-time 120 \
-              -X POST "https://wfvvmyixqcwosmuldxoq.supabase.co/functions/v1/aem-publish-github-artifact" \
+              -X POST "https://zaaauldrktvytskerpmc.supabase.co/functions/v1/aem-publish-github-artifact" \
               -H "apikey: $SUPABASE_KEY" -H "Authorization: Bearer $SUPABASE_KEY" \
               -H "Content-Type: application/json" -H "x-github-token: $GH_TOKEN" \
               --data "$FINALIZE"

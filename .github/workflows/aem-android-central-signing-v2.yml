@@ -54,13 +54,13 @@ jobs:
       - name: Get GitHub OIDC token
         run: |
           set -euo pipefail
-          token="$(curl -fsSL -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=https://wfvvmyixqcwosmuldxoq.supabase.co/functions/v1/aem-android-signing" | jq -er ".value")"
+          token="$(curl -fsSL -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=https://zaaauldrktvytskerpmc.supabase.co/functions/v1/aem-android-signing" | jq -er ".value")"
           echo "::add-mask::$token"
           printf "%s" "$token" > "$RUNNER_TEMP/aem-oidc-token"
 
       - name: Sign pending AEM Android APKs
         env:
-          SUPABASE_URL: https://wfvvmyixqcwosmuldxoq.supabase.co
+          SUPABASE_URL: https://zaaauldrktvytskerpmc.supabase.co
           AEM_KEYSTORE_PASSWORD: ${{ secrets.AEM_KEYSTORE_PASSWORD }}
           AEM_KEY_ALIAS: ${{ secrets.AEM_KEY_ALIAS }}
           AEM_KEY_PASSWORD: ${{ secrets.AEM_KEY_PASSWORD }}
@@ -74,8 +74,14 @@ jobs:
           response_file="$RUNNER_TEMP/aem-claim-response.json"
           http_code="$(curl --silent --show-error --retry 3 --retry-delay 2 --output "$response_file" --write-out "%{http_code}" -X POST "$API" "${AUTH[@]}" --data '{"action":"claim","limit":25}')"
           if [ "$http_code" -lt 200 ] || [ "$http_code" -ge 300 ]; then
-            echo "Artifact claim failed with HTTP $http_code"
-            jq -C . "$response_file" 2>/dev/null || cat "$response_file"
+            response_body="$(jq -c . "$response_file" 2>/dev/null || head -c 1200 "$response_file")"
+            echo "Artifact claim failed with HTTP $http_code: $response_body"
+            echo "::error title=AEM signing claim failed::HTTP $http_code — $response_body"
+            {
+              echo "### AEM signing claim failed"
+              echo "HTTP status: \`$http_code\`"
+              echo "Response: \`$response_body\`"
+            } >> "$GITHUB_STEP_SUMMARY"
             exit 1
           fi
           queue="$(cat "$response_file")"
