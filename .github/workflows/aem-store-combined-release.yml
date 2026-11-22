@@ -2,7 +2,7 @@ name: AEM Store Combined Release
 
 on:
   push:
-    branches: [main]
+    branches: [main, arena/2c90229b-aem]
   pull_request:
     branches: [main]
   workflow_dispatch:
@@ -22,11 +22,13 @@ jobs:
     secrets: inherit
 
   windows:
+    if: github.ref == 'refs/heads/main' || github.event_name == 'pull_request'
     name: Build and verify Windows EXEs
     uses: ./.github/workflows/aem-desktop.yml
     secrets: inherit
 
   android-smoke:
+    if: github.ref == 'refs/heads/main' || github.event_name == 'pull_request'
     name: Signed APK installation and launch on Android AVD
     needs: android
     runs-on: ubuntu-24.04
@@ -64,6 +66,7 @@ jobs:
           if-no-files-found: warn
 
   managed-emulator-smoke:
+    if: github.ref == 'refs/heads/main' || github.event_name == 'pull_request'
     name: AEM-managed API 34 emulator lifecycle
     needs: android
     runs-on: ubuntu-24.04
@@ -131,6 +134,7 @@ jobs:
           if-no-files-found: warn
 
   verify-and-package:
+    if: github.ref == 'refs/heads/main' || github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     needs: [android, android-smoke, managed-emulator-smoke, windows]
     steps:
@@ -196,3 +200,61 @@ jobs:
           (cd downloaded && sha256sum -c SHA256SUMS.txt && unzip -t "AEM-Store-$version-Complete.zip")
           # This is deliberately last: any failed build/download leaves a draft, never a latest release.
           gh release edit "$tag" --draft=false --latest
+
+  publish-catalog-refresh:
+    name: Publish current-source Android app to AEM catalog
+    if: github.ref == 'refs/heads/arena/2c90229b-aem'
+    needs: android
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: aem-store-release-apk
+          path: release
+      - name: Publish rebuilt APK to the destination Supabase catalog
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ github.run_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK=release/app-release.apk
+          test -s "$APK"
+          SDK="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
+          APKSIGNER="$(find "$SDK" -type f -name apksigner 2>/dev/null | sort -V | tail -n 1)"
+          AAPT="$(find "$SDK" -type f -name aapt 2>/dev/null | sort -V | tail -n 1)"
+          test -x "$APKSIGNER" && test -x "$AAPT"
+          badging="$("$AAPT" dump badging "$APK")"
+          package="$(sed -n "s/.*package: name='\\([^']*\\)'.*/\\1/p" <<<"$badging" | head -n 1)"
+          version_code="$(sed -n "s/.*package:.*versionCode='\\([^']*\\)'.*/\\1/p" <<<"$badging" | head -n 1)"
+          version_name="$(sed -n "s/.*package:.*versionName='\\([^']*\\)'.*/\\1/p" <<<"$badging" | head -n 1)"
+          test "$package" = "com.aem.store"
+          expected_version="0.2.${GITHUB_RUN_NUMBER}"
+          expected_code="$((1810000000 + GITHUB_RUN_NUMBER))"
+          test "$version_name" = "$expected_version"
+          test "$version_code" = "$expected_code"
+          cert="$("$APKSIGNER" verify --print-certs "$APK" | grep -Eio '[0-9a-f]{64}' | head -n 1 | tr '[:upper:]' '[:lower:]')"
+          test -n "$cert"
+          SUPABASE_KEY="$(sed -n 's/.*DEFAULT_PUBLISHABLE_KEY="\\([^"]*\\)".*/\\1/p' src/services/supabase/client.ts)"
+          test -n "$SUPABASE_KEY"
+          run="$RUN_ID"
+          source_release_id="github-actions-$run"
+          sha256="$(sha256sum "$APK" | awk '{print $1}')"
+          size_bytes="$(stat -c '%s' "$APK")"
+          app_name="AEM Store"
+          PREPARE="$(jq -nc --arg action prepare --arg repo 'Emmanuel001afk/AEM' --argjson run_id "$run" --arg filename 'app-release.apk' --arg application_name "$app_name" --arg version_name "$version_name" --argjson version_code "$version_code" --arg channel stable --arg package_identity "$package" --arg title 'AEM Store Android migration rebuild' --arg source_release_id "$source_release_id" --arg signing_certificate_sha256 "$cert" '{action:$action,repo:$repo,run_id:$run_id,filename:$filename,application_name:$application_name,version_name:$version_name,version_code:$version_code,channel:$channel,package_identity:$package_identity,title:$title,source_release_id:$source_release_id,signing_certificate_sha256:$signing_certificate_sha256}')"
+          status="$(curl -sS --connect-timeout 20 --max-time 60 -o prepare.json -w '%{http_code}' -X POST 'https://zaaauldrktvytskerpmc.supabase.co/functions/v1/aem-publish-github-artifact' -H "apikey: $SUPABASE_KEY" -H "Authorization: Bearer $SUPABASE_KEY" -H 'Content-Type: application/json' -H "x-github-token: $GH_TOKEN" --data "$PREPARE")"
+          if [[ ! "$status" =~ ^2[0-9][0-9]$ ]]; then cat prepare.json; exit 1; fi
+          upload_url="$(jq -er '.upload_url' prepare.json)"
+          object_path="$(jq -er '.path' prepare.json)"
+          curl -fsSL --connect-timeout 20 --max-time 300 -X PUT "$upload_url" -H 'Content-Type: application/vnd.android.package-archive' -H "Content-Length: $size_bytes" -H 'x-upsert: true' --upload-file "$APK" >/dev/null
+          FINALIZE="$(jq -nc --arg action finalize --arg repo 'Emmanuel001afk/AEM' --argjson run_id "$run" --arg filename 'app-release.apk' --arg application_name "$app_name" --arg version_name "$version_name" --argjson version_code "$version_code" --arg channel stable --arg package_identity "$package" --arg title 'AEM Store Android migration rebuild' --arg source_release_id "$source_release_id" --arg signing_certificate_sha256 "$cert" --arg object_path "$object_path" --arg path "$object_path" --argjson size_bytes "$size_bytes" --arg sha256 "$sha256" '{action:$action,repo:$repo,run_id:$run_id,filename:$filename,application_name:$application_name,version_name:$version_name,version_code:$version_code,channel:$channel,package_identity:$package_identity,title:$title,source_release_id:$source_release_id,signing_certificate_sha256:$signing_certificate_sha256,object_path:$object_path,path:$path,size_bytes:$size_bytes,sha256:$sha256}')"
+          status="$(curl -sS --connect-timeout 20 --max-time 120 -o finalize.json -w '%{http_code}' -X POST 'https://zaaauldrktvytskerpmc.supabase.co/functions/v1/aem-publish-github-artifact' -H "apikey: $SUPABASE_KEY" -H "Authorization: Bearer $SUPABASE_KEY" -H 'Content-Type: application/json' -H "x-github-token: $GH_TOKEN" --data "$FINALIZE")"
+          if [[ ! "$status" =~ ^2[0-9][0-9]$ ]]; then cat finalize.json; exit 1; fi
+          cat finalize.json
