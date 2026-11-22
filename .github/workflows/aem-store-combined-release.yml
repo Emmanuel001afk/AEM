@@ -241,7 +241,7 @@ jobs:
           test "$version_code" = "$expected_code"
           cert="$("$APKSIGNER" verify --print-certs "$APK" | grep -Eio '[0-9a-f]{64}' | head -n 1 | tr '[:upper:]' '[:lower:]')"
           test -n "$cert"
-          SUPABASE_KEY="$(sed -n 's/.*DEFAULT_PUBLISHABLE_KEY="\\([^"]*\\)".*/\\1/p' src/services/supabase/client.ts)"
+          SUPABASE_KEY="$(awk -F '"' '/DEFAULT_PUBLISHABLE_KEY=/ { print $2; exit }' src/services/supabase/client.ts)"
           test -n "$SUPABASE_KEY"
           run="$RUN_ID"
           source_release_id="github-actions-$run"
