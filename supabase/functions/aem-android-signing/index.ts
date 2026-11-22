@@ -1,4 +1,3 @@
-import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { createRemoteJWKSet, jwtVerify } from "npm:jose@6";
 
@@ -7,7 +6,7 @@ const cors = {
   "Access-Control-Allow-Headers": "authorization,apikey,content-type,x-aem-oidc,x-aem-worker-token",
   "Access-Control-Allow-Methods": "POST,OPTIONS",
 };
-const PROJECT_URL = "https://wfvvmyixqcwosmuldxoq.supabase.co";
+const PROJECT_URL = "https://zaaauldrktvytskerpmc.supabase.co";
 const OIDC_AUDIENCE = `${PROJECT_URL}/functions/v1/aem-android-signing`;
 const GITHUB_ISSUER = "https://token.actions.githubusercontent.com";
 const GITHUB_JWKS = createRemoteJWKSet(new URL("https://token.actions.githubusercontent.com/.well-known/jwks"));

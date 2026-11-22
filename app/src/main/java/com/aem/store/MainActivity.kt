@@ -66,8 +66,8 @@ private fun currentDownloads(context:Context):List<DownloadRow>{
     return out
 }
 
-private const val AEM_SUPABASE_URL="https://wfvvmyixqcwosmuldxoq.supabase.co"
-private const val AEM_SUPABASE_KEY="sb_publishable_Imgtr_W_Z868cBsNEcWpeg_89FE2Mvb"
+private const val AEM_SUPABASE_URL="https://zaaauldrktvytskerpmc.supabase.co"
+private const val AEM_SUPABASE_KEY="sb_publishable_qpMgky-A6dJCU00F-dE4WA_SS_JQBQv"
 
 private suspend fun loadRemoteApps():List<StoreApp> = withContext(Dispatchers.IO) {
     val url=URL(AEM_SUPABASE_URL+"/rest/v1/applications?select=*,releases(*,artifacts(*))&order=name.asc")

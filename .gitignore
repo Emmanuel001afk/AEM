@@ -17,3 +17,12 @@ Thumbs.db
 # Local validation tooling and transient logs
 .cache/
 *.log
+
+# Local AEM signing material; temporary hidden kit and raw key files stay ignored.
+.aem-signing-kit/
+*.jks
+*.keystore
+*.p12
+*.pfx
+/AEM-Signing-Secrets.txt
+/AEM-Signing-Kit.zip
