@@ -23,11 +23,25 @@ const releaseChannel = (text: string): "stable" | "beta" | "development" => {
   return "stable";
 };
 const safeName = (name: string) => name.replace(/[^A-Za-z0-9._-]/g, "_");
+const MAX_WORKFLOW_ARTIFACTS_PER_REPO = 100;
+const MAX_WORKFLOW_ARCHIVE_BYTES_PER_REPO = 200 * 1024 * 1024;
+const MAX_DISCOVERED_BINARY_BYTES_PER_REPO = 150 * 1024 * 1024;
 const gh = async (url: string, headers: HeadersInit) => {
   const response = await fetch(url, { headers });
   if (!response.ok) throw new Error(`GitHub API HTTP ${response.status}`);
   return response.json();
 };
+function previousFailures(value: unknown): {count:number;details:string[]} {
+  if (!value) return {count:0,details:[]};
+  try {
+    const parsed = JSON.parse(String(value));
+    if (Array.isArray(parsed)) return {count:parsed.length,details:parsed.map(String)};
+    if (parsed && Array.isArray(parsed.details)) return {count:Number(parsed.count)||parsed.details.length,details:parsed.details.map(String)};
+  } catch {
+    // Preserve a pre-upgrade plain-text error as a single scan failure.
+  }
+  return {count:1,details:[String(value)]};
+}
 
 async function unzipEntry(buf:Uint8Array,wanted:string){
  const dv=new DataView(buf.buffer,buf.byteOffset,buf.byteLength);
@@ -125,7 +139,7 @@ async function archiveBinaries(data: Uint8Array) {
 }
 
 async function sha256(bytes: Uint8Array) {
-  const digest = await crypto.subtle.digest("SHA-256", bytes);
+  const digest = await crypto.subtle.digest("SHA-256", bytes.slice().buffer as ArrayBuffer);
   return Array.from(new Uint8Array(digest)).map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
@@ -179,28 +193,34 @@ Deno.serve(async (request) => {
     const user = await gh(`${GH}/user`, headers);
     if (user.login !== "Emmanuel001afk") return json({ error: "GitHub token is not for Emmanuel001afk." }, 403);
 
-    const state = (await sb.from("source_sync_state").select("status,last_started_at,last_success_at,repositories_scanned,applications_discovered,releases_discovered,artifacts_discovered").eq("provider", "github").maybeSingle()).data;
+    const state = (await sb.from("source_sync_state").select("status,last_started_at,last_success_at,repositories_scanned,applications_discovered,releases_discovered,artifacts_discovered,last_error").eq("provider", "github").maybeSingle()).data;
+    const continuing = state?.status === "running";
     const now = Date.now(), lastSuccess = state?.last_success_at ? Date.parse(state.last_success_at) : 0;
     const lastStart = state?.last_started_at ? Date.parse(state.last_started_at) : 0;
-    if (state?.status === "running" && now - lastStart < 300000) return json({ ok: true, throttled: true });
-    if (lastSuccess && now - lastSuccess < 30000) return json({ ok: true, throttled: true, last_success_at: state.last_success_at });
-    await sb.from("source_sync_state").upsert({ provider: "github", status: "running", last_started_at: started.toISOString(), last_error: null, updated_at: started.toISOString() }, { onConflict: "provider" });
+    // The cron runs every five minutes; leave margin for clock and HTTP scheduling jitter so
+    // a scan advances on each tick instead of being throttled every other time.
+    if (continuing && now - lastStart < 240000) return json({ ok: true, throttled: true });
+    if (!continuing && lastSuccess && now - lastSuccess < 30000) return json({ ok: true, throttled: true, last_success_at: state?.last_success_at });
+    await sb.from("source_sync_state").upsert({ provider: "github", status: "running", last_started_at: started.toISOString(), last_error: continuing ? state.last_error : null, updated_at: started.toISOString() }, { onConflict: "provider" });
 
     const repositories: any[] = [];
     for (let page = 1; ; page++) {
-      const batch = await gh(`${GH}/user/repos?visibility=all&affiliation=owner,collaborator,organization_member&per_page=100&page=${page}`, headers);
+      // Scan newest repositories first, so a newly created app is not stuck behind older repos.
+      const batch = await gh(`${GH}/user/repos?visibility=all&affiliation=owner,collaborator,organization_member&sort=created&direction=desc&per_page=100&page=${page}`, headers);
       repositories.push(...batch);
       if (batch.length < 100) break;
     }
     const startIndex = state?.status === "running" ? Math.min(Number(state.repositories_scanned || 0), repositories.length) : 0;
     const batchRepositories = repositories.slice(startIndex, startIndex + 1);
     const totals = {
-      applications: state?.status === "running" ? Number(state.applications_discovered || 0) : 0,
-      releases: state?.status === "running" ? Number(state.releases_discovered || 0) : 0,
-      artifacts: state?.status === "running" ? Number(state.artifacts_discovered || 0) : 0,
+      applications: continuing ? Number(state.applications_discovered || 0) : 0,
+      releases: continuing ? Number(state.releases_discovered || 0) : 0,
+      artifacts: continuing ? Number(state.artifacts_discovered || 0) : 0,
       failures: 0,
     };
-    const failureDetails: string[] = [];
+    const priorFailures = continuing ? previousFailures(state.last_error) : {count:0,details:[] as string[]};
+    const failureDetails = priorFailures.details;
+    totals.failures = priorFailures.count;
     for (let repoOffset = 0; repoOffset < batchRepositories.length; repoOffset++) {
       const repo = batchRepositories[repoOffset];
       try {
@@ -216,25 +236,49 @@ Deno.serve(async (request) => {
           .filter((r: any) => !r.draft && (r.assets || []).some((a: any) => artifactKind(a.name)))
           .sort((a: any, b: any) => Date.parse(b.published_at || b.created_at || 0) - Date.parse(a.published_at || a.created_at || 0)
           ).slice(0, 2) : [];
-        const runs = await gh(`${GH}/repos/${repo.full_name}/actions/runs?status=success&per_page=1`, headers).catch(() => ({ workflow_runs: [] }));
+        const runs = await gh(`${GH}/repos/${repo.full_name}/actions/runs?status=success&per_page=10`, headers).catch(() => ({ workflow_runs: [] }));
         const actionRuns = runs.workflow_runs || [];
         const platforms = new Set<string>(sourceFiles.map((f: any) => platform(artifactKind(String(f.path)) || "")));
         for (const release of releases) for (const asset of release.assets || []) {
           const kind = artifactKind(String(asset.name)); if (kind) platforms.add(platform(kind));
         }
-        let hasWorkflowCandidates = false;
+        const appResult = await sb.from("applications").select("id,project,name,package_identity,platforms,description_source,icon_source")
+          .eq("provider", "github").eq("project", repo.full_name).maybeSingle();
+        if (appResult.error) throw appResult.error;
+        let app = appResult.data;
+        const actionCandidates: Array<{run:any;item:any;binaries:any[]}> = [];
+        let inspectedActionArtifacts = 0, downloadedArchiveBytes = 0, discoveredBinaryBytes = 0;
         for (const run of actionRuns) {
-          const items = await gh(`${GH}/repos/${repo.full_name}/actions/runs/${run.id}/artifacts?per_page=20&direction=desc`, headers).catch(() => ({ artifacts: [] }));
+          if (inspectedActionArtifacts >= MAX_WORKFLOW_ARTIFACTS_PER_REPO || downloadedArchiveBytes >= MAX_WORKFLOW_ARCHIVE_BYTES_PER_REPO || discoveredBinaryBytes >= MAX_DISCOVERED_BINARY_BYTES_PER_REPO) break;
+          const items = await gh(`${GH}/repos/${repo.full_name}/actions/runs/${run.id}/artifacts?per_page=100&direction=desc`, headers).catch(() => ({ artifacts: [] }));
           for (const item of items.artifacts || []) {
-            if (item.expired || !/(apk|android|build|release|windows|exe)/i.test(String(item.name))) continue;
-            hasWorkflowCandidates = true;
-            platforms.add(/windows|exe/i.test(String(item.name)) ? "windows" : "android");
+            if (inspectedActionArtifacts >= MAX_WORKFLOW_ARTIFACTS_PER_REPO || downloadedArchiveBytes >= MAX_WORKFLOW_ARCHIVE_BYTES_PER_REPO || discoveredBinaryBytes >= MAX_DISCOVERED_BINARY_BYTES_PER_REPO) break;
+            // Artifact names are user-defined and often do not mention APK/Android. Inspect the
+            // archive contents instead, so a generic artifact name cannot hide a valid APK.
+            const archiveSize = Number(item.size_in_bytes || 0);
+            if (item.expired || archiveSize <= 0 || archiveSize > 80 * 1024 * 1024 || downloadedArchiveBytes + archiveSize > MAX_WORKFLOW_ARCHIVE_BYTES_PER_REPO) continue;
+            const releaseId = `github-actions-artifact-${item.id}`;
+            const existing = app && await sb.from("releases").select("id").eq("application_id", app.id).eq("source_release_id", releaseId).maybeSingle();
+            if (existing?.error) throw existing.error;
+            if (existing?.data) continue;
+            inspectedActionArtifacts++;
+            const response = await fetch(item.archive_download_url, { headers });
+            if (!response.ok || Number(response.headers.get("content-length") || 0) > 100 * 1024 * 1024) continue;
+            const archive = new Uint8Array(await response.arrayBuffer());
+            downloadedArchiveBytes += archive.byteLength;
+            const binaries = await archiveBinaries(archive);
+            const supported:any[] = [];
+            for (const binary of binaries) {
+              const kind = artifactKind(binary.name);
+              if (!kind || binary.bytes.byteLength > 50 * 1024 * 1024 || discoveredBinaryBytes + binary.bytes.byteLength > MAX_DISCOVERED_BINARY_BYTES_PER_REPO) continue;
+              supported.push(binary);
+              discoveredBinaryBytes += binary.bytes.byteLength;
+              platforms.add(platform(kind));
+            }
+            if (supported.length) actionCandidates.push({run,item,binaries:supported});
           }
         }
-        if (!platforms.size && !hasWorkflowCandidates) continue;
-
-        let app = (await sb.from("applications").select("id,project,name,package_identity,platforms,description_source,icon_source")
-          .eq("provider", "github").eq("project", repo.full_name).maybeSingle()).data;
+        if (!platforms.size) continue;
         const patch: any = {
           provider: "github", project: repo.full_name, source_external_id: String(repo.id),
           source_visibility: repo.private ? "private" : "public",
@@ -246,12 +290,13 @@ Deno.serve(async (request) => {
         if (app?.description_source === "manual") { delete patch.description; delete patch.description_source; }
         if (app?.icon_source === "manual") { delete patch.icon_url; delete patch.icon_source; }
         if (!app) {
-          const inserted = await sb.from("applications").insert(patch).select("id,project,package_identity,platforms").single();
+          const inserted = await sb.from("applications").insert(patch).select("id,project,name,package_identity,platforms,description_source,icon_source").single();
           if (inserted.error) throw inserted.error; app = inserted.data; totals.applications++;
         } else {
-          const updated = await sb.from("applications").update(patch).eq("id", app.id).select("id,project,package_identity,platforms").single();
+          const updated = await sb.from("applications").update(patch).eq("id", app.id).select("id,project,name,package_identity,platforms,description_source,icon_source").single();
           if (updated.error) throw updated.error; app = updated.data;
         }
+        if (!app) throw new Error(`Could not register ${repo.full_name} in the AEM catalog.`);
 
         const save = async (release: any, filename: string, bytes: Uint8Array, kind: string, path: string, metadata: any = {}) => {
           const upload = await sb.storage.from("aem-artifacts").upload(path, bytes, {
@@ -341,21 +386,15 @@ Deno.serve(async (request) => {
           await save(created, path.split("/").pop() || `application.${kind}`, bytes, kind,
             `${repo.full_name}/source/${file.sha}/${safeName(path.split("/").pop() || "application")}`, metadata);
         }
-        for (const run of actionRuns) {
-          const items = await gh(`${GH}/repos/${repo.full_name}/actions/runs/${run.id}/artifacts?per_page=20&direction=desc`, headers).catch(() => ({ artifacts: [] }));
-          for (const item of (items.artifacts || []).filter((x: any) => !x.expired && /(apk|android|build|release|windows|exe)/i.test(String(x.name))).slice(0, 1)) {
-            const id = `github-actions-artifact-${item.id}`;
-            const exists = await sb.from("releases").select("id").eq("application_id", app.id).eq("source_release_id", id).maybeSingle();
-            if (exists.data) continue;
-            const response = await fetch(item.archive_download_url, { headers });
-            if (!response.ok || Number(item.size_in_bytes || 0) > 80 * 1024 * 1024 || Number(response.headers.get("content-length") || 0) > 100 * 1024 * 1024) continue;
-            const binaries = await archiveBinaries(new Uint8Array(await response.arrayBuffer()));
-            if (!binaries.length) continue;
-            const row = await ensureRelease(id, `workflow-${run.run_number || run.id}`, String(item.name), String(item.name), run.updated_at || run.created_at);
-            for (const binary of binaries) {
-              const kind = artifactKind(binary.name); if (kind && binary.bytes.byteLength <= 50 * 1024 * 1024) await save(row, binary.name, binary.bytes, kind,
-                `${repo.full_name}/actions/${item.id}/${safeName(binary.name)}`, binary);
-            }
+        for (const {run,item,binaries} of actionCandidates) {
+          const id = `github-actions-artifact-${item.id}`;
+          const runLabel = run.run_number || item.workflow_run?.run_number || item.id;
+          const createdAt = item.created_at || run.updated_at || run.created_at;
+          const row = await ensureRelease(id, `workflow-${runLabel}`, String(item.name || "GitHub Actions artifact"), String(item.name || "GitHub Actions artifact"), createdAt);
+          for (const binary of binaries) {
+            const kind = artifactKind(binary.name);
+            if (kind) await save(row, binary.name, binary.bytes, kind,
+              `${repo.full_name}/actions/${item.id}/${safeName(binary.name)}`, binary);
           }
         }
         await retainCurrentAndPreviousApks(sb, Number(app.id));
@@ -370,7 +409,9 @@ Deno.serve(async (request) => {
         await sb.from("source_sync_state").update({
           status: "running", repositories_scanned: progress,
           applications_discovered: totals.applications, releases_discovered: totals.releases,
-          artifacts_discovered: totals.artifacts, updated_at: new Date().toISOString(),
+          artifacts_discovered: totals.artifacts,
+          last_error: totals.failures ? JSON.stringify({count:totals.failures,details:failureDetails.slice(-7)}).slice(0, 4000) : null,
+          updated_at: new Date().toISOString(),
         }).eq("provider", "github");
       }
     }
@@ -381,7 +422,7 @@ Deno.serve(async (request) => {
     const error = failureDetails.length ? failureDetails.join("; ").slice(0, 4000) : null;
     const stateWrite = await sb.from("source_sync_state").upsert({
       provider: "github", status, last_started_at: complete ? started.toISOString() : finished,
-      last_success_at: complete ? finished : state?.last_success_at || null,
+      last_success_at: status === "success" ? finished : state?.last_success_at || null,
       last_error: error, repositories_scanned: complete ? repositories.length : nextIndex,
       applications_discovered: totals.applications, releases_discovered: totals.releases,
       artifacts_discovered: totals.artifacts, updated_at: finished,
