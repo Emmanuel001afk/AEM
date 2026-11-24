@@ -271,12 +271,13 @@ Deno.serve(async (request) => {
             const kind = artifactKind(String(asset.name)); return kind !== null && kind !== "exe";
           })
           .map((asset: any) => Date.parse(asset.updated_at || release.published_at || release.created_at || "") || 0)));
-        // Only inspect workflow outputs newer than the latest published APK, and only from the
-        // repository's default branch. This avoids re-ingesting build archives already released
-        // and prevents unrelated PR/debug artifacts from exhausting a sync invocation.
+        // Compare workflow completion time (updated_at), not start time (created_at): a build
+        // commonly starts before its release asset is uploaded, so created_at would discard the
+        // very run that produced that asset. Keep default-branch-only ingestion to avoid unrelated
+        // PR/debug artifacts from exhausting a sync invocation.
         const actionRuns = (runs.workflow_runs || []).filter((run: any) =>
           run.head_branch === (repo.default_branch || "main") &&
-          (Date.parse(run.created_at || "") || 0) > latestReleasedApk
+          (Date.parse(run.updated_at || run.created_at || "") || 0) > latestReleasedApk
         ).slice(0, 5);
         const platforms = new Set<string>(sourceFiles.map((f: any) => platform(artifactKind(String(f.path)) || "")));
         for (const release of releases) for (const asset of release.assets || []) {
