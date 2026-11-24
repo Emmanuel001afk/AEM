@@ -29,23 +29,79 @@ action (retry, open settings, open downloads) instead of a dead status line.
 
 ## Send flow
 
-1. Pick items. Apps are exported from the installed APK/split set into a cached
-   `.apks` bundle. Files, media and folders are read through the Storage Access
-   Framework. Folders keep their relative structure.
+1. Pick items. The app picker lists user-installed apps (plus updated system
+   apps), loads icons in the background, and pages results to keep memory use down on Android Go/low-RAM
+   phones. Media thumbnails use a two-worker queue and a heap-sized cache that
+   trims under memory pressure. A single-APK app is selected from its installed APK directly (no
+   staging copy); split apps are wrapped in a cached `.apks` bundle using ZIP's
+   no-compression mode, because APKs are already ZIP files. Files, media and
+   folders are read through the Storage Access Framework. Folders keep their
+   relative structure.
 2. **Send** requests the Nearby devices permission (Android 13+) or fine
    location (Android 12 and below), checks Wi-Fi and (below Android 13) Location
    mode, then starts discovery.
-3. The sender advertises nothing; it discovers `_aemtransfer._tcp` DNS-SD
-   records. Only records with `role=receiver` and a session token are listed, so
-   unrelated Wi-Fi Direct peers never appear as fake receivers.
-4. Selecting a receiver sets `groupOwnerIntent = 0`, connects, and opens the
-   receiver's TCP server on port **38177**.
+3. The sender advertises nothing; it searches for `_aemtransfer._tcp` DNS-SD
+   records. Only records with `role=receiver` and a session token are valid Send
+   targets. If Android reports a generic Wi-Fi Direct peer first, it remains a
+   non-actionable “Waiting” row until AEM receives that authenticated record.
+   The sender keeps service discovery separate from peer scans because the
+   current AEM handshake cannot securely send without the receiver token.
+4. Selecting a receiver pauses discovery before setting `groupOwnerIntent = 0`
+   and connecting, so periodic scans do not race Wi-Fi Direct group negotiation.
+   It then opens the receiver's TCP server on port **38177**.
 5. The receiver shows an **Incoming transfer** dialog with the sender name, item
    count and size. Decline is reported to the sender as a first-class result and
    is never retried.
 
 The connection stays open after a transfer so more items can be sent without
 reconnecting. **Disconnect** closes the group.
+
+## Timing boundaries and diagnostics
+
+A selected app is prepared before the Wi-Fi transfer starts. Single-APK apps use
+the installed APK directly; split apps are wrapped once in a cached `.apks`
+archive. `installed_apps_ready` measures the picker scan; `app_prepare_*`
+events measure the selected app's queueing and preparation, not discovery or
+sending. Wi-Fi Direct discovery has `sender_service_request_*`,
+`sender_service_discovery_*`, and `sender_receiver_record` events; group setup
+has `sender_p2p_*` events. `sender_receiver_decision.wait_ms` includes the time
+the receiver's person takes to accept the request, so it is not payload time.
+
+`sender_payload_complete` measures the sender reading and hashing its source
+while writing bytes to the socket. After that, the sender waits for
+`sender_final_ack`: the receiver still verifies and saves the bytes before
+acknowledging. The UI labels this **Verifying received files**. Receiver-side
+`receiver_group_ready` / `receiver_service_advertised` / `receiver_server_listening`
+events confirm setup; `receiver_socket_accepted`,
+`receiver_handshake_validated` and `receiver_connection_failed` show how far a
+sender got. `receiver_file_saved` and `receiver_transfer_verified` report
+receive/save work. Its streaming SHA-256 check avoids a second full-file disk
+read after a normal transfer. This receiver finalization is part of transfer completion;
+Android's package extraction and installation happen only later, after the user
+taps Install, and are separately reported as `receiver_install_*` events.
+
+For a repro with USB debugging enabled, capture the filtered log immediately
+after the delay or force-close:
+
+```sh
+adb logcat -d -v time -s AEM_TRANSFER_TIMING:I AEM_TRANSFER:W AndroidRuntime:E ActivityTaskManager:E
+```
+
+`AEM_TRANSFER_TIMING` contains duration/size/stage data and does not include
+app labels, package names or session tokens. Include the `FATAL EXCEPTION` /
+`AndroidRuntime` lines around a force-close; those contain the exception and
+stack needed to confirm a crash root cause.
+
+For a directional-send failure, capture this log on **both** phones. On the
+Tecno sender, no `sender_dns_service_seen` after successful service-discovery
+requests points to discovery/advertisement; a service event without
+`sender_receiver_record` points to TXT parsing/metadata (and
+`sender_receiver_record_invalid` specifically means the token was absent). A receiver record
+without `sender_p2p_link_ready` or with `sender_p2p_link_failed` points to group
+negotiation; a ready P2P link without `sender_socket_connected` points to the
+TCP route/server; a connected socket followed by `receiver_connection_failed`
+points to the receiver-side protocol/transfer stage. A generic “Waiting” peer
+has no receiver token and is intentionally not a valid Send target.
 
 ## Receive flow
 
@@ -140,7 +196,7 @@ declares `NEARBY_WIFI_DEVICES` with `neverForLocation`.
 
 - Received files: `getExternalFilesDir(DIRECTORY_DOWNLOADS)/AEM Transfer`
 - Resume state: `.../AEM Transfer/.resume` (cleaned after 7 days)
-- App exports: `cache/aem-apps` (fingerprint-cached)
+- Split-app exports: `cache/aem-apps` (fingerprint-cached `.apks` bundles; single APKs stream from their installed package path without a duplicate cache copy)
 - Picked files without a provider size: `cache/aem-picked`
 - Install staging: `cache/aem-install-*` (deleted after the session is opened)
 - History and the device name: `SharedPreferences` (`aem_transfer`)
@@ -197,11 +253,13 @@ Current branch: Devices provides explicit Android-authorized ADB discovery, veri
 | Symptom | Likely cause |
 | --- | --- |
 | "Wi-Fi Direct is busy" | Another app owns a P2P group. Toggle Wi-Fi and retry. |
-| Receiver missing from the list | The other phone hasn't tapped **Start receiving**, Location is off on Tecno (pre-13), or XOS delay — wait 10 s and Scan again; legacy fallback shows as "Wi-Fi Direct device" — tap to try. |
-| Tecno Spark 3 sees nothing next to Infinix | On Tecno: Location ON + Location permission granted; on Infinix: Nearby permission granted; one phone Receive listening, other Send scanning; <1 m apart. |
-| Infinix sees Tecno but not vice versa | Wrong direction — only receiver advertises. Put the *other* phone in Receive. |
-| Connection fails immediately | Phones too far, group owner flipped (`groupOwnerIntent=0` mismatch), or XOS power saver — scan again. |
+| Receiver missing from the list | Confirm the intended receiving phone shows **Receive → Listening**, keep Location on and permission granted on pre-Android 13 phones, wait 10 seconds, then rescan. A generic “Waiting” peer means Android has not delivered the AEM receiver record/token yet; it cannot be used to send. |
+| Tecno Spark 3 sees nothing next to Infinix | On Tecno: Location ON + Location permission granted (Android 8–12); on Infinix: Nearby permission granted (Android 13+); one phone Receive listening, other Send scanning; <1 m apart. |
+| One direction works, the other does not | The phone that should receive must be on **Receive → Listening**. Only the receiver advertises. If the modes are correct, capture timing logs from both devices and identify the last sender stage reached. |
+| Connection fails immediately | Check `sender_p2p_link_*` versus `sender_socket_connected` in the Tecno log to separate group negotiation from the TCP route; keep the phones close, and retry after disabling battery saver. |
 | "Different AEM version" | Both phones must run a build with protocol 6. |
 | Install button opens Settings | Android's "install unknown apps" permission has not been granted for AEM. |
 | Transfer stops when leaving | Both devices must keep the transfer screen alive; receive sessions survive in the background via the foreground service. |
+| Progress reaches 100% but completion pauses | The sender is waiting for the receiver to verify/save the received bytes and return its final acknowledgement; this is not APK installation. See `sender_final_ack` in the timing logs. |
+| AEM closes on Tecno Spark 3 | Capture `AndroidRuntime`/`FATAL EXCEPTION` logs with the diagnostic command above. The app now bounds thumbnail workers/cache on low-memory devices, but a device-specific crash is not confirmed without its stack trace. |
 | Progress not in Downloads | Active receives now show at top of Downloads; banner also shows % + speed. Partial `.part` kept for resume. |

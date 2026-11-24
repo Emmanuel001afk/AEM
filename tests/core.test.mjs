@@ -53,6 +53,29 @@ test('Windows variants remain discoverable without changing Android version orde
  assert.equal(selectLatestWindowsRelease([{...release('9.0.0',1),artifacts:[{...artifact,sha256:''}]}]),undefined);
 });
 
+test('Store resolves the laptop and Android host format independently of desktop capabilities',async()=>{
+ const {detectHostPlatform,androidArtifact,windowsArtifacts,platformSummary,primaryReleaseInfo,appCardVersion}=await domain('platform.ts');
+ assert.equal(detectHostPlatform({desktopPlatform:'win32',nativePlatform:'web'}),'windows');
+ assert.equal(detectHostPlatform({nativePlatform:'android',navigatorPlatform:'Win32'}),'android');
+ assert.equal(detectHostPlatform({nativePlatform:'web',navigatorPlatform:'Linux armv8l',userAgent:'Mozilla/5.0 (Linux; Android 14)'}),'android');
+ assert.equal(detectHostPlatform({nativePlatform:'web',navigatorPlatform:'Win32'}),'windows');
+ assert.equal(detectHostPlatform({nativePlatform:'web',navigatorPlatform:'MacIntel'}),'other');
+ const apk={platform:'android',kind:'apk',signingStatus:'ready',packageIdentity:'org.example.android',versionCode:12,filename:'example.apk'};
+ const exe={platform:'windows',kind:'exe',packageIdentity:'org.example.windows',sha256:'a'.repeat(64),downloadUrl:'https://example.org/example.exe',filename:'example.exe'};
+ const app={platforms:['android'],packageIdentity:'org.example.android',latest:{version:{name:'1.2.0',code:12},artifacts:[apk]},windowsLatest:{version:{name:'3.4.5'},artifacts:[exe]}};
+ assert.equal(androidArtifact(app.latest,app.packageIdentity),apk);
+ assert.deepEqual(windowsArtifacts(app.windowsLatest),[exe]);
+ assert.equal(platformSummary(app,'android'),'Android APK · Windows EXE');
+ assert.equal(platformSummary(app,'windows'),'Windows EXE · Android APK');
+ assert.equal(appCardVersion(app,'android'),'Android APK · Version 1.2.0');
+ assert.equal(appCardVersion(app,'windows'),'Windows EXE · Version 3.4.5');
+ assert.equal(primaryReleaseInfo(app,'android').platform,'android');
+ assert.equal(primaryReleaseInfo(app,'windows').platform,'windows');
+ const unverified={...app,windowsLatest:{version:{name:'9.9.9'},artifacts:[{...exe,sha256:''}]}};
+ assert.equal(platformSummary(unverified,'windows'),'Android APK');
+ assert.match(appCardVersion(unverified,'windows'),/no Windows EXE available/);
+});
+
 test('Windows application and APK-association icons are real multi-resolution ICO files',()=>{
  for(const name of ['icon.ico','apk.ico']){
   const b=fs.readFileSync(new URL('../resources/icons/'+name,import.meta.url));

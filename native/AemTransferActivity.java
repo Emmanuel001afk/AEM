@@ -42,6 +42,7 @@ import android.os.Bundle;
 import android.os.Environment;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.SystemClock;
 import android.provider.DocumentsContract;
 import android.provider.MediaStore;
 import android.provider.OpenableColumns;
@@ -109,7 +110,6 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
-import java.util.zip.ZipOutputStream;
 
 /**
  * AEM Transfer: direct phone-to-phone transfer over Wi-Fi Direct.
@@ -137,6 +137,7 @@ public class AemTransferActivity extends Activity {
     private static final String HISTORY_KEY = "items";
     private static final String TRANSFER_FOLDER = "AEM Transfer";
     private static final String ACTION_INSTALL_STATUS = "com.aem.store.AEM_TRANSFER_INSTALL";
+    private static final String TIMING_TAG = "AEM_TRANSFER_TIMING";
 
     private static final long MAX_ITEM_BYTES = 50L * 1024L * 1024L * 1024L;
     private static final long MAX_TOTAL_BYTES = 200L * 1024L * 1024L * 1024L;
@@ -183,8 +184,13 @@ public class AemTransferActivity extends Activity {
 
     private final ArrayList<AppEntry> installedApps = new ArrayList<>();
     private long installedAppsAt = 0L;
+    private boolean installedAppsLoading = false;
+    private static final int INITIAL_APP_ROWS = 36;
+    private static final int APP_ROW_PAGE_SIZE = 36;
+    private int appDisplayLimit = INITIAL_APP_ROWS;
     private String appQuery = "";
     private EditText appSearch;
+    private TextView appCount;
     private LinearLayout appRows;
 
     private String pendingPermissionAction = null;   // send | receive
@@ -196,6 +202,12 @@ public class AemTransferActivity extends Activity {
     private Runnable peerRefreshRunnable;
     private Runnable discoveryLoop;
     private WifiP2pManager.PeerListListener peerListListener;
+    private long discoveryStartedAt = 0L;
+    private boolean firstPeerTimingLogged = false;
+    private boolean firstDnsServiceTimingLogged = false;
+    private boolean firstReceiverRecordInvalidLogged = false;
+    private boolean firstReceiverTimingLogged = false;
+    private long p2pConnectStartedAt = 0L;
     private static final long DISCOVERY_INTERVAL_MS = 2800L;
     private final ArrayList<ActiveReceive> activeReceives = new ArrayList<>();
 
@@ -208,11 +220,21 @@ public class AemTransferActivity extends Activity {
         boolean completed;
     }
 
-    private final LruCache<String, Bitmap> thumbnails = new LruCache<String, Bitmap>(32 * 1024 * 1024) {
+    // Bound decoded media thumbnails to a small fraction of the Java heap on low-RAM phones.
+    private final LruCache<String, Bitmap> thumbnails = new LruCache<String, Bitmap>(
+            (int) Math.max(1024L * 1024L, Math.min(8L * 1024L * 1024L, Runtime.getRuntime().maxMemory() / 16L))) {
         @Override protected int sizeOf(String key, Bitmap value) { return value.getByteCount(); }
     };
+    private final LruCache<String, Drawable> appIcons = new LruCache<String, Drawable>(24);
 
-    private final ExecutorService io = Executors.newCachedThreadPool();
+    // Keep metadata/file tasks bounded; media listing can enqueue many thumbnail requests.
+    private final ExecutorService io = Executors.newFixedThreadPool(2);
+    private final ExecutorService thumbnailIo = Executors.newFixedThreadPool(2);
+    // The accept loop, an incoming request and a sender must be able to progress concurrently.
+    private final ExecutorService transferIo = Executors.newFixedThreadPool(4);
+    // Package exports and icon decoding are serialized to keep transient memory and CPU use low on Android Go phones.
+    private final ExecutorService appExportIo = Executors.newSingleThreadExecutor();
+    private final ExecutorService appIconIo = Executors.newSingleThreadExecutor();
     private final Handler ui = new Handler(Looper.getMainLooper());
     private final Set<Socket> openSockets = Collections.synchronizedSet(new HashSet<Socket>());
     private final AtomicBoolean incomingBusy = new AtomicBoolean(false);
@@ -298,13 +320,13 @@ public class AemTransferActivity extends Activity {
     private static final class AppEntry {
         final String packageName;
         final String label;
-        final Drawable icon;
+        boolean iconLoading;
+        final ArrayList<ImageView> iconTargets = new ArrayList<>();
         final boolean system;
 
-        AppEntry(String packageName, String label, Drawable icon, boolean system) {
+        AppEntry(String packageName, String label, boolean system) {
             this.packageName = packageName;
             this.label = label;
-            this.icon = icon;
             this.system = system;
         }
     }
@@ -362,18 +384,31 @@ public class AemTransferActivity extends Activity {
         }
     }
 
+    private static long elapsedMillisSince(long startedAt) {
+        return Math.max(0L, SystemClock.elapsedRealtime() - startedAt);
+    }
+
+    private static void logTiming(String event, String fields) {
+        android.util.Log.i(TIMING_TAG, "event=" + event + (fields == null || fields.isEmpty() ? "" : " " + fields));
+    }
+
     // ------------------------------------------------------------------ lifecycle
 
     @Override public void onCreate(Bundle state) {
+        final long startupAt = SystemClock.elapsedRealtime();
         super.onCreate(state);
+        logTiming("activity_create", "sdk=" + Build.VERSION.SDK_INT);
         prefs = getSharedPreferences(PREFS, MODE_PRIVATE);
         initTheme(getIntent());
         configureWindow();
         buildUi();
+        logTiming("activity_stage", "stage=ui_built elapsed_ms=" + elapsedMillisSince(startupAt));
         initP2p();
+        logTiming("activity_stage", "stage=p2p_initialized elapsed_ms=" + elapsedMillisSince(startupAt));
         registerInstallReceiver();
         pruneResumeFiles();
         render();
+        logTiming("activity_ready", "elapsed_ms=" + elapsedMillisSince(startupAt));
     }
 
     @Override protected void onNewIntent(Intent intent) {
@@ -440,7 +475,24 @@ public class AemTransferActivity extends Activity {
         updateBottomBar();
     }
 
+    @Override public void onTrimMemory(int level) {
+        super.onTrimMemory(level);
+        if (level >= android.content.ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW) {
+            thumbnails.trimToSize(2 * 1024 * 1024);
+            appIcons.trimToSize(8);
+            logTiming("memory_trim", "level=" + level + " thumbnail_cache_bytes=" + thumbnails.size());
+        }
+    }
+
+    @Override public void onLowMemory() {
+        super.onLowMemory();
+        thumbnails.evictAll();
+        appIcons.evictAll();
+        logTiming("low_memory", "thumbnail_and_icon_caches_cleared=true");
+    }
+
     @Override protected void onDestroy() {
+        logTiming("activity_destroy", "changing_configuration=" + isChangingConfigurations() + " finishing=" + isFinishing());
         ui.removeCallbacksAndMessages(null);
         try { if (p2pReceiver != null) unregisterReceiver(p2pReceiver); } catch (Exception ignored) { }
         try { if (installReceiver != null) unregisterReceiver(installReceiver); } catch (Exception ignored) { }
@@ -449,6 +501,10 @@ public class AemTransferActivity extends Activity {
         if (!isChangingConfigurations()) {
             teardownLink();
             io.shutdownNow();
+            thumbnailIo.shutdownNow();
+            transferIo.shutdownNow();
+            appExportIo.shutdownNow();
+            appIconIo.shutdownNow();
         }
         getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         super.onDestroy();
@@ -860,6 +916,7 @@ public class AemTransferActivity extends Activity {
         updateHeader();
         updateTabs();
         appSearch = null;
+        appCount = null;
         appRows = null;
         content.removeAllViews();
         if ("Downloads".equals(section)) {
@@ -1064,6 +1121,16 @@ public class AemTransferActivity extends Activity {
                 }
             }, autoHideMs);
         }
+    }
+
+    private void postTransferStage(final String title, final String detail, final int percent, final boolean determinate) {
+        ui.post(new Runnable() {
+            @Override public void run() {
+                if (sendingNow.get() && !isFinishing() && !isDestroyed()) {
+                    showTransferBanner(title, detail, percent, determinate);
+                }
+            }
+        });
     }
 
     private void showTransferBanner(String title, String detail, int percent, boolean determinate) {
@@ -1295,8 +1362,8 @@ public class AemTransferActivity extends Activity {
         LinearLayout head = new LinearLayout(this);
         head.setGravity(Gravity.CENTER_VERTICAL);
         head.addView(eyebrow("Installed apps"), new LinearLayout.LayoutParams(0, WRAP, 1f));
-        TextView count = text(installedApps.isEmpty() ? "" : installedApps.size() + " apps", 10.5f, muted());
-        head.addView(count);
+        appCount = text(installedAppsAt == 0L ? "Loading…" : installedApps.size() + " apps", 10.5f, muted());
+        head.addView(appCount);
         holder.addView(head);
 
         appSearch = new EditText(this);
@@ -1323,6 +1390,7 @@ public class AemTransferActivity extends Activity {
             @Override public void beforeTextChanged(CharSequence text, int start, int count, int after) { }
             @Override public void onTextChanged(CharSequence text, int start, int before, int count) {
                 appQuery = text == null ? "" : text.toString();
+                appDisplayLimit = INITIAL_APP_ROWS;
                 if (appFilterRunnable != null) ui.removeCallbacks(appFilterRunnable);
                 appFilterRunnable = new Runnable() {
                     @Override public void run() { renderAppRows(); }
@@ -1337,44 +1405,57 @@ public class AemTransferActivity extends Activity {
         boolean stale = System.currentTimeMillis() - installedAppsAt > 60_000L;
         if (stale) loadInstalledApps();
         else {
-            count.setText(installedApps.size() + " apps");
+            appCount.setText(installedApps.size() + " apps");
             renderAppRows();
         }
     }
 
     private void loadInstalledApps() {
-        final long startedAt = System.currentTimeMillis();
+        if (installedAppsLoading) return;
+        installedAppsLoading = true;
+        final long loadingStartedAt = SystemClock.elapsedRealtime();
         io.execute(new Runnable() {
             @Override public void run() {
                 final ArrayList<AppEntry> found = new ArrayList<>();
                 try {
                     PackageManager pm = getPackageManager();
-                    List<ApplicationInfo> infos = pm.getInstalledApplications(PackageManager.GET_META_DATA);
+                    // Transfer only user-installed apps. Asking for metadata and decoding every
+                    // system icon up front is needlessly expensive on low-memory Android phones.
+                    List<ApplicationInfo> infos = pm.getInstalledApplications(0);
                     for (int index = 0; index < infos.size(); index++) {
                         ApplicationInfo info = infos.get(index);
-                        if (info == null || getPackageName().equals(info.packageName)) continue;
+                        if (info == null || info.packageName == null || getPackageName().equals(info.packageName)) continue;
+                        boolean system = (info.flags & ApplicationInfo.FLAG_SYSTEM) != 0
+                                && (info.flags & ApplicationInfo.FLAG_UPDATED_SYSTEM_APP) == 0;
+                        if (system) continue;
                         String label;
-                        try { label = String.valueOf(pm.getApplicationLabel(info)); }
-                        catch (Exception error) { label = info.packageName; }
-                        Drawable icon;
-                        try { icon = pm.getApplicationIcon(info); }
-                        catch (Exception error) { icon = null; }
-                        boolean system = (info.flags & (ApplicationInfo.FLAG_SYSTEM | ApplicationInfo.FLAG_UPDATED_SYSTEM_APP)) != 0;
-                        found.add(new AppEntry(info.packageName, label, icon, system));
-                        if (found.size() >= 600) break;
+                        try {
+                            CharSequence appLabel = pm.getApplicationLabel(info);
+                            label = appLabel == null ? info.packageName : appLabel.toString().trim();
+                            if (label.isEmpty()) label = info.packageName;
+                        } catch (Exception error) {
+                            label = info.packageName;
+                        }
+                        // Icons are decoded one-at-a-time only for rows currently shown.
+                        found.add(new AppEntry(info.packageName, label, false));
                     }
                     Collections.sort(found, new Comparator<AppEntry>() {
                         @Override public int compare(AppEntry left, AppEntry right) {
-                            if (left.system != right.system) return left.system ? 1 : -1;
                             return left.label.compareToIgnoreCase(right.label);
                         }
                     });
-                } catch (Exception ignored) { }
+                } catch (Exception error) {
+                    android.util.Log.e("AEM_TRANSFER", "Unable to enumerate installed apps", error);
+                }
+                logTiming("installed_apps_ready", "shareable_app_count=" + found.size()
+                        + " elapsed_ms=" + elapsedMillisSince(loadingStartedAt));
                 runOnUiThread(new Runnable() {
                     @Override public void run() {
+                        installedAppsLoading = false;
                         installedApps.clear();
                         installedApps.addAll(found);
-                        installedAppsAt = startedAt;
+                        installedAppsAt = System.currentTimeMillis();
+                        if (appCount != null) appCount.setText(installedApps.size() + " apps");
                         if (appRows != null && "Apps".equals(category) && "Transfer".equals(section) && !nearby && !receiveMode) {
                             renderAppRows();
                         }
@@ -1387,21 +1468,45 @@ public class AemTransferActivity extends Activity {
     private void renderAppRows() {
         if (appRows == null || !"Apps".equals(category) || !"Transfer".equals(section) || nearby || receiveMode) return;
         appRows.removeAllViews();
+        if (installedAppsLoading && installedAppsAt == 0L) {
+            appRows.addView(body("Reading installed apps…"));
+            return;
+        }
+
         String query = appQuery == null ? "" : appQuery.trim().toLowerCase(Locale.US);
-        int shown = 0;
+        ArrayList<AppEntry> matches = new ArrayList<>();
         for (int index = 0; index < installedApps.size(); index++) {
-            final AppEntry entry = installedApps.get(index);
-            if (!query.isEmpty()
-                    && !entry.label.toLowerCase(Locale.US).contains(query)
-                    && !entry.packageName.toLowerCase(Locale.US).contains(query)) continue;
-            appRows.addView(appRow(entry), new LinearLayout.LayoutParams(MATCH, WRAP));
-            shown++;
-            if (shown >= 250) break;
+            AppEntry entry = installedApps.get(index);
+            if (query.isEmpty()
+                    || entry.label.toLowerCase(Locale.US).contains(query)
+                    || entry.packageName.toLowerCase(Locale.US).contains(query)) {
+                matches.add(entry);
+            }
+        }
+        if (appCount != null) {
+            appCount.setText(query.isEmpty() ? installedApps.size() + " apps" : matches.size() + " matches");
+        }
+
+        int shown = Math.min(matches.size(), appDisplayLimit);
+        for (int index = 0; index < shown; index++) {
+            appRows.addView(appRow(matches.get(index)), new LinearLayout.LayoutParams(MATCH, WRAP));
         }
         if (shown == 0) {
-            TextView empty = body(installedApps.isEmpty() ? "No installed apps were found." : "No apps match “" + appQuery + "”.");
+            TextView empty = body(installedApps.isEmpty() ? "No shareable apps were found." : "No apps match “" + appQuery + "”.");
             empty.setPadding(dp(2), dp(12), 0, dp(12));
             appRows.addView(empty);
+        } else if (shown < matches.size()) {
+            final int remaining = matches.size() - shown;
+            TextView more = pill("Show next " + Math.min(APP_ROW_PAGE_SIZE, remaining) + " · " + remaining + " remaining", false, 38);
+            LinearLayout.LayoutParams moreParams = new LinearLayout.LayoutParams(MATCH, dp(38));
+            moreParams.setMargins(0, dp(8), 0, dp(2));
+            appRows.addView(more, moreParams);
+            more.setOnClickListener(new View.OnClickListener() {
+                @Override public void onClick(View view) {
+                    appDisplayLimit += APP_ROW_PAGE_SIZE;
+                    renderAppRows();
+                }
+            });
         }
     }
 
@@ -1413,12 +1518,20 @@ public class AemTransferActivity extends Activity {
         row.setClickable(true);
         row.setFocusable(true);
 
+        FrameLayout iconBox = new FrameLayout(this);
+        iconBox.setBackground(rounded(withAlpha(accentSoft(), lightTheme ? 18 : 26), 11));
+        TextView initial = text(entry.label.isEmpty() ? "A" : entry.label.substring(0, 1).toUpperCase(Locale.US), 14f, accentSoft());
+        initial.setTypeface(bold());
+        initial.setGravity(Gravity.CENTER);
+        iconBox.addView(initial, new FrameLayout.LayoutParams(MATCH, MATCH, Gravity.CENTER));
         ImageView icon = new ImageView(this);
         icon.setScaleType(ImageView.ScaleType.FIT_CENTER);
-        if (entry.icon != null) icon.setImageDrawable(entry.icon);
+        icon.setVisibility(View.GONE);
+        iconBox.addView(icon, new FrameLayout.LayoutParams(MATCH, MATCH, Gravity.CENTER));
         LinearLayout.LayoutParams iconParams = new LinearLayout.LayoutParams(dp(38), dp(38));
         iconParams.setMargins(0, 0, dp(10), 0);
-        row.addView(icon, iconParams);
+        row.addView(iconBox, iconParams);
+        loadAppIcon(entry, icon);
 
         LinearLayout texts = new LinearLayout(this);
         texts.setOrientation(LinearLayout.VERTICAL);
@@ -1440,6 +1553,42 @@ public class AemTransferActivity extends Activity {
             @Override public void onClick(View view) { toggleApp(entry, check); }
         });
         return row;
+    }
+
+    private void loadAppIcon(final AppEntry entry, final ImageView target) {
+        target.setTag(entry.packageName);
+        Drawable cached = appIcons.get(entry.packageName);
+        if (cached != null) {
+            target.setImageDrawable(cached);
+            target.setVisibility(View.VISIBLE);
+            return;
+        }
+        target.setImageDrawable(null);
+        target.setVisibility(View.GONE);
+        entry.iconTargets.add(target);
+        if (entry.iconLoading) return;
+        entry.iconLoading = true;
+        appIconIo.execute(new Runnable() {
+            @Override public void run() {
+                Drawable loaded = null;
+                try { loaded = getPackageManager().getApplicationIcon(entry.packageName); }
+                catch (Exception ignored) { }
+                final Drawable result = loaded;
+                ui.post(new Runnable() {
+                    @Override public void run() {
+                        entry.iconLoading = false;
+                        if (result != null) appIcons.put(entry.packageName, result);
+                        for (ImageView iconTarget : entry.iconTargets) {
+                            if (result != null && entry.packageName.equals(iconTarget.getTag())) {
+                                iconTarget.setImageDrawable(result);
+                                iconTarget.setVisibility(View.VISIBLE);
+                            }
+                        }
+                        entry.iconTargets.clear();
+                    }
+                });
+            }
+        });
     }
 
     private TextView selectionIndicator(String key, boolean busy) {
@@ -1471,13 +1620,25 @@ public class AemTransferActivity extends Activity {
             return;
         }
         exporting.add(entry.packageName);
+        final long selectionStartedAt = SystemClock.elapsedRealtime();
         indicator.setText("…");
-        showBanner("Preparing " + entry.label, "Building a transferable package from this phone", TONE_ACCENT, 0);
-        io.execute(new Runnable() {
+        showBanner("Preparing " + entry.label, "Checking the installed APKs", TONE_ACCENT, 0);
+        // Keep only one package copy active. This avoids competing large reads/archive writes
+        // when a user taps several apps on a low-memory phone.
+        appExportIo.execute(new Runnable() {
             @Override public void run() {
+                final long workerStartedAt = SystemClock.elapsedRealtime();
+                logTiming("app_prepare_worker_start", "queue_wait_ms=" + (workerStartedAt - selectionStartedAt));
                 final Item item = exportApp(entry);
+                final long workerFinishedAt = SystemClock.elapsedRealtime();
                 runOnUiThread(new Runnable() {
                     @Override public void run() {
+                        logTiming("app_prepare_ready", "result=" + (item == null ? "failed" : "ready")
+                                + " mode=" + (item == null ? "none" : item.extension())
+                                + " bytes=" + (item == null ? 0L : item.size)
+                                + " queue_wait_ms=" + (workerStartedAt - selectionStartedAt)
+                                + " worker_ms=" + (workerFinishedAt - workerStartedAt)
+                                + " selection_to_ready_ms=" + elapsedMillisSince(selectionStartedAt));
                         exporting.remove(entry.packageName);
                         if (item != null) {
                             addItem(item);
@@ -1497,57 +1658,91 @@ public class AemTransferActivity extends Activity {
     }
 
     private Item exportApp(AppEntry entry) {
+        File temp = null;
         try {
             PackageManager pm = getPackageManager();
             ApplicationInfo info = pm.getApplicationInfo(entry.packageName, 0);
             ArrayList<String> paths = new ArrayList<>();
             if (info.sourceDir != null) paths.add(info.sourceDir);
             if (info.splitSourceDirs != null) Collections.addAll(paths, info.splitSourceDirs);
-            if (paths.isEmpty()) return null;
+            if (paths.isEmpty()) throw new IOException("No APK files were found for this app");
 
+            ArrayList<File> sources = new ArrayList<>();
+            for (int index = 0; index < paths.size(); index++) {
+                File source = new File(paths.get(index));
+                if (!source.isFile() || !source.canRead() || source.length() <= 0L) {
+                    throw new IOException("An installed APK component is missing or unreadable");
+                }
+                sources.add(source);
+            }
+
+            String safeLabel = entry.label.replace('/', '_').replace('\\', '_').trim();
+            if (safeLabel.isEmpty()) safeLabel = entry.packageName;
+            String wireName = safeLabel + (sources.size() == 1 ? ".apk" : ".apks");
+
+            // Most apps on older phones are a single APK. Stream that installed file directly;
+            // copying it into a temporary archive made the selection feel like a long load.
+            if (sources.size() == 1) {
+                Item item = Item.fromFile(sources.get(0), wireName);
+                logTiming("app_prepare_source", "mode=single_apk components=1 source_bytes=" + item.size);
+                return item;
+            }
+
+            long sourceBytes = 0L;
+            for (int index = 0; index < sources.size(); index++) sourceBytes += sources.get(index).length();
             File dir = new File(getCacheDir(), "aem-apps");
-            if (!dir.exists() && !dir.mkdirs()) return null;
+            if (!dir.exists() && !dir.mkdirs()) throw new IOException("Cannot create app export cache");
             File output = new File(dir, entry.packageName + ".apks");
             File meta = new File(dir, entry.packageName + ".meta");
 
-            StringBuilder fingerprint = new StringBuilder();
-            for (int index = 0; index < paths.size(); index++) {
-                File source = new File(paths.get(index));
-                if (!source.isFile() || !source.canRead()) continue;
+            // Bump this marker when bundle encoding changes so old DEFLATE caches are rebuilt once.
+            StringBuilder fingerprint = new StringBuilder("AEM_APKS_NO_COMPRESSION_V2\n");
+            for (int index = 0; index < sources.size(); index++) {
+                File source = sources.get(index);
                 fingerprint.append(source.getAbsolutePath()).append('|')
                         .append(source.length()).append('|')
                         .append(source.lastModified()).append('\n');
             }
             String signature = fingerprint.toString();
-            String wireName = entry.label.replace('/', '_').replace('\\', '_') + ".apks";
             if (output.isFile() && output.length() > 0 && meta.isFile() && signature.equals(readText(meta))) {
+                logTiming("app_prepare_source", "mode=split_bundle cache_hit=true components=" + sources.size()
+                        + " source_bytes=" + sourceBytes + " bundle_bytes=" + output.length());
                 return Item.fromFile(output, wireName);
             }
 
-            File temp = new File(dir, entry.packageName + ".apks.tmp");
-            try (ZipOutputStream zip = new ZipOutputStream(new BufferedOutputStream(new FileOutputStream(temp), 1024 * 1024))) {
-                byte[] buffer = new byte[1024 * 1024];
-                int component = 0;
-                for (int index = 0; index < paths.size(); index++) {
-                    File source = new File(paths.get(index));
-                    if (!source.isFile() || !source.canRead()) continue;
-                    String name = component == 0 ? "base.apk" : "split-" + component + ".apk";
-                    component++;
-                    zip.putNextEntry(new ZipEntry(name));
-                    try (InputStream in = new BufferedInputStream(new FileInputStream(source), 1024 * 1024)) {
-                        int read;
-                        while ((read = in.read(buffer)) != -1) if (read > 0) zip.write(buffer, 0, read);
-                    }
-                    zip.closeEntry();
+            temp = new File(dir, entry.packageName + ".apks.tmp");
+            final long bundleStartedAt = SystemClock.elapsedRealtime();
+            final long[] lastUiUpdate = {0L};
+            AemPackageArchive.writeApkBundle(sources, temp, new AemPackageArchive.ProgressListener() {
+                @Override public void onProgress(final long copied, final long total) {
+                    long now = System.currentTimeMillis();
+                    if (now - lastUiUpdate[0] < 300L && copied < total) return;
+                    lastUiUpdate[0] = now;
+                    ui.post(new Runnable() {
+                        @Override public void run() {
+                            if (!isFinishing() && !isDestroyed()) {
+                                showBanner("Preparing " + entry.label,
+                                        "Packaging split APKs · " + percent(copied, total) + "% · "
+                                                + format(copied) + " / " + format(total),
+                                        TONE_ACCENT, 0);
+                            }
+                        }
+                    });
                 }
-                if (component == 0) throw new IOException("No readable package components");
-            }
+            });
             if (output.exists() && !output.delete()) throw new IOException("Could not replace cached package");
-            if (!temp.renameTo(output)) throw new IOException("Could not finalize cached package");
+            if (!temp.renameTo(output)) throw new IOException("Could not finish the cached package");
+            temp = null;
             writeText(meta, signature);
+            logTiming("app_prepare_source", "mode=split_bundle cache_hit=false components=" + sources.size()
+                    + " source_bytes=" + sourceBytes + " bundle_bytes=" + output.length()
+                    + " bundle_ms=" + elapsedMillisSince(bundleStartedAt));
             return Item.fromFile(output, wireName);
         } catch (Exception error) {
+            android.util.Log.w("AEM_TRANSFER", "Could not prepare installed app " + entry.packageName, error);
             return null;
+        } finally {
+            if (temp != null && temp.exists()) temp.delete();
         }
     }
 
@@ -1696,7 +1891,7 @@ public class AemTransferActivity extends Activity {
             return;
         }
         if (Build.VERSION.SDK_INT < 29) return;
-        io.execute(new Runnable() {
+        thumbnailIo.execute(new Runnable() {
             @Override public void run() {
                 try {
                     final Bitmap bitmap = getContentResolver().loadThumbnail(item.uri, new Size(160, 160), null);
@@ -1884,7 +2079,7 @@ public class AemTransferActivity extends Activity {
                 + "• Other phone: Transfer → pick at least one file → Send → Nearby phones (wait 5–10s).\n"
                 + "• Keep phones <1 m apart, screens ON, battery saver OFF.\n"
                 + "• If still not found: turn Wi-Fi OFF→ON on both, retry. XOS/HiOS may delay 5–15s first time.\n"
-                + "• Legacy devices appear as Wi-Fi Direct device — tap Send to try even without AEM record.";
+                + "• A generic Wi-Fi Direct peer is not ready to send until its AEM receiver record appears; wait for AEM Transfer · ready.";
         AlertDialog d = new AlertDialog.Builder(this).setTitle("Discovery help").setMessage(msg)
                 .setPositiveButton("OK", null).create();
         showDialog(d);
@@ -2056,14 +2251,15 @@ public class AemTransferActivity extends Activity {
         TextView name = text(peer.name, 14.5f, ink());
         name.setTypeface(bold());
         texts.addView(name);
-        boolean isFallback = peer.token == null || peer.token.isEmpty();
-        TextView meta = text(isFallback ? "Wi-Fi Direct device · tap to try (no AEM record yet)" : (peer.compatible ? "AEM Transfer · ready" : "Needs a matching AEM version"), 10.5f, isFallback ? warning() : (peer.compatible ? success() : warning()));
+        boolean isFallback = peer.token == null || peer.token.trim().isEmpty();
+        boolean canSend = peer.compatible && !isFallback;
+        TextView meta = text(isFallback ? "Waiting for AEM receiver record" : (peer.compatible ? "AEM Transfer · ready" : "Needs a matching AEM version"), 10.5f, isFallback ? warning() : (peer.compatible ? success() : warning()));
         texts.addView(meta);
         row.addView(texts, new LinearLayout.LayoutParams(0, WRAP, 1f));
 
-        TextView send = pill(peer.compatible ? "Send" : "Unavailable", peer.compatible, 36);
-        send.setEnabled(peer.compatible);
-        if (!peer.compatible) send.setAlpha(0.6f);
+        TextView send = pill(isFallback ? "Waiting" : (peer.compatible ? "Send" : "Unavailable"), canSend, 36);
+        send.setEnabled(canSend);
+        if (!canSend) send.setAlpha(0.6f);
         send.setOnClickListener(new View.OnClickListener() {
             @Override public void onClick(View view) { connectToPeer(peer); }
         });
@@ -2071,7 +2267,7 @@ public class AemTransferActivity extends Activity {
 
         card.addView(row, new LinearLayout.LayoutParams(MATCH, WRAP));
         if (isFallback) {
-            TextView hint = text("This phone appeared via Wi-Fi Direct but AEM hasn't seen its transfer record yet. Make sure the other phone shows Receive → Listening, then Scan again.", 10.5f, secondary());
+            TextView hint = text("This phone was found by Wi-Fi Direct, but AEM has not received its receiver record and session token. Keep the other phone on Receive → Listening, wait for AEM Transfer · ready, then scan again. AEM cannot send securely without that record.", 10.5f, secondary());
             hint.setPadding(0, dp(8), 0, 0);
             card.addView(hint);
         }
@@ -2414,6 +2610,11 @@ public class AemTransferActivity extends Activity {
         peerListListener = new WifiP2pManager.PeerListListener() {
             @Override public void onPeersAvailable(android.net.wifi.p2p.WifiP2pDeviceList list) {
                 if (list == null || nearby == false) return;
+                if (!firstPeerTimingLogged && !list.getDeviceList().isEmpty() && discoveryStartedAt > 0L) {
+                    firstPeerTimingLogged = true;
+                    logTiming("sender_first_wifi_peer", "elapsed_ms=" + elapsedMillisSince(discoveryStartedAt)
+                            + " peer_count=" + list.getDeviceList().size());
+                }
                 boolean added = false;
                 for (WifiP2pDevice device : list.getDeviceList()) {
                     if (device == null || device.deviceAddress == null) continue;
@@ -2461,8 +2662,7 @@ public class AemTransferActivity extends Activity {
                         ui.postDelayed(new Runnable() {
                             @Override public void run() {
                                 if (scanning && nearby && hasNearbyPermission()) {
-                                    try { p2p.discoverPeers(p2pChannel, noop()); } catch (Exception ignored) {}
-                                    try { p2p.discoverServices(p2pChannel, noop()); } catch (Exception ignored) {}
+                                    discoverAemReceivers("broadcast_restart");
                                 }
                             }
                         }, 600L);
@@ -2608,6 +2808,9 @@ public class AemTransferActivity extends Activity {
                 @Override public void onConnectionInfoAvailable(WifiP2pInfo info) {
                     if (info == null) return;
                     if (!info.groupFormed) {
+                        if (senderRole && connectPending && sessionActive.get()) {
+                            logTiming("sender_p2p_group_info", "group_formed=false");
+                        }
                         if (connected) {
                             connected = false;
                             activeHost = null;
@@ -2627,12 +2830,19 @@ public class AemTransferActivity extends Activity {
                     }
                     if (sendingNow.get() && connected) return;
                     if (!sessionActive.get() || !connectPending) return;
+                    logTiming("sender_p2p_group_info", "group_formed=true is_group_owner=" + info.isGroupOwner
+                            + " group_owner_address_available=" + (info.groupOwnerAddress != null));
                     if (info.isGroupOwner) {
+                        logTiming("sender_p2p_role_mismatch", "expected=client actual=group_owner");
                         failLink("This phone became the group owner. Move closer and scan again.");
                         return;
                     }
                     String host = info.groupOwnerAddress == null ? null : info.groupOwnerAddress.getHostAddress();
                     if (host == null || host.isEmpty()) return;
+                    if (p2pConnectStartedAt > 0L) {
+                        logTiming("sender_p2p_link_ready", "elapsed_ms=" + elapsedMillisSince(p2pConnectStartedAt));
+                        p2pConnectStartedAt = 0L;
+                    }
                     connectPending = false;
                     activeHost = host;
                     connected = true;
@@ -2651,6 +2861,7 @@ public class AemTransferActivity extends Activity {
     private final Runnable connectWatchdog = new Runnable() {
         @Override public void run() {
             if (!sessionActive.get() || connected || sendingNow.get()) return;
+            logTiming("sender_p2p_connect_timeout", "elapsed_ms=" + elapsedMillisSince(p2pConnectStartedAt));
             failLink("The other phone did not answer. Keep both phones close, then scan again.");
         }
     };
@@ -2676,6 +2887,10 @@ public class AemTransferActivity extends Activity {
     }
 
     private void failLink(String message) {
+        if (p2pConnectStartedAt > 0L) {
+            logTiming("sender_p2p_link_failed", "elapsed_ms=" + elapsedMillisSince(p2pConnectStartedAt));
+            p2pConnectStartedAt = 0L;
+        }
         sessionActive.set(false);
         sendingNow.set(false);
         connectPending = false;
@@ -2742,6 +2957,12 @@ public class AemTransferActivity extends Activity {
         nearby = true;
         scanning = true;
         senderRole = true;
+        discoveryStartedAt = SystemClock.elapsedRealtime();
+        firstPeerTimingLogged = false;
+        firstDnsServiceTimingLogged = false;
+        firstReceiverRecordInvalidLogged = false;
+        firstReceiverTimingLogged = false;
+        logTiming("sender_discovery_start", "interval_ms=" + DISCOVERY_INTERVAL_MS);
         peers.clear();
         render();
         showTransferBanner("Finding a phone", "Keep the other phone on AEM → Receive", 0, false);
@@ -2772,30 +2993,32 @@ public class AemTransferActivity extends Activity {
             p2p.setDnsSdResponseListeners(p2pChannel, dnsServiceListener, dnsTxtListener);
             p2p.clearServiceRequests(p2pChannel, new WifiP2pManager.ActionListener() {
                 @Override public void onSuccess() { addServiceRequest(); }
-                @Override public void onFailure(int reason) { addServiceRequest(); }
+                @Override public void onFailure(int reason) {
+                    logTiming("sender_service_request_clear_failed", "reason=" + reason);
+                    addServiceRequest();
+                }
             });
-            p2p.discoverPeers(p2pChannel, new WifiP2pManager.ActionListener() {
+        } catch (Exception error) {
+            logTiming("sender_service_discovery_setup_failed", "exception=" + error.getClass().getSimpleName());
+            showBanner("Discovery failed", "Wi-Fi Direct is unavailable right now.", TONE_DANGER, 7000);
+        }
+    }
+
+    private void addServiceRequest() {
+        if (p2p == null || p2pChannel == null || !nearby || !scanning) return;
+        try {
+            serviceRequest = WifiP2pDnsSdServiceRequest.newInstance();
+            p2p.addServiceRequest(p2pChannel, serviceRequest, new WifiP2pManager.ActionListener() {
                 @Override public void onSuccess() {
-                    scanning = true;
-                    showTransferBanner("Looking for nearby phones", "Both phones must stay on the Transfer screen", 0, false);
+                    logTiming("sender_service_request_added", "elapsed_ms=" + elapsedMillisSince(discoveryStartedAt));
+                    showTransferBanner("Looking for nearby phones", "Keep the other phone on AEM → Receive", 0, false);
+                    discoverAemReceivers("initial");
                     scheduleDiscoveryLoop();
-                    // Also request legacy peers immediately
-                    try { p2p.requestPeers(p2pChannel, peerListListener); } catch (Exception ignored) {}
                 }
                 @Override public void onFailure(int reason) {
-                    // BUSY often means a group already exists; still try service discovery
-                    if (reason == WifiP2pManager.BUSY) {
-                        scanning = true;
-                        showTransferBanner("Looking for nearby phones", "Wi-Fi Direct busy — still scanning for AEM receivers", 0, false);
-                        scheduleDiscoveryLoop();
-                        addServiceRequest();
-                        return;
-                    }
+                    logTiming("sender_service_request_failed", "reason=" + reason);
                     scanning = false;
-                    showBanner("Could not start scanning",
-                            reason == WifiP2pManager.BUSY
-                                    ? "Wi-Fi Direct is busy. Turn Wi-Fi off and on, then try again."
-                                    : "Android refused to start discovery (" + reason + "). On Tecno/Infinix, toggle Wi-Fi and Location, then try again.",
+                    showBanner("Service discovery failed", "Android could not listen for AEM receivers (" + reason + ").",
                             TONE_DANGER, 0, "Try again", new Runnable() {
                                 @Override public void run() { beginDiscovery(); }
                             });
@@ -2803,32 +3026,41 @@ public class AemTransferActivity extends Activity {
                 }
             });
         } catch (Exception error) {
-            showBanner("Discovery failed", "Wi-Fi Direct is unavailable right now.", TONE_DANGER, 7000);
+            logTiming("sender_service_request_failed", "exception=" + error.getClass().getSimpleName());
+            scanning = false;
+            showBanner("Service discovery failed", "Android could not listen for AEM receivers.", TONE_DANGER, 7000);
+            render();
         }
     }
 
-    private void addServiceRequest() {
-        if (p2p == null || p2pChannel == null) return;
+    private void discoverAemReceivers(final String source) {
+        if (p2p == null || p2pChannel == null || !nearby || !scanning || connectPending || serviceRequest == null) return;
         try {
-            serviceRequest = WifiP2pDnsSdServiceRequest.newInstance();
-            p2p.addServiceRequest(p2pChannel, serviceRequest, new WifiP2pManager.ActionListener() {
+            p2p.discoverServices(p2pChannel, new WifiP2pManager.ActionListener() {
                 @Override public void onSuccess() {
-                    try { p2p.discoverServices(p2pChannel, noop()); } catch (Exception ignored) { }
+                    logTiming("sender_service_discovery_started", "source=" + source);
                 }
                 @Override public void onFailure(int reason) {
-                    showBanner("Service discovery failed", "Android could not listen for AEM receivers (" + reason + ").",
-                            TONE_DANGER, 0, "Try again", new Runnable() {
-                                @Override public void run() { beginDiscovery(); }
-                            });
+                    logTiming("sender_service_discovery_failed", "source=" + source + " reason=" + reason);
                 }
             });
-        } catch (Exception ignored) { }
+        } catch (Exception error) {
+            logTiming("sender_service_discovery_failed", "source=" + source
+                    + " exception=" + error.getClass().getSimpleName());
+        }
     }
 
     private final WifiP2pManager.DnsSdServiceResponseListener dnsServiceListener =
             new WifiP2pManager.DnsSdServiceResponseListener() {
                 @Override public void onDnsSdServiceAvailable(String instanceName, String registrationType, WifiP2pDevice device) {
-                    // The TXT record carries the identity; nothing to do here.
+                    boolean isAemService = registrationType != null
+                            && registrationType.toLowerCase(Locale.US).contains("_aemtransfer._tcp");
+                    if (isAemService && !firstDnsServiceTimingLogged && discoveryStartedAt > 0L) {
+                        firstDnsServiceTimingLogged = true;
+                        logTiming("sender_dns_service_seen", "elapsed_ms=" + elapsedMillisSince(discoveryStartedAt)
+                                + " has_device=" + (device != null));
+                    }
+                    // The TXT record carries the identity; no peer metadata is logged here.
                 }
             };
 
@@ -2838,12 +3070,24 @@ public class AemTransferActivity extends Activity {
                     if (device == null || device.deviceAddress == null || record == null) return;
                     if (!"receiver".equals(record.get("role"))) return;
                     String token = record.get("token");
-                    if (token == null || token.trim().isEmpty()) return;
+                    if (token == null || token.trim().isEmpty()) {
+                        if (!firstReceiverRecordInvalidLogged && discoveryStartedAt > 0L) {
+                            firstReceiverRecordInvalidLogged = true;
+                            logTiming("sender_receiver_record_invalid", "reason=missing_token"
+                                    + " elapsed_ms=" + elapsedMillisSince(discoveryStartedAt));
+                        }
+                        return;
+                    }
                     String name = record.get("name");
                     if (name == null || name.trim().isEmpty()) name = device.deviceName;
                     if (name == null || name.trim().isEmpty()) name = "Nearby phone";
                     String protocol = record.get("protocol");
                     boolean compatible = protocol == null || String.valueOf(PROTOCOL).equals(protocol);
+                    if (!firstReceiverTimingLogged && discoveryStartedAt > 0L) {
+                        firstReceiverTimingLogged = true;
+                        logTiming("sender_receiver_record", "elapsed_ms=" + elapsedMillisSince(discoveryStartedAt)
+                                + " compatible=" + compatible);
+                    }
                     peers.put(device.deviceAddress, new Peer(device.deviceAddress, name.trim(), token, compatible));
                     schedulePeerRender();
                 }
@@ -2865,18 +3109,27 @@ public class AemTransferActivity extends Activity {
         cancelDiscoveryLoop();
         discoveryLoop = new Runnable() {
             @Override public void run() {
-                if (!nearby || !scanning) return;
+                if (!nearby || !scanning || connectPending) return;
                 if (p2p != null && p2pChannel != null && hasNearbyPermission()) {
-                    try { p2p.discoverServices(p2pChannel, noop()); } catch (Exception ignored) {}
-                    if (Math.random() < 0.5) {
-                        try { p2p.discoverPeers(p2pChannel, noop()); } catch (Exception ignored) {}
-                    }
-                    try { p2p.requestPeers(p2pChannel, peerListListener); } catch (Exception ignored) {}
+                    discoverAemReceivers("periodic");
                 }
                 ui.postDelayed(this, DISCOVERY_INTERVAL_MS);
             }
         };
         ui.postDelayed(discoveryLoop, DISCOVERY_INTERVAL_MS);
+    }
+
+    private void pauseDiscoveryForConnection() {
+        scanning = false;
+        cancelDiscoveryLoop();
+        if (p2p == null || p2pChannel == null) return;
+        try { p2p.stopPeerDiscovery(p2pChannel, noop()); } catch (Exception ignored) { }
+        try {
+            if (serviceRequest != null) p2p.removeServiceRequest(p2pChannel, serviceRequest, noop());
+            else p2p.clearServiceRequests(p2pChannel, noop());
+        } catch (Exception ignored) { }
+        serviceRequest = null;
+        logTiming("sender_discovery_paused_for_connect", "elapsed_ms=" + elapsedMillisSince(discoveryStartedAt));
     }
 
     private void cancelDiscoveryLoop() {
@@ -2892,6 +3145,10 @@ public class AemTransferActivity extends Activity {
             showBanner("Update AEM on the other phone", "Both phones need the same transfer protocol. Update the app, then scan again.", TONE_WARNING, 8000);
             return;
         }
+        if (peer.token == null || peer.token.trim().isEmpty()) {
+            showBanner("Receiver record not ready", "AEM found a Wi-Fi Direct peer, but has not received its authenticated receiver record yet. Keep the other phone on Receive → Listening and scan again when it appears as AEM Transfer · ready.", TONE_WARNING, 8000);
+            return;
+        }
         if (selected.isEmpty()) {
             showBanner("Pick files first", "Choose at least one app, photo or file on the Transfer tab, then tap Send on " + peer.name + ".", TONE_WARNING, 6000, "Go to Transfer", new Runnable() {
                 @Override public void run() {
@@ -2904,8 +3161,6 @@ public class AemTransferActivity extends Activity {
             toast("Pick something to send first");
             return;
         }
-        // Legacy fallback peer may have empty token: allow attempt, handshake will validate.
-        // Show hint if token empty.
         if (p2p == null || p2pChannel == null) {
             toast("Wi-Fi Direct is unavailable");
             return;
@@ -2920,17 +3175,23 @@ public class AemTransferActivity extends Activity {
         connectPending = true;
         sessionActive.set(true);
         showTransferBanner("Connecting to " + peer.name, "Approve the connection on both phones if Android asks", 0, false);
+        pauseDiscoveryForConnection();
         try {
             WifiP2pConfig config = new WifiP2pConfig();
             config.deviceAddress = peer.address;
             config.wps.setup = WpsInfo.PBC;
             config.groupOwnerIntent = 0; // keep the receiver as group owner so the sender can dial it
+            p2pConnectStartedAt = SystemClock.elapsedRealtime();
+            logTiming("sender_p2p_connect_requested", "peer_compatible=" + peer.compatible);
             p2p.connect(p2pChannel, config, new WifiP2pManager.ActionListener() {
                 @Override public void onSuccess() {
+                    logTiming("sender_p2p_connect_action_success", "elapsed_ms=" + elapsedMillisSince(p2pConnectStartedAt));
                     ui.removeCallbacks(connectWatchdog);
                     ui.postDelayed(connectWatchdog, 30_000L);
                 }
                 @Override public void onFailure(int reason) {
+                    logTiming("sender_p2p_connect_action_failed", "reason=" + reason
+                            + " elapsed_ms=" + elapsedMillisSince(p2pConnectStartedAt));
                     failLink("Android refused the connection (" + reason + "). Move the phones closer and try again.");
                 }
             });
@@ -3067,6 +3328,7 @@ public class AemTransferActivity extends Activity {
         try {
             p2p.createGroup(p2pChannel, new WifiP2pManager.ActionListener() {
                 @Override public void onSuccess() {
+                    logTiming("receiver_group_ready", "attempt=" + (attempt + 1));
                     receivePreparing = false;
                     receiving = true;
                     connected = false;
@@ -3085,6 +3347,7 @@ public class AemTransferActivity extends Activity {
                     render();
                 }
                 @Override public void onFailure(int reason) {
+                    logTiming("receiver_group_create_failed", "attempt=" + (attempt + 1) + " reason=" + reason);
                     if (attempt < 2) {
                         ui.postDelayed(new Runnable() {
                             @Override public void run() { createReceiverGroup(attempt + 1); }
@@ -3125,13 +3388,17 @@ public class AemTransferActivity extends Activity {
         try {
             localService = WifiP2pDnsSdServiceInfo.newInstance(instance, "_aemtransfer._tcp", record);
             p2p.addLocalService(p2pChannel, localService, new WifiP2pManager.ActionListener() {
-                @Override public void onSuccess() { }
+                @Override public void onSuccess() {
+                    logTiming("receiver_service_advertised", "protocol=" + PROTOCOL);
+                }
                 @Override public void onFailure(int reason) {
+                    logTiming("receiver_service_advertisement_failed", "reason=" + reason);
                     localService = null;
                     showBanner("Not visible to nearby phones", "Android could not advertise this device (" + reason + "). Tap Receive to retry.", TONE_WARNING, 8000);
                 }
             });
         } catch (Exception error) {
+            logTiming("receiver_service_advertisement_failed", "exception=" + error.getClass().getSimpleName());
             localService = null;
         }
     }
@@ -3291,10 +3558,12 @@ public class AemTransferActivity extends Activity {
                 server = socket;
             } catch (Exception error) {
                 showBanner("Could not open the receiver", "Port " + PORT + " is unavailable. Close other transfer apps and try again.", TONE_DANGER, 8000);
+                logTiming("receiver_server_start_failed", "exception=" + error.getClass().getSimpleName());
                 return;
             }
         }
-        io.execute(new Runnable() {
+        logTiming("receiver_server_listening", "port=" + PORT);
+        transferIo.execute(new Runnable() {
             @Override public void run() {
                 while (!Thread.currentThread().isInterrupted()) {
                     ServerSocket current;
@@ -3302,8 +3571,9 @@ public class AemTransferActivity extends Activity {
                     if (current == null || current.isClosed()) break;
                     try {
                         final Socket socket = current.accept();
+                        logTiming("receiver_socket_accepted", "armed=" + receiveArmed);
                         openSockets.add(socket);
-                        io.execute(new Runnable() {
+                        transferIo.execute(new Runnable() {
                             @Override public void run() {
                                 try { handleIncoming(socket); }
                                 finally {
@@ -3368,6 +3638,9 @@ public class AemTransferActivity extends Activity {
         if (!sendingNow.compareAndSet(false, true)) return;
 
         final ArrayList<Item> items = new ArrayList<>(selected);
+        long selectedBytes = 0L;
+        for (int index = 0; index < items.size(); index++) selectedBytes += items.get(index).size;
+        logTiming("sender_selection_start", "item_count=" + items.size() + " total_bytes=" + selectedBytes);
         String signature = signatureOf(items);
         if (transferId == null || activeSignature == null || !activeSignature.equals(signature)) {
             transferId = UUID.randomUUID().toString();
@@ -3387,11 +3660,13 @@ public class AemTransferActivity extends Activity {
             }
         };
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
-        showTransferBanner("Sending " + items.size() + (items.size() == 1 ? " item" : " items"), "Waiting for the other phone…", 0, false);
+        showTransferBanner("Connecting to the other phone", "Opening the Wi-Fi Direct connection…", 0, false);
         AemTransferService.start(this, "Sending files", "Connecting to the other phone");
 
-        io.execute(new Runnable() {
+        final long senderQueuedAt = SystemClock.elapsedRealtime();
+        transferIo.execute(new Runnable() {
             @Override public void run() {
+                logTiming("sender_worker_start", "queue_wait_ms=" + elapsedMillisSince(senderQueuedAt));
                 final String error = runSend(host, items);
                 runOnUiThread(new Runnable() {
                     @Override public void run() {
@@ -3438,33 +3713,56 @@ public class AemTransferActivity extends Activity {
     }
 
     private String runSend(String host, ArrayList<Item> items) {
+        final long transferStartedAt = SystemClock.elapsedRealtime();
         String lastError = "The transfer stopped.";
         for (int attempt = 1; attempt <= 3; attempt++) {
-            if (!sessionActive.get()) return "The transfer was stopped.";
+            if (!sessionActive.get()) {
+                logTiming("sender_transfer_cancelled", "attempt=" + attempt + " elapsed_ms=" + elapsedMillisSince(transferStartedAt));
+                return "The transfer was stopped.";
+            }
+            long attemptStartedAt = SystemClock.elapsedRealtime();
+            logTiming("sender_attempt_start", "attempt=" + attempt + " item_count=" + items.size());
             try {
-                sendOnce(host, items);
+                sendOnce(host, items, attempt);
+                logTiming("sender_transfer_complete", "attempt=" + attempt + " elapsed_ms=" + elapsedMillisSince(transferStartedAt));
                 return null;
             } catch (FatalTransferException error) {
+                logTiming("sender_transfer_rejected", "attempt=" + attempt + " elapsed_ms=" + elapsedMillisSince(transferStartedAt));
                 return describe(error);
             } catch (Exception error) {
                 lastError = describe(error);
+                android.util.Log.w(TIMING_TAG, "event=sender_attempt_failed attempt=" + attempt
+                        + " elapsed_ms=" + elapsedMillisSince(attemptStartedAt)
+                        + " exception=" + error.getClass().getSimpleName());
                 if (!sessionActive.get()) return "The transfer was stopped.";
                 if (attempt < 3) {
                     sleep(500L * attempt);
                 }
             }
         }
+        logTiming("sender_transfer_failed", "elapsed_ms=" + elapsedMillisSince(transferStartedAt));
         return lastError;
     }
 
-    private void sendOnce(String host, ArrayList<Item> items) throws Exception {
+    private void sendOnce(String host, ArrayList<Item> items, int attempt) throws Exception {
+        final long attemptStartedAt = SystemClock.elapsedRealtime();
         Socket socket = new Socket();
         openSockets.add(socket);
         try {
+            postTransferStage("Connecting to the other phone", "Opening the Wi-Fi Direct connection…", 0, false);
+            long connectStartedAt = SystemClock.elapsedRealtime();
             socket.setTcpNoDelay(true);
             socket.setSendBufferSize(1024 * 1024);
-            socket.connect(new InetSocketAddress(host, PORT), 12_000);
+            try {
+                socket.connect(new InetSocketAddress(host, PORT), 12_000);
+            } catch (Exception error) {
+                logTiming("sender_socket_connect_failed", "attempt=" + attempt
+                        + " connect_ms=" + elapsedMillisSince(connectStartedAt)
+                        + " exception=" + error.getClass().getSimpleName());
+                throw error;
+            }
             socket.setSoTimeout(120_000);
+            logTiming("sender_socket_connected", "attempt=" + attempt + " connect_ms=" + elapsedMillisSince(connectStartedAt));
 
             DataOutputStream out = new DataOutputStream(new BufferedOutputStream(socket.getOutputStream(), 256 * 1024));
             out.writeInt(PROTOCOL);
@@ -3488,9 +3786,14 @@ public class AemTransferActivity extends Activity {
             out.flush();
 
             DataInputStream in = new DataInputStream(new BufferedInputStream(socket.getInputStream(), 128 * 1024));
+            postTransferStage("Waiting for receiver approval", "Confirm the incoming request on the other phone.", 0, false);
+            long decisionStartedAt = SystemClock.elapsedRealtime();
             int accepted = in.readInt();
+            logTiming("sender_receiver_decision", "attempt=" + attempt + " accepted=" + (accepted == 1)
+                    + " wait_ms=" + elapsedMillisSince(decisionStartedAt));
             if (accepted != 1) throw new FatalTransferException("The other phone declined this transfer.");
 
+            long resumeSetupStartedAt = SystemClock.elapsedRealtime();
             long[] offsets = new long[items.size()];
             long done = 0L;
             for (int index = 0; index < items.size(); index++) {
@@ -3500,7 +3803,14 @@ public class AemTransferActivity extends Activity {
                 }
                 done += offsets[index];
             }
+            logTiming("sender_resume_offsets_ready", "attempt=" + attempt + " resume_setup_ms="
+                    + elapsedMillisSince(resumeSetupStartedAt) + " resumed_bytes=" + done);
 
+            long payloadBytes = 0L;
+            for (int index = 0; index < items.size(); index++) {
+                payloadBytes += Math.max(0L, items.get(index).size - offsets[index]);
+            }
+            long payloadStartedAt = SystemClock.elapsedRealtime();
             SpeedMeter meter = new SpeedMeter();
             byte[] buffer = new byte[512 * 1024];
             long paintedAt = 0L;
@@ -3510,6 +3820,7 @@ public class AemTransferActivity extends Activity {
                 long offset = offsets[index];
                 if (offset >= item.size) continue;
 
+                long itemStartedAt = SystemClock.elapsedRealtime();
                 InputStream input = openItem(item);
                 if (input == null) throw new IOException("Cannot read " + item.label() + ".");
                 try {
@@ -3544,12 +3855,22 @@ public class AemTransferActivity extends Activity {
                     }
                     out.write(digest.digest());
                     out.flush();
+                    logTiming("sender_item_payload_flushed", "attempt=" + attempt + " item_index=" + index
+                            + " payload_bytes=" + (item.size - offset) + " elapsed_ms=" + elapsedMillisSince(itemStartedAt));
                 } finally {
                     try { input.close(); } catch (Exception ignored) { }
                 }
             }
 
+            long payloadFinishedAt = SystemClock.elapsedRealtime();
+            logTiming("sender_payload_complete", "attempt=" + attempt + " payload_bytes=" + payloadBytes
+                    + " payload_ms=" + (payloadFinishedAt - payloadStartedAt));
+            postTransferStage("Verifying received files", "The other phone is checking and saving the transferred bytes…", 100, true);
+            long finalResponseStartedAt = SystemClock.elapsedRealtime();
             int result = in.readInt();
+            logTiming("sender_final_ack", "attempt=" + attempt + " accepted=" + (result == 1)
+                    + " wait_ms=" + elapsedMillisSince(finalResponseStartedAt)
+                    + " total_ms=" + elapsedMillisSince(attemptStartedAt));
             if (result != 1) throw new IOException("The other phone could not verify the files.");
         } finally {
             openSockets.remove(socket);
@@ -3572,8 +3893,10 @@ public class AemTransferActivity extends Activity {
         String host = null;
         long total = 0L;
         boolean locked = false;
+        String stage = "connection_setup";
         final ActiveReceive active = new ActiveReceive();
         try {
+            logTiming("receiver_handshake_started", "armed=" + receiveArmed);
             host = socket.getInetAddress() == null ? "nearby phone" : socket.getInetAddress().getHostAddress();
             if (!receiveArmed) throw new IOException("This phone is not receiving.");
             if (!incomingBusy.compareAndSet(false, true)) throw new IOException("Another transfer is already in progress.");
@@ -3586,8 +3909,10 @@ public class AemTransferActivity extends Activity {
             DataInputStream in = new DataInputStream(new BufferedInputStream(socket.getInputStream(), 256 * 1024));
             DataOutputStream out = new DataOutputStream(new BufferedOutputStream(socket.getOutputStream(), 128 * 1024));
 
+            stage = "protocol";
             int protocol = in.readInt();
             if (protocol != PROTOCOL) {
+                logTiming("receiver_protocol_mismatch", "received=" + protocol + " expected=" + PROTOCOL);
                 try { out.writeInt(0); out.flush(); } catch (Exception ignored) { }
                 runOnUiThread(new Runnable() {
                     @Override public void run() {
@@ -3597,6 +3922,7 @@ public class AemTransferActivity extends Activity {
                 return;
             }
 
+            stage = "identity";
             id = in.readUTF();
             if (id == null || !id.matches("[A-Za-z0-9-]{8,64}")) throw new IOException("Invalid transfer identifier.");
             String senderName = in.readUTF();
@@ -3609,6 +3935,8 @@ public class AemTransferActivity extends Activity {
                 throw new IOException("The handshake did not match this phone.");
             }
             if (peerToken == null || peerToken.trim().isEmpty()) throw new IOException("The other phone did not identify itself.");
+            logTiming("receiver_handshake_validated", "protocol=" + protocol);
+            stage = "manifest";
             remoteToken = peerToken;
             remoteName = senderName.trim();
             final String senderLabel = remoteName;
@@ -3645,6 +3973,7 @@ public class AemTransferActivity extends Activity {
             boolean replay = id.equals(completedId) && signature.equals(completedSignature);
 
             final String localId = id;
+            stage = "approval";
             boolean accepted = replay || confirmIncoming(senderLabel, count, total, host, localId);
             if (!accepted) {
                 try { out.writeInt(0); out.flush(); } catch (Exception ignored) { }
@@ -3658,6 +3987,8 @@ public class AemTransferActivity extends Activity {
                 return;
             }
 
+            stage = "payload";
+            logTiming("receiver_transfer_accepted", "item_count=" + count + " total_bytes=" + total);
             connected = true;
             out.writeInt(1);
             File destination = transferDir();
@@ -3697,6 +4028,8 @@ public class AemTransferActivity extends Activity {
 
             long doneBytes = 0L;
             for (int index = 0; index < count; index++) doneBytes += offsets[index];
+            long receivedPayloadBytes = 0L;
+            final long receivePayloadStartedAt = SystemClock.elapsedRealtime();
             final SpeedMeter meter = new SpeedMeter();
             byte[] buffer = new byte[512 * 1024];
             long paintedAt = 0L;
@@ -3741,13 +4074,30 @@ public class AemTransferActivity extends Activity {
                 }
                 if (offset >= header.size) continue;
                 File part = resumeFile(id, index, "part");
+                MessageDigest digest = MessageDigest.getInstance("SHA-256");
+                // Resume only needs a disk read for the already-present prefix. Hash new bytes
+                // as they arrive so the receiver does not reread the entire APK after writing it.
+                if (offset > 0L) {
+                    long prefixLeft = offset;
+                    try (InputStream prefix = new BufferedInputStream(new FileInputStream(part), 256 * 1024)) {
+                        while (prefixLeft > 0L) {
+                            int read = prefix.read(buffer, 0, (int) Math.min(buffer.length, prefixLeft));
+                            if (read < 0) throw new EOFException("The saved partial file is shorter than its resume point.");
+                            if (read == 0) continue;
+                            digest.update(buffer, 0, read);
+                            prefixLeft -= read;
+                        }
+                    }
+                }
                 try (OutputStream fileOut = new BufferedOutputStream(new FileOutputStream(part, true), 256 * 1024)) {
                     long left = header.size - offset;
                     while (left > 0) {
                         int read = in.read(buffer, 0, (int) Math.min(buffer.length, left));
                         if (read < 0) throw new EOFException("The connection ended early.");
                         fileOut.write(buffer, 0, read);
+                        digest.update(buffer, 0, read);
                         left -= read;
+                        receivedPayloadBytes += read;
                         doneBytes += read;
                         active.done = doneBytes;
                         long now = System.currentTimeMillis();
@@ -3764,15 +4114,10 @@ public class AemTransferActivity extends Activity {
                     }
                 }
 
+                long finalizeStartedAt = SystemClock.elapsedRealtime();
                 byte[] expected = new byte[32];
                 in.readFully(expected);
-                byte[] actual;
-                try (InputStream hashInput = new FileInputStream(part)) {
-                    MessageDigest digest = MessageDigest.getInstance("SHA-256");
-                    int read;
-                    while ((read = hashInput.read(buffer)) != -1) if (read > 0) digest.update(buffer, 0, read);
-                    actual = digest.digest();
-                }
+                byte[] actual = digest.digest();
                 if (!Arrays.equals(expected, actual)) {
                     part.delete();
                     throw new IOException("The integrity check failed for " + baseName(header.path) + ".");
@@ -3788,8 +4133,12 @@ public class AemTransferActivity extends Activity {
                 File done = resumeFile(id, index, "done");
                 if (!done.createNewFile() && !done.exists()) throw new IOException("Cannot store resume state.");
                 recordHistory("RECEIVED", target.getName(), target.length(), "Verified");
+                logTiming("receiver_file_saved", "item_index=" + index + " bytes=" + header.size
+                        + " finalize_ms=" + elapsedMillisSince(finalizeStartedAt));
             }
 
+            logTiming("receiver_transfer_verified", "item_count=" + count + " received_payload_bytes="
+                    + receivedPayloadBytes + " receive_and_save_ms=" + elapsedMillisSince(receivePayloadStartedAt));
             out.writeInt(1);
             out.flush();
 
@@ -3825,6 +4174,8 @@ public class AemTransferActivity extends Activity {
                 }
             });
         } catch (Exception error) {
+            logTiming("receiver_connection_failed", "stage=" + stage
+                    + " exception=" + error.getClass().getSimpleName());
             final String message = describe(error);
             runOnUiThread(new Runnable() {
                 @Override public void run() {
@@ -4385,6 +4736,7 @@ public class AemTransferActivity extends Activity {
             openTransferredFile(file);
             return;
         }
+        logTiming("receiver_install_request", "extension=" + extensionOf(file.getName()) + " bytes=" + file.length());
         if (Build.VERSION.SDK_INT >= 26 && !canInstallPackages()) {
             pendingInstall = file;
             AlertDialog installDialog = new AlertDialog.Builder(this)
@@ -4426,6 +4778,8 @@ public class AemTransferActivity extends Activity {
     }
 
     private void installNow(File file) throws Exception {
+        final long installStartedAt = SystemClock.elapsedRealtime();
+        long extractionStartedAt = SystemClock.elapsedRealtime();
         ArrayList<File> apks = new ArrayList<>();
         File staging = null;
         try {
@@ -4438,8 +4792,12 @@ public class AemTransferActivity extends Activity {
             }
             if (apks.isEmpty()) throw new IOException("No APK files were found inside " + file.getName());
 
+            long extractionMs = elapsedMillisSince(extractionStartedAt);
             long total = 0L;
             for (int index = 0; index < apks.size(); index++) total += apks.get(index).length();
+            logTiming("receiver_install_prepared", "components=" + apks.size() + " bytes=" + total
+                    + " archive_extract_ms=" + extractionMs);
+            long sessionWriteStartedAt = SystemClock.elapsedRealtime();
             PackageInstaller installer = getPackageManager().getPackageInstaller();
             PackageInstaller.SessionParams params = new PackageInstaller.SessionParams(
                     PackageInstaller.SessionParams.MODE_FULL_INSTALL);
@@ -4458,6 +4816,8 @@ public class AemTransferActivity extends Activity {
                         session.fsync(out);
                     }
                 }
+                logTiming("receiver_install_session_written", "components=" + apks.size() + " bytes=" + total
+                        + " session_write_ms=" + elapsedMillisSince(sessionWriteStartedAt));
                 Intent callback = new Intent(ACTION_INSTALL_STATUS);
                 callback.setPackage(getPackageName());
                 callback.putExtra("aem_name", file.getName());
@@ -4465,6 +4825,7 @@ public class AemTransferActivity extends Activity {
                 if (Build.VERSION.SDK_INT >= 31) flags |= PendingIntent.FLAG_MUTABLE;
                 PendingIntent pending = PendingIntent.getBroadcast(this, 4300 + (sessionId % 100000), callback, flags);
                 session.commit(pending.getIntentSender());
+                logTiming("receiver_install_commit_requested", "elapsed_ms=" + elapsedMillisSince(installStartedAt));
             } finally {
                 session.close();
             }
@@ -4482,6 +4843,7 @@ public class AemTransferActivity extends Activity {
             @Override public void onReceive(Context context, Intent intent) {
                 if (intent == null) return;
                 int status = intent.getIntExtra(PackageInstaller.EXTRA_STATUS, PackageInstaller.STATUS_FAILURE);
+                logTiming("receiver_install_result", "status=" + status);
                 String name = intent.getStringExtra("aem_name");
                 if (name == null || name.trim().isEmpty()) name = installingName == null ? "Package" : installingName;
                 if (status == PackageInstaller.STATUS_PENDING_USER_ACTION) {
