@@ -23,9 +23,15 @@ const releaseChannel = (text: string): "stable" | "beta" | "development" => {
   return "stable";
 };
 const safeName = (name: string) => name.replace(/[^A-Za-z0-9._-]/g, "_");
-const MAX_WORKFLOW_ARTIFACTS_PER_REPO = 100;
-const MAX_WORKFLOW_ARCHIVE_BYTES_PER_REPO = 200 * 1024 * 1024;
-const MAX_DISCOVERED_BINARY_BYTES_PER_REPO = 150 * 1024 * 1024;
+const releaseActivity = (release: any) => Math.max(
+  Date.parse(release.published_at || release.created_at || "") || 0,
+  ...(release.assets || []).map((asset: any) => Date.parse(asset.updated_at || "") || 0),
+);
+const MAX_WORKFLOW_ARTIFACTS_PER_REPO = 20;
+const MAX_WORKFLOW_ARCHIVE_BYTES_PER_REPO = 70 * 1024 * 1024;
+const MAX_DISCOVERED_BINARY_BYTES_PER_REPO = 50 * 1024 * 1024;
+const MAX_PUBLIC_RELEASE_APK_BYTES = 200 * 1024 * 1024;
+const MAX_SYNC_REPOSITORIES_PER_INVOCATION = 1;
 const gh = async (url: string, headers: HeadersInit) => {
   const response = await fetch(url, { headers });
   if (!response.ok) throw new Error(`GitHub API HTTP ${response.status}`);
@@ -67,6 +73,30 @@ async function unzipEntry(buf:Uint8Array,wanted:string){
 async function apkMetadata(buf:Uint8Array){
  const manifest=await unzipEntry(buf,"AndroidManifest.xml");
  return manifest?parseApkManifest(manifest):{};
+}
+
+function apkHasSignature(buf:Uint8Array){
+ try{
+  const view=new DataView(buf.buffer,buf.byteOffset,buf.byteLength);
+  const u16=(p:number)=>view.getUint16(p,true),u32=(p:number)=>view.getUint32(p,true);
+  const end=Math.min(buf.length-22,buf.length-65558);
+  for(let p=buf.length-22;p>=end;p--){
+   if(u32(p)!==0x06054b50)continue;
+   const count=u16(p+10),central=u32(p+16);
+   const magic=new TextDecoder().decode(buf.slice(central-16,central));
+   if(magic==="APK Sig Block 42")return true;
+   let cursor=central;
+   for(let i=0;i<count&&cursor+46<=buf.length;i++){
+    if(u32(cursor)!==0x02014b50)break;
+    const nameLength=u16(cursor+28),extraLength=u16(cursor+30),commentLength=u16(cursor+32);
+    const name=new TextDecoder().decode(buf.slice(cursor+46,cursor+46+nameLength)).toUpperCase();
+    if(/^META-INF\/[^/]+\.(RSA|DSA|EC)$/.test(name))return true;
+    cursor+=46+nameLength+extraLength+commentLength;
+   }
+   return false;
+  }
+ }catch{}
+ return false;
 }
 
 function readU16(v:DataView,p:number){return v.getUint16(p,true)}
@@ -197,21 +227,21 @@ Deno.serve(async (request) => {
     const continuing = state?.status === "running";
     const now = Date.now(), lastSuccess = state?.last_success_at ? Date.parse(state.last_success_at) : 0;
     const lastStart = state?.last_started_at ? Date.parse(state.last_started_at) : 0;
-    // The cron runs every five minutes; leave margin for clock and HTTP scheduling jitter so
-    // a scan advances on each tick instead of being throttled every other time.
-    if (continuing && now - lastStart < 240000) return json({ ok: true, throttled: true });
+    // The cron runs every minute. Keep an active scan leased past ordinary scheduling jitter,
+    // while allowing each completed repository batch to advance on the next tick.
+    if (continuing && now - lastStart < 45000) return json({ ok: true, throttled: true });
     if (!continuing && lastSuccess && now - lastSuccess < 30000) return json({ ok: true, throttled: true, last_success_at: state?.last_success_at });
     await sb.from("source_sync_state").upsert({ provider: "github", status: "running", last_started_at: started.toISOString(), last_error: continuing ? state.last_error : null, updated_at: started.toISOString() }, { onConflict: "provider" });
 
     const repositories: any[] = [];
     for (let page = 1; ; page++) {
-      // Scan newest repositories first, so a newly created app is not stuck behind older repos.
+      // Keep repository ordering stable while the one-repository cursor advances through a full pass.
       const batch = await gh(`${GH}/user/repos?visibility=all&affiliation=owner,collaborator,organization_member&sort=created&direction=desc&per_page=100&page=${page}`, headers);
       repositories.push(...batch);
       if (batch.length < 100) break;
     }
     const startIndex = state?.status === "running" ? Math.min(Number(state.repositories_scanned || 0), repositories.length) : 0;
-    const batchRepositories = repositories.slice(startIndex, startIndex + 1);
+    const batchRepositories = repositories.slice(startIndex, startIndex + MAX_SYNC_REPOSITORIES_PER_INVOCATION);
     const totals = {
       applications: continuing ? Number(state.applications_discovered || 0) : 0,
       releases: continuing ? Number(state.releases_discovered || 0) : 0,
@@ -234,10 +264,20 @@ Deno.serve(async (request) => {
         const releaseRows = await gh(`${GH}/repos/${repo.full_name}/releases?per_page=50`, headers).catch(() => []);
         const releases = Array.isArray(releaseRows) ? releaseRows
           .filter((r: any) => !r.draft && (r.assets || []).some((a: any) => artifactKind(a.name)))
-          .sort((a: any, b: any) => Date.parse(b.published_at || b.created_at || 0) - Date.parse(a.published_at || a.created_at || 0)
-          ).slice(0, 2) : [];
+          .sort((a: any, b: any) => releaseActivity(b) - releaseActivity(a)).slice(0, 2) : [];
         const runs = await gh(`${GH}/repos/${repo.full_name}/actions/runs?status=success&per_page=10`, headers).catch(() => ({ workflow_runs: [] }));
-        const actionRuns = runs.workflow_runs || [];
+        const latestReleasedApk = Math.max(0, ...releases.flatMap((release: any) => (release.assets || [])
+          .filter((asset: any) => {
+            const kind = artifactKind(String(asset.name)); return kind !== null && kind !== "exe";
+          })
+          .map((asset: any) => Date.parse(asset.updated_at || release.published_at || release.created_at || "") || 0)));
+        // Only inspect workflow outputs newer than the latest published APK, and only from the
+        // repository's default branch. This avoids re-ingesting build archives already released
+        // and prevents unrelated PR/debug artifacts from exhausting a sync invocation.
+        const actionRuns = (runs.workflow_runs || []).filter((run: any) =>
+          run.head_branch === (repo.default_branch || "main") &&
+          (Date.parse(run.created_at || "") || 0) > latestReleasedApk
+        ).slice(0, 5);
         const platforms = new Set<string>(sourceFiles.map((f: any) => platform(artifactKind(String(f.path)) || "")));
         for (const release of releases) for (const asset of release.assets || []) {
           const kind = artifactKind(String(asset.name)); if (kind) platforms.add(platform(kind));
@@ -256,14 +296,14 @@ Deno.serve(async (request) => {
             // Artifact names are user-defined and often do not mention APK/Android. Inspect the
             // archive contents instead, so a generic artifact name cannot hide a valid APK.
             const archiveSize = Number(item.size_in_bytes || 0);
-            if (item.expired || archiveSize <= 0 || archiveSize > 80 * 1024 * 1024 || downloadedArchiveBytes + archiveSize > MAX_WORKFLOW_ARCHIVE_BYTES_PER_REPO) continue;
+            if (item.expired || archiveSize <= 0 || archiveSize > 35 * 1024 * 1024 || downloadedArchiveBytes + archiveSize > MAX_WORKFLOW_ARCHIVE_BYTES_PER_REPO) continue;
             const releaseId = `github-actions-artifact-${item.id}`;
             const existing = app && await sb.from("releases").select("id").eq("application_id", app.id).eq("source_release_id", releaseId).maybeSingle();
             if (existing?.error) throw existing.error;
             if (existing?.data) continue;
             inspectedActionArtifacts++;
             const response = await fetch(item.archive_download_url, { headers });
-            if (!response.ok || Number(response.headers.get("content-length") || 0) > 100 * 1024 * 1024) continue;
+            if (!response.ok || Number(response.headers.get("content-length") || 0) > 40 * 1024 * 1024) continue;
             const archive = new Uint8Array(await response.arrayBuffer());
             downloadedArchiveBytes += archive.byteLength;
             const binaries = await archiveBinaries(archive);
@@ -298,7 +338,7 @@ Deno.serve(async (request) => {
         }
         if (!app) throw new Error(`Could not register ${repo.full_name} in the AEM catalog.`);
 
-        const save = async (release: any, filename: string, bytes: Uint8Array, kind: string, path: string, metadata: any = {}) => {
+        const save = async (release: any, filename: string, bytes: Uint8Array, kind: string, path: string, metadata: any = {}, source: any = {}) => {
           const upload = await sb.storage.from("aem-artifacts").upload(path, bytes, {
             contentType: kind === "apk" ? "application/vnd.android.package-archive" : kind === "exe" ? "application/vnd.microsoft.portable-executable" : "application/octet-stream",
             upsert: true,
@@ -309,6 +349,8 @@ Deno.serve(async (request) => {
             release_id: release.id, platform: platform(kind), kind, filename,
             download_url: `${Deno.env.get("SUPABASE_URL")}/storage/v1/object/public/aem-artifacts/${path}`,
             size_bytes: bytes.byteLength, sha256: hash,
+            source_sha256: source.sha256 || hash,
+            source_updated_at: source.updatedAt || null,
             package_identity: kind === "exe" ? `github:${app!.project}` : metadata.packageName || app!.package_identity || null,
             version_code: metadata.versionCode ?? null,
             signing_status: kind === "apk" ? "pending" : "ready",
@@ -338,37 +380,75 @@ Deno.serve(async (request) => {
 
         for (const release of releases) {
           const name = String(release.tag_name || release.name || "unknown"), id = `github-release-${release.id}`;
-          const validAssets: Array<{asset:any;kind:string;bytes?:Uint8Array;metadata:any;digest?:string}> = [];
+          const existingRelease = await sb.from("releases").select("id").eq("application_id", app.id).eq("source_release_id", id).maybeSingle();
+          if (existingRelease.error) throw existingRelease.error;
+          const validAssets: Array<{asset:any;kind:string;bytes?:Uint8Array;metadata:any;digest?:string;external?:boolean;sourceUpdatedAt?:string|null}> = [];
           for (const asset of (release.assets || []).filter((x: any) => artifactKind(String(x.name)) && Number(x.size || 0) <= 300 * 1024 * 1024)) {
             const kind = artifactKind(String(asset.name))!;
             const size = Number(asset.size || 0);
             const digest = String(asset.digest || "").replace(/^sha256:/i, "").toLowerCase();
+            const sourceUpdatedAt = asset.updated_at || release.published_at || release.created_at || null;
+            const hasSourceDigest = /^[a-f0-9]{64}$/.test(digest);
+            if (existingRelease.data) {
+              const cached = await sb.from("artifacts").select("source_sha256,source_updated_at")
+                .eq("release_id", existingRelease.data.id).eq("filename", String(asset.name)).maybeSingle();
+              if (cached.error) throw cached.error;
+              const cachedUpdatedAt = cached.data?.source_updated_at ? Date.parse(cached.data.source_updated_at) : 0;
+              const currentUpdatedAt = sourceUpdatedAt ? Date.parse(sourceUpdatedAt) : 0;
+              const unchanged = hasSourceDigest
+                ? cached.data?.source_sha256 === digest
+                : Boolean(cachedUpdatedAt && currentUpdatedAt && cachedUpdatedAt === currentUpdatedAt);
+              // A central signature changes the stored APK checksum. Compare the upstream digest
+              // and timestamp instead, so unchanged releases remain ready and are not re-signed.
+              if (unchanged) continue;
+            }
             // Large public EXEs stay on GitHub; never spend AEM Storage on Windows installers.
             if (kind === "exe" && !repo.private && size > 50 * 1024 * 1024 && /^[a-f0-9]{64}$/.test(digest)) {
-              validAssets.push({asset,kind,metadata:{},digest});
+              validAssets.push({asset,kind,metadata:{},digest,sourceUpdatedAt});
               continue;
             }
-            if (size > 50 * 1024 * 1024) continue;
+            const oversizedPublicApk = kind === "apk" && !repo.private && size > 50 * 1024 * 1024 && size <= MAX_PUBLIC_RELEASE_APK_BYTES;
+            if (size > 50 * 1024 * 1024 && !oversizedPublicApk) continue;
             const response = await fetch(asset.browser_download_url, { headers }); if (!response.ok) continue;
             const bytes = new Uint8Array(await response.arrayBuffer());
             const metadata = kind === "apk" ? await apkMetadata(bytes) : {};
-            // Reject malformed/test APKs before creating a release row, leaving no empty release behind.
-            if (kind === "apk" && !metadata.packageName) continue;
-            validAssets.push({asset,kind,bytes,metadata});
+            // Reject malformed APKs. Large direct GitHub APKs must also carry an APK v1/v2/v3
+            // signature; they bypass AEM's signing queue and therefore must already be installable.
+            if (kind === "apk" && (!metadata.packageName || (oversizedPublicApk && !apkHasSignature(bytes)))) continue;
+            if (oversizedPublicApk) {
+              validAssets.push({asset,kind,metadata,digest:/^[a-f0-9]{64}$/.test(digest)?digest:undefined,external:true,sourceUpdatedAt});
+            } else {
+              validAssets.push({asset,kind,bytes,metadata,digest:hasSourceDigest?digest:undefined,sourceUpdatedAt});
+            }
           }
           if (!validAssets.length) continue;
           const row = await ensureRelease(id, name, name, release.name || name, release.published_at || release.created_at);
           for (const item of validAssets) {
-            const {asset,kind,bytes,metadata,digest} = item;
+            const {asset,kind,bytes,metadata,digest,sourceUpdatedAt} = item;
             if (kind === "exe" && !repo.private && Number(asset.size || 0) > 50 * 1024 * 1024 && digest) {
               const payload = { release_id: row.id, platform: "windows", kind, filename: String(asset.name), download_url: asset.browser_download_url,
-                size_bytes: Number(asset.size), sha256: digest, package_identity: `github:${repo.full_name}`, signing_status: "ready" };
+                size_bytes: Number(asset.size), sha256: digest, source_sha256: digest, source_updated_at: sourceUpdatedAt,
+                package_identity: `github:${repo.full_name}`, signing_status: "ready" };
               const prior = await sb.from("artifacts").select("id").eq("release_id", row.id).eq("filename", String(asset.name)).maybeSingle();
               const result = prior.data ? await sb.from("artifacts").update(payload).eq("id", prior.data.id) : await sb.from("artifacts").insert(payload);
               if (result.error) throw result.error;
               totals.artifacts++;
+            } else if (kind === "apk" && item.external) {
+              const payload = { release_id: row.id, platform: "android", kind, filename: String(asset.name), download_url: asset.browser_download_url,
+                size_bytes: Number(asset.size), sha256: digest || null, source_sha256: digest || null, source_updated_at: sourceUpdatedAt,
+                package_identity: metadata.packageName || app!.package_identity || null,
+                version_code: metadata.versionCode ?? null, signing_status: "ready" };
+              const prior = await sb.from("artifacts").select("id").eq("release_id", row.id).eq("filename", String(asset.name)).maybeSingle();
+              const result = prior.data ? await sb.from("artifacts").update(payload).eq("id", prior.data.id) : await sb.from("artifacts").insert(payload);
+              if (result.error) throw result.error;
+              totals.artifacts++;
+              if (metadata.packageName && !app!.package_identity) {
+                app!.package_identity = metadata.packageName;
+                await sb.from("applications").update({ package_identity: metadata.packageName, updated_at: new Date().toISOString() }).eq("id", app!.id);
+              }
             } else if (bytes) {
-              await save(row, String(asset.name), bytes, kind, `${repo.full_name}/${safeName(name)}/${safeName(String(asset.name))}`, metadata);
+              await save(row, String(asset.name), bytes, kind, `${repo.full_name}/${safeName(name)}/${safeName(String(asset.name))}`, metadata,
+                {sha256:digest, updatedAt:sourceUpdatedAt});
             }
           }
         }

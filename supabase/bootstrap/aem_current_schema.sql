@@ -63,7 +63,9 @@ create table public.artifacts (
   version_code bigint,
   signing_status text not null default 'ready' check (signing_status in ('ready','pending','processing','failed')),
   signing_authority text not null default 'source' check (signing_authority in ('source','aem')),
-  signing_error text
+  signing_error text,
+  source_sha256 text,
+  source_updated_at timestamptz
 );
 create index artifacts_release_idx on public.artifacts(release_id);
 create index artifacts_signing_status_idx on public.artifacts(signing_status);
