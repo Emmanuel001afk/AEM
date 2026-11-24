@@ -11,6 +11,48 @@ public final class AemPackageArchive {
     private static final long MAX_TOTAL = 4L * 1024 * 1024 * 1024;
     private AemPackageArchive() {}
 
+    public interface ProgressListener {
+        void onProgress(long copiedBytes, long totalBytes);
+    }
+
+    /**
+     * Wrap already-compressed APK files in an .apks ZIP without spending phone CPU trying to
+     * recompress their contents. APKs are ZIP containers themselves, so DEFLATE level zero keeps
+     * the bundle compatible while making preparation effectively a sequential copy.
+     */
+    public static void writeApkBundle(List<File> sources, File output, ProgressListener progress) throws IOException {
+        if (sources == null || sources.isEmpty()) throw new IOException("No APK components to package");
+        long total = 0L;
+        for (File source : sources) {
+            if (source == null || !source.isFile() || !source.canRead() || source.length() <= 0L) {
+                throw new IOException("An APK component is missing or unreadable");
+            }
+            if (Long.MAX_VALUE - total < source.length()) throw new IOException("APK bundle is too large");
+            total += source.length();
+        }
+
+        byte[] buffer = new byte[256 * 1024];
+        long copied = 0L;
+        try (ZipOutputStream zip = new ZipOutputStream(new BufferedOutputStream(new FileOutputStream(output), 128 * 1024))) {
+            zip.setLevel(Deflater.NO_COMPRESSION);
+            for (int index = 0; index < sources.size(); index++) {
+                File source = sources.get(index);
+                ZipEntry entry = new ZipEntry(index == 0 ? "base.apk" : "split-" + index + ".apk");
+                zip.putNextEntry(entry);
+                try (InputStream in = new BufferedInputStream(new FileInputStream(source), 128 * 1024)) {
+                    int read;
+                    while ((read = in.read(buffer)) != -1) {
+                        if (read == 0) continue;
+                        zip.write(buffer, 0, read);
+                        copied += read;
+                        if (progress != null) progress.onProgress(copied, total);
+                    }
+                }
+                zip.closeEntry();
+            }
+        }
+    }
+
     public static ArrayList<File> extract(File archive, File destination) throws IOException {
         ArrayList<File> result = new ArrayList<>();
         HashSet<String> names = new HashSet<>();
