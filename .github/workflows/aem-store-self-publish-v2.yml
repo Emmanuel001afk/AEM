@@ -15,9 +15,23 @@ concurrency:
 
 jobs:
   publish:
-    if: ${{ github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main' && github.event.workflow_run.event != 'pull_request' }}
+    # Do not let optional emulator/desktop checks block a good signed Android APK.
+    # The job-level source-workflow conclusion may be failure even when the APK
+    # build/sign job succeeded, so verify that required job directly below.
+    if: ${{ github.event.workflow_run.head_branch == 'main' && github.event.workflow_run.event != 'pull_request' }}
     runs-on: ubuntu-latest
     steps:
+      - name: Require the Android APK build and signing job to have succeeded
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_RUN_ID: ${{ github.event.workflow_run.id }}
+        run: |
+          set -euo pipefail
+          conclusion="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${SOURCE_RUN_ID}/jobs" --jq '.jobs[] | select(.name == "Build and sign Android APK / android") | .conclusion')"
+          if [ "$conclusion" != "success" ]; then
+            echo "Android build/sign job did not succeed (conclusion: ${conclusion:-missing}); refusing to publish." >&2
+            exit 1
+          fi
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.event.workflow_run.head_sha }}
