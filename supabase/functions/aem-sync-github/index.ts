@@ -352,6 +352,7 @@ Deno.serve(async (request) => {
             size_bytes: bytes.byteLength, sha256: hash,
             source_sha256: source.sha256 || hash,
             source_updated_at: source.updatedAt || null,
+            artifact_version_name: metadata.versionName || null,
             package_identity: kind === "exe" ? `github:${app!.project}` : metadata.packageName || app!.package_identity || null,
             version_code: metadata.versionCode ?? null,
             signing_status: kind === "apk" ? "pending" : "ready",
@@ -437,6 +438,7 @@ Deno.serve(async (request) => {
             } else if (kind === "apk" && item.external) {
               const payload = { release_id: row.id, platform: "android", kind, filename: String(asset.name), download_url: asset.browser_download_url,
                 size_bytes: Number(asset.size), sha256: digest || null, source_sha256: digest || null, source_updated_at: sourceUpdatedAt,
+                artifact_version_name: metadata.versionName || null,
                 package_identity: metadata.packageName || app!.package_identity || null,
                 version_code: metadata.versionCode ?? null, signing_status: "ready" };
               const prior = await sb.from("artifacts").select("id").eq("release_id", row.id).eq("filename", String(asset.name)).maybeSingle();
@@ -475,7 +477,8 @@ Deno.serve(async (request) => {
           for (const binary of binaries) {
             const kind = artifactKind(binary.name);
             if (kind) await save(row, binary.name, binary.bytes, kind,
-              `${repo.full_name}/actions/${item.id}/${safeName(binary.name)}`, binary);
+              `${repo.full_name}/actions/${item.id}/${safeName(binary.name)}`, binary,
+              {updatedAt:item.updated_at || item.created_at || run.updated_at || run.created_at});
           }
         }
         await retainCurrentAndPreviousApks(sb, Number(app.id));

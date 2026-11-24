@@ -208,6 +208,8 @@ public class AemTransferActivity extends Activity {
     private boolean firstReceiverRecordInvalidLogged = false;
     private boolean firstReceiverTimingLogged = false;
     private long p2pConnectStartedAt = 0L;
+    private Runnable busyConnectRetry;
+    private static final int MAX_P2P_BUSY_RETRIES = 2;
     private static final long DISCOVERY_INTERVAL_MS = 2800L;
     private final ArrayList<ActiveReceive> activeReceives = new ArrayList<>();
 
@@ -2223,7 +2225,7 @@ public class AemTransferActivity extends Activity {
         }
 
         content.addView(spacer(2));
-        TextView stop = pill("Stop scanning", false, 42);
+        TextView stop = pill(scanning ? "Stop scanning" : "Close nearby list", false, 42);
         stop.setOnClickListener(new View.OnClickListener() {
             @Override public void onClick(View view) {
                 stopDiscovery();
@@ -2887,6 +2889,10 @@ public class AemTransferActivity extends Activity {
     }
 
     private void failLink(String message) {
+        if (busyConnectRetry != null) {
+            ui.removeCallbacks(busyConnectRetry);
+            busyConnectRetry = null;
+        }
         if (p2pConnectStartedAt > 0L) {
             logTiming("sender_p2p_link_failed", "elapsed_ms=" + elapsedMillisSince(p2pConnectStartedAt));
             p2pConnectStartedAt = 0L;
@@ -3119,16 +3125,49 @@ public class AemTransferActivity extends Activity {
         ui.postDelayed(discoveryLoop, DISCOVERY_INTERVAL_MS);
     }
 
-    private void pauseDiscoveryForConnection() {
+    private void pauseDiscoveryForConnection(final Runnable onReady) {
         scanning = false;
         cancelDiscoveryLoop();
-        if (p2p == null || p2pChannel == null) return;
-        try { p2p.stopPeerDiscovery(p2pChannel, noop()); } catch (Exception ignored) { }
+        if (p2p == null || p2pChannel == null) {
+            if (onReady != null) onReady.run();
+            return;
+        }
+        final Runnable clearRequests = new Runnable() {
+            @Override public void run() {
+                final WifiP2pDnsSdServiceRequest request = serviceRequest;
+                serviceRequest = null;
+                if (request == null) {
+                    if (onReady != null) onReady.run();
+                    return;
+                }
+                try {
+                    p2p.removeServiceRequest(p2pChannel, request, new WifiP2pManager.ActionListener() {
+                        @Override public void onSuccess() { if (onReady != null) onReady.run(); }
+                        @Override public void onFailure(int reason) {
+                            logTiming("sender_service_request_remove_failed", "reason=" + reason);
+                            try {
+                                p2p.clearServiceRequests(p2pChannel, new WifiP2pManager.ActionListener() {
+                                    @Override public void onSuccess() { if (onReady != null) onReady.run(); }
+                                    @Override public void onFailure(int clearReason) {
+                                        logTiming("sender_service_requests_clear_failed", "reason=" + clearReason);
+                                        if (onReady != null) onReady.run();
+                                    }
+                                });
+                            } catch (Exception ignored) { if (onReady != null) onReady.run(); }
+                        }
+                    });
+                } catch (Exception ignored) { if (onReady != null) onReady.run(); }
+            }
+        };
         try {
-            if (serviceRequest != null) p2p.removeServiceRequest(p2pChannel, serviceRequest, noop());
-            else p2p.clearServiceRequests(p2pChannel, noop());
-        } catch (Exception ignored) { }
-        serviceRequest = null;
+            p2p.stopPeerDiscovery(p2pChannel, new WifiP2pManager.ActionListener() {
+                @Override public void onSuccess() { clearRequests.run(); }
+                @Override public void onFailure(int reason) {
+                    logTiming("sender_discovery_stop_for_connect_failed", "reason=" + reason);
+                    clearRequests.run();
+                }
+            });
+        } catch (Exception ignored) { clearRequests.run(); }
         logTiming("sender_discovery_paused_for_connect", "elapsed_ms=" + elapsedMillisSince(discoveryStartedAt));
     }
 
@@ -3174,15 +3213,26 @@ public class AemTransferActivity extends Activity {
         senderRole = true;
         connectPending = true;
         sessionActive.set(true);
-        showTransferBanner("Connecting to " + peer.name, "Approve the connection on both phones if Android asks", 0, false);
-        pauseDiscoveryForConnection();
+        showTransferBanner("Connecting to " + peer.name, "Preparing Wi-Fi Direct. Keep the other phone on Receive.", 0, false);
+        p2pConnectStartedAt = SystemClock.elapsedRealtime();
+        pauseDiscoveryForConnection(new Runnable() {
+            @Override public void run() {
+                ui.postDelayed(new Runnable() {
+                    @Override public void run() { requestP2pConnection(peer, 0); }
+                }, 350L);
+            }
+        });
+    }
+
+    private void requestP2pConnection(final Peer peer, final int busyRetries) {
+        if (peer == null || !connectPending || !sessionActive.get()) return;
         try {
             WifiP2pConfig config = new WifiP2pConfig();
             config.deviceAddress = peer.address;
             config.wps.setup = WpsInfo.PBC;
             config.groupOwnerIntent = 0; // keep the receiver as group owner so the sender can dial it
-            p2pConnectStartedAt = SystemClock.elapsedRealtime();
-            logTiming("sender_p2p_connect_requested", "peer_compatible=" + peer.compatible);
+            logTiming("sender_p2p_connect_requested", "peer_compatible=" + peer.compatible
+                    + " busy_retry=" + busyRetries);
             p2p.connect(p2pChannel, config, new WifiP2pManager.ActionListener() {
                 @Override public void onSuccess() {
                     logTiming("sender_p2p_connect_action_success", "elapsed_ms=" + elapsedMillisSince(p2pConnectStartedAt));
@@ -3191,16 +3241,65 @@ public class AemTransferActivity extends Activity {
                 }
                 @Override public void onFailure(int reason) {
                     logTiming("sender_p2p_connect_action_failed", "reason=" + reason
+                            + " busy_retry=" + busyRetries
                             + " elapsed_ms=" + elapsedMillisSince(p2pConnectStartedAt));
-                    failLink("Android refused the connection (" + reason + "). Move the phones closer and try again.");
+                    if (reason == WifiP2pManager.BUSY && busyRetries < MAX_P2P_BUSY_RETRIES) {
+                        retryBusyP2pConnection(peer, busyRetries + 1);
+                        return;
+                    }
+                    failLink(p2pFailureMessage(reason));
                 }
             });
         } catch (Exception error) {
-            failLink("Could not start the connection.");
+            failLink("Could not start the Wi-Fi Direct connection. Check that Wi-Fi is on, then scan again.");
         }
     }
 
+    private void retryBusyP2pConnection(final Peer peer, final int nextRetry) {
+        showTransferBanner("Wi-Fi Direct is busy", "Clearing the previous scan and retrying the connection…", 0, false);
+        pauseDiscoveryForConnection(new Runnable() {
+            @Override public void run() {
+                final Runnable retry = new Runnable() {
+                    @Override public void run() {
+                        busyConnectRetry = null;
+                        requestP2pConnection(peer, nextRetry);
+                    }
+                };
+                try {
+                    p2p.removeGroup(p2pChannel, new WifiP2pManager.ActionListener() {
+                        @Override public void onSuccess() { busyConnectRetry = retry; ui.postDelayed(retry, 900L); }
+                        @Override public void onFailure(int reason) {
+                            logTiming("sender_stale_group_remove_failed", "reason=" + reason);
+                            busyConnectRetry = retry;
+                            ui.postDelayed(retry, 900L);
+                        }
+                    });
+                } catch (Exception ignored) {
+                    busyConnectRetry = retry;
+                    ui.postDelayed(retry, 900L);
+                }
+            }
+        });
+    }
+
+    private String p2pFailureMessage(int reason) {
+        if (reason == WifiP2pManager.BUSY) {
+            return "Android Wi-Fi Direct is still busy after retries. Close any other Wi-Fi Direct session on this phone, then tap Scan again.";
+        }
+        if (reason == WifiP2pManager.P2P_UNSUPPORTED) {
+            return "This phone or its current Wi-Fi configuration does not support Wi-Fi Direct. Check Wi-Fi settings or use another transfer method.";
+        }
+        if (reason == WifiP2pManager.ERROR) {
+            return "Android could not start Wi-Fi Direct. Check that Wi-Fi is enabled on both phones, then scan again.";
+        }
+        return "Android rejected the Wi-Fi Direct connection (error " + reason + "). Check Wi-Fi Direct is available on both phones, then scan again.";
+    }
+
     private void disconnectLink() {
+        if (busyConnectRetry != null) {
+            ui.removeCallbacks(busyConnectRetry);
+            busyConnectRetry = null;
+        }
         if (sendingNow.get()) {
             sendAborted = true;
         }

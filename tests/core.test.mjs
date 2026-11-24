@@ -71,6 +71,12 @@ test('Store resolves the laptop and Android host format independently of desktop
  assert.equal(appCardVersion(app,'windows'),'Windows EXE · Version 3.4.5');
  assert.equal(primaryReleaseInfo(app,'android').platform,'android');
  assert.equal(primaryReleaseInfo(app,'windows').platform,'windows');
+ const refreshed={...app,latest:{version:{name:'apk-latest',code:12},publishedAt:'2026-10-13T20:07:18Z',artifacts:[{...apk,versionName:'6.2.4',sourceUpdatedAt:'2026-11-24T10:22:25Z'}]}};
+ assert.equal(primaryReleaseInfo(refreshed,'android').version,'6.2.4');
+ assert.equal(primaryReleaseInfo(refreshed,'android').dateLabel,'APK updated 2026-11-24');
+ assert.equal(appCardVersion(refreshed,'android'),'Android APK · Version 6.2.4 · APK updated 2026-11-24');
+ const dateOnly={...app,latest:{version:{name:'tag-v1'},publishedAt:'2026-10-13T20:07:18Z',artifacts:[apk]}};
+ assert.equal(primaryReleaseInfo(dateOnly,'android').dateLabel,'Release published 2026-10-13');
  const unverified={...app,windowsLatest:{version:{name:'9.9.9'},artifacts:[{...exe,sha256:''}]}};
  assert.equal(platformSummary(unverified,'windows'),'Android APK');
  assert.match(appCardVersion(unverified,'windows'),/no Windows EXE available/);

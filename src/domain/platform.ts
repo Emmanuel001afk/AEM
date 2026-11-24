@@ -12,6 +12,19 @@ export interface HostPlatformSignals {
   userAgent?: string;
 }
 
+function formatIsoDate(value?: string): string | undefined {
+  if (!value) return undefined;
+  const date = new Date(value);
+  return Number.isFinite(date.getTime()) ? date.toISOString().slice(0, 10) : undefined;
+}
+
+function artifactDateLabel(artifact: any, release: any, assetLabel: string): string | undefined {
+  const updated = formatIsoDate(artifact?.sourceUpdatedAt ?? artifact?.source_updated_at);
+  if (updated) return `${assetLabel} updated ${updated}`;
+  const published = formatIsoDate(release?.publishedAt ?? release?.published_at);
+  return published ? `Release published ${published}` : undefined;
+}
+
 function classifyPlatform(value?: string): StoreHostPlatform | undefined {
   const platform = String(value || "").trim().toLowerCase();
   if (!platform) return undefined;
@@ -81,7 +94,7 @@ export function platformSummary(app: any, host: StoreHostPlatform): string {
 export function primaryReleaseInfo(app: any, host: StoreHostPlatform) {
   const android = androidArtifact(app?.latest, app?.packageIdentity);
   const windows = windowsArtifacts(app?.windowsLatest)[0];
-  const androidVersion = String(app?.latest?.version?.name || "Unknown version");
+  const androidVersion = String(android?.versionName || app?.latest?.version?.name || "Unknown version");
   const windowsVersion = String(app?.windowsLatest?.version?.name || "Unknown version");
 
   if (host === "windows" && windows) {
@@ -90,6 +103,7 @@ export function primaryReleaseInfo(app: any, host: StoreHostPlatform) {
       label: "Windows EXE",
       version: windowsVersion,
       detail: `Package · ${windows.packageIdentity}`,
+      dateLabel: artifactDateLabel(windows, app.windowsLatest, "Windows installer"),
       release: app.windowsLatest,
       artifact: windows,
     };
@@ -101,6 +115,7 @@ export function primaryReleaseInfo(app: any, host: StoreHostPlatform) {
       label: "Android APK",
       version: androidVersion,
       detail: `Version code · ${code ?? "unknown"}`,
+      dateLabel: artifactDateLabel(android, app.latest, "APK"),
       release: app.latest,
       artifact: android,
     };
@@ -112,6 +127,7 @@ export function primaryReleaseInfo(app: any, host: StoreHostPlatform) {
       label: "Android APK · no Windows EXE available",
       version: androidVersion,
       detail: `Version code · ${code ?? "unknown"} · APK requires Android or an emulator`,
+      dateLabel: artifactDateLabel(android, app.latest, "APK"),
       release: app.latest,
       artifact: android,
     };
@@ -122,6 +138,7 @@ export function primaryReleaseInfo(app: any, host: StoreHostPlatform) {
       label: host === "android" ? "Windows EXE · for Windows only" : "Windows EXE",
       version: windowsVersion,
       detail: `Package · ${windows.packageIdentity}`,
+      dateLabel: artifactDateLabel(windows, app.windowsLatest, "Windows installer"),
       release: app.windowsLatest,
       artifact: windows,
     };
@@ -133,7 +150,8 @@ export function appCardVersion(app: any, host: StoreHostPlatform, installed?: { 
   const info = primaryReleaseInfo(app, host);
   if (!info) return installed ? `Installed ${installed.versionName}` : "No installable release published";
   const installedLabel = info.platform === "android" && installed ? ` · Installed ${installed.versionName}` : "";
-  return `${info.label} · Version ${info.version}${installedLabel}`;
+  const dateLabel = info.dateLabel ? ` · ${info.dateLabel}` : "";
+  return `${info.label} · Version ${info.version}${dateLabel}${installedLabel}`;
 }
 
 export function androidActionLabel(action: string): string {

@@ -65,7 +65,8 @@ create table public.artifacts (
   signing_authority text not null default 'source' check (signing_authority in ('source','aem')),
   signing_error text,
   source_sha256 text,
-  source_updated_at timestamptz
+  source_updated_at timestamptz,
+  artifact_version_name text
 );
 create index artifacts_release_idx on public.artifacts(release_id);
 create index artifacts_signing_status_idx on public.artifacts(signing_status);
