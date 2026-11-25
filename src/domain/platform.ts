@@ -19,10 +19,13 @@ function formatIsoDate(value?: string): string | undefined {
 }
 
 function artifactDateLabel(artifact: any, release: any, assetLabel: string): string | undefined {
-  const updated = formatIsoDate(artifact?.sourceUpdatedAt ?? artifact?.source_updated_at);
-  if (updated) return `${assetLabel} updated ${updated}`;
+  // Catalog timing means the upstream release's publication date. An asset can be
+  // replaced/re-uploaded well after a release, so its update timestamp must not
+  // silently become the release date shown to users.
   const published = formatIsoDate(release?.publishedAt ?? release?.published_at);
-  return published ? `Release published ${published}` : undefined;
+  if (published) return `Release published ${published}`;
+  const updated = formatIsoDate(artifact?.sourceUpdatedAt ?? artifact?.source_updated_at);
+  return updated ? `${assetLabel} asset updated ${updated}` : undefined;
 }
 
 function classifyPlatform(value?: string): StoreHostPlatform | undefined {

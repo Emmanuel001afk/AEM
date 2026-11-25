@@ -1,5 +1,5 @@
 import {selectLatestWindowsRelease} from "../../domain/version";
-import type {StoreApp} from "../../domain/catalog";
+import {selectPendingAndroidUpdate,type StoreApp} from "../../domain/catalog";
 import {supabaseRequest} from "../supabase/client";
 
 export async function loadSupabaseCatalog():Promise<StoreApp[]>{
@@ -12,26 +12,23 @@ export async function loadSupabaseCatalog():Promise<StoreApp[]>{
   // The actionable catalog release must have a ready Android artifact.
   // A newer published release with signing_status=pending/processing must not
   // block installation/update from the newest already-ready APK.
-  const latestRelease=(()=>{
-   const list=releases.filter((x:any)=>{
-    if(x.status!=="published")return false;
-    return (x.artifacts||[]).some((z:any)=>z.platform==="android"&&
-      ["apk","apks","xapk","apkm"].includes(String(z.kind||"").toLowerCase()) &&
-      (z.signing_status??z.signingStatus)==="ready");
-   }).sort((x:any,y:any)=>{
-    const yc=Math.max(Number(y.version_code??0),...(y.artifacts||[]).map((z:any)=>Number(z.version_code??0)));
-    const xc=Math.max(Number(x.version_code??0),...(x.artifacts||[]).map((z:any)=>Number(z.version_code??0)));
-    if(yc!==xc)return yc-xc;
-    const yHasRelease=y.artifacts?.some((z:any)=>z.platform==="android"&&["apk","apks","xapk","apkm"].includes(String(z.kind||"").toLowerCase())&&!/(^|[-_. ])debug([-. _]|$)/i.test(String(z.filename||""))) ? 1 : 0;
-    const xHasRelease=x.artifacts?.some((z:any)=>z.platform==="android"&&["apk","apks","xapk","apkm"].includes(String(z.kind||"").toLowerCase())&&!/(^|[-_. ])debug([-. _]|$)/i.test(String(z.filename||""))) ? 1 : 0;
-    if(yHasRelease!==xHasRelease)return yHasRelease-xHasRelease;
-    return new Date(y.published_at||y.created_at).getTime()-new Date(x.published_at||x.created_at).getTime();
-   });
-   const x=list[0];if(!x)return undefined;
-   return toRelease(x);
-  })();
+  const androidKinds=["apk","apks","xapk","apkm"];
+  const androidArtifacts=(x:any)=> (x.artifacts||[]).filter((z:any)=>z.platform==="android"&&androidKinds.includes(String(z.kind||"").toLowerCase())&&(!a.package_identity||!z.package_identity||z.package_identity===a.package_identity));
+  const releaseCode=(x:any)=>Math.max(Number(x.version_code??0),...androidArtifacts(x).map((z:any)=>Number(z.version_code??0)));
+  const releaseOrder=(x:any,y:any)=>{
+   const codeDiff=releaseCode(y)-releaseCode(x);if(codeDiff)return codeDiff;
+   const yHasRelease=androidArtifacts(y).some((z:any)=>!/(^|[-_. ])debug([-. _]|$)/i.test(String(z.filename||"")))?1:0;
+   const xHasRelease=androidArtifacts(x).some((z:any)=>!/(^|[-_. ])debug([-. _]|$)/i.test(String(z.filename||"")))?1:0;
+   if(yHasRelease!==xHasRelease)return yHasRelease-xHasRelease;
+   return new Date(y.published_at||y.created_at).getTime()-new Date(x.published_at||x.created_at).getTime();
+  };
+  const readyReleases=releases.filter((x:any)=>x.status==="published"&&androidArtifacts(x).some((z:any)=>(z.signing_status??z.signingStatus)==="ready")).sort(releaseOrder);
+  const latestRow=readyReleases[0];
+  const latestRelease=latestRow?toRelease(latestRow):undefined;
+  const latestReadyCode=latestRow?releaseCode(latestRow):0;
+  const pendingAndroidUpdate=selectPendingAndroidUpdate(releases,a.package_identity,latestReadyCode);
   const windowsLatest=selectLatestWindowsRelease(releases.map(toRelease));
   const catalogPackageIdentity=latestRelease?.artifacts?.find((z:any)=>z.platform==="android"&&z.packageIdentity)?.packageIdentity||a.package_identity||releases.flatMap((x:any)=>x.artifacts||[]).map((z:any)=>z.package_identity).find(Boolean);
-  return {databaseId:Number(a.id),id:{provider:a.provider,project:a.project},packageIdentity:catalogPackageIdentity,name:a.name,description:a.description,sourceUrl:a.source_url,iconUrl:a.icon_url,platforms:a.platforms??[],category:a.category??"Other",functionality:a.functionality??[],screenshots:a.screenshots??[],permissions:a.permissions??[],latest:latestRelease,windowsLatest};
+  return {databaseId:Number(a.id),id:{provider:a.provider,project:a.project},packageIdentity:catalogPackageIdentity,name:a.name,description:a.description,sourceUrl:a.source_url,iconUrl:a.icon_url,platforms:a.platforms??[],category:a.category??"Other",functionality:a.functionality??[],screenshots:a.screenshots??[],permissions:a.permissions??[],latest:latestRelease,windowsLatest,pendingAndroidUpdate};
  });
 }
