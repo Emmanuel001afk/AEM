@@ -4220,19 +4220,20 @@ public class AemTransferActivity extends Activity {
                         if (now - paintedAt > 150L) {
                             paintedAt = now;
                             final long doneSnapshot = doneBytes;
-                            final String detail = percent(doneSnapshot, total) + "% · " + meter.update(doneSnapshot) + " · " + baseName(header.path);
-                            final int value = percent(doneSnapshot, total);
+                            final long totalSnapshot = total;
+                            final String detail = percent(doneSnapshot, totalSnapshot) + "% · " + meter.update(doneSnapshot) + " · " + baseName(header.path);
+                            final int value = percent(doneSnapshot, totalSnapshot);
                             runOnUiThread(new Runnable() {
                                 @Override public void run() {
                                     showTransferBanner("Receiving from " + senderLabel, detail, value, true);
                                     if (active.pctView != null && active.pctView.getParent() != null) {
-                                        active.pctView.setText(total > 0 ? value + "%" : "…");
+                                        active.pctView.setText(totalSnapshot > 0 ? value + "%" : "…");
                                     }
                                     if (active.progressBar != null && active.progressBar.getParent() != null) {
                                         active.progressBar.setProgress(value);
                                     }
                                     if (active.detailView != null && active.detailView.getParent() != null) {
-                                        active.detailView.setText(active.count + (active.count == 1 ? " file" : " files") + " · " + format(doneSnapshot) + " / " + format(total));
+                                        active.detailView.setText(active.count + (active.count == 1 ? " file" : " files") + " · " + format(doneSnapshot) + " / " + format(totalSnapshot));
                                     }
                                 }
                             });
