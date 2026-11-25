@@ -46,9 +46,14 @@ action (retry, open settings, open downloads) instead of a dead status line.
    non-actionable “Waiting” row until AEM receives that authenticated record.
    The sender keeps service discovery separate from peer scans because the
    current AEM handshake cannot securely send without the receiver token.
-4. Selecting a receiver pauses discovery before setting `groupOwnerIntent = 0`
-   and connecting, so periodic scans do not race Wi-Fi Direct group negotiation.
-   It then opens the receiver's TCP server on port **38177**.
+4. Selecting a receiver stops peer discovery and removes the DNS-SD service
+   request through Android's completion callbacks before setting
+   `groupOwnerIntent = 0` and connecting. A short settle delay prevents the final
+   discovery operation from racing group negotiation. If Android returns
+   `WifiP2pManager.BUSY` (reason 2), AEM clears discovery, removes a stale group,
+   and retries twice before showing a reason-specific error. “Busy” is not
+   reported as a distance problem. Once the group forms, the sender opens the
+   receiver's TCP server on port **38177**.
 5. The receiver shows an **Incoming transfer** dialog with the sender name, item
    count and size. Decline is reported to the sender as a first-class result and
    is never retried.
