@@ -128,15 +128,18 @@ export default function PeerTransfer(){
 
 function PeerRow({transfer,busy,onResume,onCancel,onRemove}:{transfer:PeerTransfer;busy:boolean;onResume:()=>void;onCancel:()=>void;onRemove:()=>void}){
   const pct=transfer.size>0?Math.min(100,Math.round(Math.min(transfer.offset,transfer.size)/transfer.size*100)):0;
+  const isTerminal=transfer.state==='complete'||transfer.state==='declined'||transfer.state==='cancelled'||transfer.state==='failed';
+  const canResume=transfer.direction==='send'&&(transfer.state==='pending'||transfer.state==='failed');
+  const canCancel=transfer.state==='queued'||transfer.state==='pending';
   return <article className="card compact peer-queue">
     <strong>{transfer.name}</strong>
     <p>{transfer.direction==='send'?`Sending to ${transfer.peerName}`:`From ${transfer.peerName}`} · {bytes(Math.min(transfer.offset,transfer.size))} / {bytes(transfer.size)} · {stateLabel[transfer.state]??transfer.state}{transfer.error?` — ${transfer.error}`:''}</p>
-    <div className="progress-track" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={pct} aria-label={`${transfer.name} progress`}><div className="progress-fill" style={{width:`${transfer.state==='complete'?100:pct}%`}}/></div>
+    <div className="progress-track" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={transfer.state==='complete'?100:pct} aria-label={`${transfer.name} progress`}><div className="progress-fill" style={{width:`${transfer.state==='complete'?100:pct}%`}}/></div>
     <small style={{overflowWrap:'anywhere'}}>SHA-256 {transfer.sha256||'not hashed yet'}</small>
     <div className="choice-row">
-      {transfer.direction==='send'&&transfer.state!=='complete'&&transfer.state!=='queued'&&<button className="choice" disabled={busy} onClick={onResume}>RESUME</button>}
-      {transfer.state!=='complete'&&<button className="choice" disabled={busy} onClick={onCancel}>CANCEL</button>}
-      {transfer.state==='complete'&&<button className="choice" disabled={busy} onClick={onRemove}>REMOVE FROM QUEUE</button>}
+      {canResume&&<button className="choice" disabled={busy} onClick={onResume}>RESUME</button>}
+      {canCancel&&<button className="choice" disabled={busy} onClick={onCancel}>CANCEL</button>}
+      {isTerminal&&<button className="choice" disabled={busy} onClick={onRemove}>REMOVE FROM QUEUE</button>}
     </div>
   </article>;
 }

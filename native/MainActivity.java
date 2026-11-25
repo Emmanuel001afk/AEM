@@ -31,7 +31,9 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(AemInstallerPlugin.class);
         registerPlugin(AemTransferPlugin.class);
         super.onCreate(savedInstanceState);
-        handleIncomingPackage(getIntent());
+        if (savedInstanceState == null) {
+            handleIncomingPackage(getIntent());
+        }
     }
 
     @Override protected void onNewIntent(Intent intent) {
@@ -43,6 +45,8 @@ public class MainActivity extends BridgeActivity {
     private void handleIncomingPackage(Intent intent) {
         if (intent == null || !Intent.ACTION_VIEW.equals(intent.getAction()) || intent.getData() == null) return;
         Uri uri = intent.getData();
+        String scheme = uri.getScheme();
+        if (!"content".equalsIgnoreCase(scheme) && !"file".equalsIgnoreCase(scheme)) return;
         String name = displayName(uri);
         String type = intent.getType() == null ? "" : intent.getType().toLowerCase(Locale.US);
         if (!isSupportedPackage(name, type)) return;
@@ -58,10 +62,12 @@ public class MainActivity extends BridgeActivity {
             android.widget.Toast.makeText(this, "An incoming package is already being prepared", android.widget.Toast.LENGTH_LONG).show();
             return;
         }
+        setIntent(new Intent(Intent.ACTION_MAIN));
         new Thread(() -> {
             File staging = null;
             try {
                 List<File> apks = materializePackage(uri, name, type);
+                if (apks.isEmpty()) throw new IOException("No APK components found");
                 staging = apks.get(0).getParentFile();
                 installApks(apks, name);
             } catch (Exception e) {
@@ -101,16 +107,17 @@ public class MainActivity extends BridgeActivity {
         File dir = new File(getCacheDir(), "incoming-packages-" + System.nanoTime());
         if (!dir.mkdirs()) throw new IOException("Cannot create package staging directory");
         try {
+            boolean isArchive = lower.endsWith(".apks") || lower.endsWith(".xapk") || lower.endsWith(".apkm") || lower.endsWith(".zip")
+                    || (!lower.endsWith(".apk") && "application/zip".equals(type));
+            if (!isArchive && (lower.endsWith(".apk") || "application/vnd.android.package-archive".equals(type))) {
+                File apk = new File(dir, "base.apk");
+                copyUri(uri, apk);
+                return Collections.singletonList(apk);
+            }
 
-        if (lower.endsWith(".apk") || "application/vnd.android.package-archive".equals(type)) {
-            File apk = new File(dir, "base.apk");
-            copyUri(uri, apk);
-            return Collections.singletonList(apk);
-        }
-
-        File archive = new File(dir, "package.zip");
-        copyUri(uri, archive);
-        return AemPackageArchive.extract(archive, dir);
+            File archive = new File(dir, "package.zip");
+            copyUri(uri, archive);
+            return AemPackageArchive.extract(archive, dir);
         } catch (Exception e) { AemPackageArchive.deleteTree(dir); throw e; }
     }
 

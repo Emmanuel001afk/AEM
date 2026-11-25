@@ -51,7 +51,7 @@ const api = {
     showFolder:()=>ipcRenderer.invoke('peer:showFolder'),
     onEvent:(cb:(event:unknown)=>void)=>{const h=(_:any,event:any)=>cb(event);ipcRenderer.on('aem:peerEvent',h);return()=>ipcRenderer.removeListener('aem:peerEvent',h);},
   },
-  native: { status: (identity:string,version:string) => ipcRenderer.invoke("native:status",identity,version), build: () => ipcRenderer.invoke("native:build"), install: (artifact: {url:string;filename:string;sha256:string;packageIdentity:string;version:string}) => ipcRenderer.invoke("native:install",artifact) },
+  native: { status: (identity:string,version:string,lookup?:{displayNames?:string[];executableNames?:string[]}) => ipcRenderer.invoke("native:status",identity,version,lookup), build: () => ipcRenderer.invoke("native:build"), install: (artifact: {url:string;filename:string;sha256:string;packageIdentity:string;version:string}) => ipcRenderer.invoke("native:install",artifact) },
   phone: {
     devices: () => ipcRenderer.invoke("phone:devices"),
     status: () => ipcRenderer.invoke("phone:status"),
@@ -89,7 +89,7 @@ const api = {
 
     getInstalledApps: () => ipcRenderer.invoke("emulator:getInstalledApps"),
     installApk: (filePath: string, opts?: any) => ipcRenderer.invoke("emulator:installApk", filePath, opts),
-    installApkFromUrl: (url: string, fileName: string) => ipcRenderer.invoke("emulator:installApkFromUrl", url, fileName),
+    installApkFromUrl: (url: string, fileName: string, sha256: string) => ipcRenderer.invoke("emulator:installApkFromUrl", url, fileName, sha256),
     uninstallApp: (pkg: string, keepData?: boolean) => ipcRenderer.invoke("emulator:uninstallApp", pkg, keepData),
     launchApp: (pkg: string, activity?: string) => ipcRenderer.invoke("emulator:launchApp", pkg, activity),
     getAppInfo: (pkg: string) => ipcRenderer.invoke("emulator:getAppInfo", pkg),

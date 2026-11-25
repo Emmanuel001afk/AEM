@@ -9,14 +9,28 @@ import { phoneManager, configurePhoneTools } from "./phone-runtime";
 import { isAllowedExternal, isTrustedRenderer, newerStableVersion } from "./security";
 import { EmulatorManager } from "./emulator/manager";
 
+let activeTransfer: TransferService | null = null;
+let activePeer: PeerTransferService | null = null;
+
+export async function stopTransferServices() {
+  const t = activeTransfer;
+  const p = activePeer;
+  activeTransfer = null;
+  activePeer = null;
+  await Promise.all([t?.stop().catch(() => {}), p?.stop().catch(() => {})]);
+}
+
 export function registerIpc(mainWindow: BrowserWindow) {
   const emu = EmulatorManager.getInstance();
   const transferRoot=path.join(app.getPath('downloads'),'AEM Transfer');
+  if (activeTransfer) { void activeTransfer.stop().catch(() => {}); activeTransfer = null; }
+  if (activePeer) { void activePeer.stop().catch(() => {}); activePeer = null; }
   const transfer=new TransferService({root:transferRoot,assets:path.join(__dirname,'transfer','web'),consent:async(request)=>{
     const result=await dialog.showMessageBox(mainWindow,{type:'question',buttons:['Reject','Allow'],defaultId:0,cancelId:0,message:request.kind==='pair'?'Allow this device to access locally shared files?':'Receive this file?',detail:request.kind==='pair'?`Unverified device label: ${request.name}. Network address: ${request.address}. Only approve the device you invited; compare the TLS fingerprint out of band first. Grant expires in one hour.`:`${request.name} (${request.size} bytes) from ${request.address}. SHA-256: ${request.sha256}. This saves a file only; nothing is executed or installed.`});
     return result.response===1;
   }});
-  mainWindow.once('closed',()=>{void transfer.stop();});
+  activeTransfer = transfer;
+  mainWindow.once('closed',()=>{ if (activeTransfer === transfer) activeTransfer = null; void transfer.stop();});
   // AEM ↔ AEM desktop pairing. Shares the receive folder with the LAN companion and Android client,
   // but runs its own server, identity key and consent prompts (docs/pc-transfer.md).
   const peerStateRoot=path.join(app.getPath('userData'),'aem-peer');
@@ -29,7 +43,8 @@ export function registerIpc(mainWindow: BrowserWindow) {
     const result=await dialog.showMessageBox(mainWindow,{type:'question',buttons:['Reject','Pair'],defaultId:0,cancelId:0,message:outgoing?'Pair this AEM PC with that AEM PC?':'Another AEM PC wants to pair with this one',detail:`${request.peer} · ${request.address}\nCertificate SHA-256: ${request.fingerprint}\nConfirmation code: ${request.sas}\n\nAsk the person on the other PC to read their code aloud and approve only if both codes match. Device labels are user-declared, not verified identities. A pairing grants file transfer only — no screen, input, registry, database or installer access.`});
     return result.response===1;
   },onEvent:event=>{try{mainWindow.webContents.send('aem:peerEvent',event);}catch{}}});
-  mainWindow.once('closed',()=>{void peer.stop();});
+  activePeer = peer;
+  mainWindow.once('closed',()=>{ if (activePeer === peer) activePeer = null; void peer.stop();});
   const handle: typeof ipcMain.handle = (channel, listener) => {
     ipcMain.removeHandler(channel);
     ipcMain.handle(channel, (event, ...args) => {
@@ -48,7 +63,10 @@ export function registerIpc(mainWindow: BrowserWindow) {
     return true;
   });
   handle("aem:showItemInFolder", async (_e, filePath: string) => {
-    shell.showItemInFolder(filePath);
+    if (typeof filePath !== "string" || !filePath.trim()) throw new Error("A file path is required");
+    const resolved = path.resolve(filePath);
+    if (!fs.existsSync(resolved)) throw new Error("Selected file or folder does not exist");
+    shell.showItemInFolder(resolved);
     return true;
   });
   handle("aem:getAppPath", async (_e, name: string) => {
@@ -65,12 +83,18 @@ export function registerIpc(mainWindow: BrowserWindow) {
       if (response.status === 404) return { available: false, current: app.getVersion() };
       if (!response.ok) throw new Error(`Release lookup HTTP ${response.status}`);
       const data: any = await response.json();
-      if (data.draft || data.prerelease || !Array.isArray(data.assets) || !data.assets.some((a: any) => /-Setup-x64\.exe$/.test(a.name))) return { available: false };
+      const assets: any[] = Array.isArray(data.assets) ? data.assets : [];
+      const hasDesktopAsset = process.platform === "win32"
+        ? assets.some((a: any) => /-Setup-x64\.exe$/i.test(String(a?.name || "")))
+        : process.platform === "darwin"
+        ? assets.some((a: any) => /\.(dmg|zip)$/i.test(String(a?.name || "")))
+        : assets.some((a: any) => /\.(AppImage|deb)$/i.test(String(a?.name || "")));
+      if (data.draft || data.prerelease || !hasDesktopAsset) return { available: false, current: app.getVersion() };
       const latest = String(data.tag_name || data.name || "");
       const current = app.getVersion();
       return { available: newerStableVersion(latest, current), latest, current, url: data.html_url };
     } catch (e: any) {
-      return { available: false, error: e.message };
+      return { available: false, current: app.getVersion(), error: e.message };
     }
   });
 
@@ -116,8 +140,15 @@ export function registerIpc(mainWindow: BrowserWindow) {
     if(path.basename(compiler.filePaths[0]).toLowerCase()!=="makensis.exe")throw new Error("Select the NSIS compiler makensis.exe");
     return buildNativeSource(pick.filePaths[0],compiler.filePaths[0],path.join(app.getPath("downloads"),"AEM Native Builds"));
   });
-  handle("native:status",async(_e,identity:string,version:string)=>{
-    const installed=await getNativeInstallations(identity);
+  handle("native:status",async(_e,identity:string,version:string,lookup?:{displayNames?:string[];executableNames?:string[]})=>{
+    const safeLookup=lookup&&typeof lookup==='object'?{
+      displayNames:Array.isArray(lookup.displayNames)?lookup.displayNames.filter((s):s is string=>typeof s==='string').slice(0,10):[],
+      executableNames:Array.isArray(lookup.executableNames)?lookup.executableNames.filter((s):s is string=>typeof s==='string').slice(0,10):[],
+    }:undefined;
+    let installed=await getNativeInstallations(identity,safeLookup);
+    if(!installed.length&&identity==='com.aem.store'&&process.platform==='win32'&&app.isPackaged){
+      installed=[{packageIdentity:'com.aem.store',displayName:app.getName()||'AEM Store',version:app.getVersion(),installLocation:path.dirname(process.execPath),scope:'user'}];
+    }
     return {installed,state:nativeUpdateState(installed,version)};
   });
   handle("native:install",async(_e,artifact:WindowsArtifact)=>{
@@ -230,7 +261,12 @@ export function registerIpc(mainWindow: BrowserWindow) {
 
   handle("emulator:getInstalledApps", async () => emu.getInstalledApps());
   handle("emulator:installApk", async (_e, filePath: string, opts: any) => emu.installApk(filePath, opts));
-  handle("emulator:installApkFromUrl", async (_e, url: string, fileName: string) => emu.installApkFromUrl(url, fileName));
+  handle("emulator:installApkFromUrl", async (_e, url: string, fileName: string, sha256: string) => {
+    if (typeof sha256 !== "string" || !/^[a-f0-9]{64}$/i.test(sha256)) {
+      throw new Error("Package URL installation requires a 64-character SHA-256 checksum");
+    }
+    return emu.installApkFromUrl(url, fileName, sha256);
+  });
   handle("emulator:uninstallApp", async (_e, pkg: string, keepData?: boolean) => emu.uninstallApp(pkg, !!keepData));
   handle("emulator:launchApp", async (_e, pkg: string, activity?: string) => emu.launchApp(pkg, activity));
   handle("emulator:getAppInfo", async (_e, pkg: string) => emu.getAppInfo(pkg));
@@ -242,7 +278,12 @@ export function registerIpc(mainWindow: BrowserWindow) {
 
   handle("emulator:pushFile", async (_e, localPath: string, remotePath: string) => emu.pushFile(localPath, remotePath));
   handle("emulator:pullFile", async (_e, remotePath: string, localPath: string) => emu.pullFile(remotePath, localPath));
-  handle("emulator:shell", async (_e, cmd: string) => emu.shell(cmd));
+  handle("emulator:shell", async (_e, cmd: string) => {
+    const trimmed = String(cmd ?? "").trim();
+    const allowed = trimmed === "input keyevent 82" || trimmed === "pm list features" || trimmed === "getprop" || /^getprop\s+[A-Za-z0-9._-]+$/.test(trimmed);
+    if (!allowed) throw new Error("Unsupported emulator shell command");
+    return emu.shell(trimmed);
+  });
   handle("emulator:getApkInfo", async (_e, filePath: string) => emu.getApkInfo(filePath));
   handle("emulator:takeScreenshot", async () => emu.takeScreenshot());
   handle("emulator:setLocation", async (_e, lat: number, lng: number) => emu.setLocation(lat, lng));

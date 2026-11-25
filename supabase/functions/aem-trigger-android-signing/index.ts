@@ -19,6 +19,19 @@ function db() {
   return createClient(Deno.env.get("SUPABASE_URL") || PROJECT_URL, key);
 }
 
+async function constantTimeEqual(a: string, b: string): Promise<boolean> {
+  const enc = new TextEncoder();
+  const [da, dbHash] = await Promise.all([
+    crypto.subtle.digest("SHA-256", enc.encode(a)),
+    crypto.subtle.digest("SHA-256", enc.encode(b)),
+  ]);
+  const ua = new Uint8Array(da);
+  const ub = new Uint8Array(dbHash);
+  let diff = 0;
+  for (let i = 0; i < ua.length; i++) diff |= ua[i] ^ ub[i];
+  return diff === 0;
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
   if (req.method !== "POST") return json({ error: "POST required" }, 405);
@@ -27,7 +40,7 @@ Deno.serve(async (req) => {
     const sb = db();
     const supplied = String(req.headers.get("x-aem-sync-secret") || "").trim();
     const secret = await sb.rpc("aem_get_sync_secret");
-    if (secret.error || !secret.data || supplied !== String(secret.data)) {
+    if (secret.error || !secret.data || !(await constantTimeEqual(supplied, String(secret.data)))) {
       return json({ ok: false, error: "Unauthorized trigger caller." }, 401);
     }
 
@@ -42,7 +55,7 @@ Deno.serve(async (req) => {
       headers: {
         "Accept": "application/vnd.github+json",
         "Authorization": `Bearer ${token}`,
-        "X-GitHub-Api-Version": "2026-03-10",
+        "X-GitHub-Api-Version": "2022-11-28",
         "Content-Type": "application/json",
       },
       body: JSON.stringify({

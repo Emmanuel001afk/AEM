@@ -1,4 +1,5 @@
-import { spawn, ChildProcess } from "child_process";
+import { spawn, execFile, ChildProcess } from "child_process";
+import { promisify } from "util";
 import fs from "fs";
 import path from "path";
 import os from "os";
@@ -7,8 +8,11 @@ import { getAvdRoot, getEmulatorHome, getLogsRoot, ADB_CONNECT_TIMEOUT_MS, EMULA
 import type { EmulatorStatus, EmulatorLogEntry, EmulatorLaunchOptions } from "./types";
 import { adbDevices, adbWaitForDevice, adbWaitForBoot, adbExec } from "./adb";
 
+const execFileAsync = promisify(execFile);
+
 export class EmulatorInstance {
   private proc: ChildProcess | null = null;
+  private readyProgressTimer: ReturnType<typeof setTimeout> | null = null;
   private status: EmulatorStatus = {
     state: "not-installed",
     avdName: null,
@@ -213,7 +217,11 @@ export class EmulatorInstance {
     });
 
     // Clear progress after a moment
-    setTimeout(() => this.setStatus({ progress: undefined }), 3000);
+    if (this.readyProgressTimer) clearTimeout(this.readyProgressTimer);
+    this.readyProgressTimer = setTimeout(() => {
+      this.readyProgressTimer = null;
+      if (this.status.state === "running") this.setStatus({ progress: undefined });
+    }, 3000);
 
     // Unlock screen (swipe) for automation
     try {
@@ -289,11 +297,15 @@ export class EmulatorInstance {
       } catch {}
     }
 
-    // On Windows, fallback to taskkill if still hanging
-    if (process.platform === "win32" && this.status.pid) {
+    if (this.readyProgressTimer) {
+      clearTimeout(this.readyProgressTimer);
+      this.readyProgressTimer = null;
+    }
+
+    // On Windows, fallback to async taskkill if still hanging
+    if (process.platform === "win32" && Number.isInteger(this.status.pid) && (this.status.pid || 0) > 0 && (!this.proc || this.proc.exitCode === null)) {
       try {
-        const { execSync } = await import("child_process");
-        execSync(`taskkill /PID ${this.status.pid} /T /F`, { timeout: 5000, stdio: "ignore" });
+        await execFileAsync("taskkill", ["/PID", String(this.status.pid), "/T", "/F"], { timeout: 5000, windowsHide: true });
       } catch {}
     }
 
