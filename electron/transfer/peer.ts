@@ -110,7 +110,7 @@ interface TransferRecord {
 }
 
 interface HttpResult {status: number; headers: IncomingHttpHeaders; body: Buffer}
-interface Target {address: string; port: number; cert?: string; pin?: string}
+interface Target {address: string; port: number; cert?: string; certFingerprint?: string; pin?: string}
 
 const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
 const fpOf = (der: Buffer) => sha(der);
@@ -257,7 +257,7 @@ export class PeerTransferService {
     for (const peer of this.peers.values()) {
       if (generation !== this.generation || !this.server) return;
       const route = '/peer/state';
-      await this.request({address: peer.address, port: peer.port, cert: peer.cert}, 'GET', route, Buffer.alloc(0), {...this.authHeaders(peer, 'GET', route, Buffer.alloc(0)), 'X-AEM-Port': String(this.port)}).catch(() => null);
+      await this.request({address: peer.address, port: peer.port, cert: peer.cert, certFingerprint: peer.fingerprint}, 'GET', route, Buffer.alloc(0), {...this.authHeaders(peer, 'GET', route, Buffer.alloc(0)), 'X-AEM-Port': String(this.port)}).catch(() => null);
     }
   }
 
@@ -505,13 +505,15 @@ export class PeerTransferService {
 
   /* ------------------------------------------------------------------ sending */
   async send(peerId: string, files: string[]) {
+    this.pruneTerminal();
     const identity = await this.loadIdentity();
     const peer = this.peers.get(peerId);
     if (!peer) throw new Error('Pair with that PC first');
     if (!this.server) throw new Error('Start PC-to-PC sharing first');
     if (!Array.isArray(files) || !files.length) throw new Error('Select at least one file');
     if (files.length > MAX_BATCH) throw new Error(`Send at most ${MAX_BATCH} files at a time`);
-    if (this.transfers.size + files.length > MAX_QUEUED) throw new Error('Transfer queue is full');
+    const activeCount = [...this.transfers.values()].filter(x => x.state === 'queued' || x.state === 'pending').length;
+    if (activeCount + files.length > MAX_QUEUED) throw new Error('Transfer queue is full');
     for (const file of files) {
       const stat = await fs.promises.stat(file).catch(() => null);
       if (!stat?.isFile()) throw new Error(`${path.basename(file)} is not a readable regular file`);
@@ -558,7 +560,7 @@ export class PeerTransferService {
     }
     if (t.direction === 'send' && peer && this.server && t.state !== 'complete') {
       const route = `/peer/transfers/${t.id}/cancel`;
-      await this.request({address: peer.address, port: peer.port, cert: peer.cert}, 'POST', route, Buffer.alloc(0), this.authHeaders(peer, 'POST', route, Buffer.alloc(0))).catch(() => null);
+      await this.request({address: peer.address, port: peer.port, cert: peer.cert, certFingerprint: peer.fingerprint}, 'POST', route, Buffer.alloc(0), this.authHeaders(peer, 'POST', route, Buffer.alloc(0))).catch(() => null);
     }
     this.transfers.delete(transferId);
     this.emit({type: 'cancelled', peer: t.peerName, transferId, name: t.name, message: 'Cancelled and dropped from the queue'});
@@ -598,7 +600,7 @@ export class PeerTransferService {
       const manifest = Buffer.from(JSON.stringify({id: t.id, name: t.name, size: t.size, sha256: t.sha256, device: identity.name}));
       // Both the offer and the finalize are idempotent, so a transport hiccup is retried rather than
       // reported as a failure. An HTTP error status is never retried: it is an answer, not a lost packet.
-      let res = await this.retry(`offer ${t.name}`, () => this.request({address: peer.address, port: peer.port, cert: peer.cert}, 'POST', route, manifest, {...this.authHeaders(peer, 'POST', route, manifest), 'X-AEM-Port': String(this.port)}), () => !t.abort && generation === this.generation && !!this.server);
+      let res = await this.retry(`offer ${t.name}`, () => this.request({address: peer.address, port: peer.port, cert: peer.cert, certFingerprint: peer.fingerprint}, 'POST', route, manifest, {...this.authHeaders(peer, 'POST', route, manifest), 'X-AEM-Port': String(this.port)}), () => !t.abort && generation === this.generation && !!this.server);
       if (res.status === 403 && /declin/i.test(res.body.toString())) {
         t.state = 'declined'; t.error = 'Declined on the receiving PC'; t.updatedAt = Date.now();
         this.record({at: Date.now(), direction: 'send', peer: peer.name, name: t.name, size: t.size, sha256: t.sha256, state: 'declined'});
@@ -633,7 +635,7 @@ export class PeerTransferService {
         let attempt = 0;
         for (;;) {
           try {
-            res = await this.request({address: peer.address, port: peer.port, cert: peer.cert}, 'PATCH', chunkRoute, chunk, headers);
+            res = await this.request({address: peer.address, port: peer.port, cert: peer.cert, certFingerprint: peer.fingerprint}, 'PATCH', chunkRoute, chunk, headers);
           } catch (e) {
             if (t.abort || generation !== this.generation) throw new Error('Cancelled on this PC');
             if (attempt >= RETRY_DELAYS.length) throw new Error(`Peer unreachable: ${e instanceof Error ? e.message : String(e)}`);
@@ -661,7 +663,7 @@ export class PeerTransferService {
         }
       }
       const doneRoute = `/peer/transfers/${t.id}/complete`;
-      res = await this.retry(`finalize ${t.name}`, () => this.request({address: peer.address, port: peer.port, cert: peer.cert}, 'POST', doneRoute, Buffer.alloc(0), {...this.authHeaders(peer, 'POST', doneRoute, Buffer.alloc(0)), 'X-AEM-Port': String(this.port)}), () => !t.abort && generation === this.generation && !!this.server);
+      res = await this.retry(`finalize ${t.name}`, () => this.request({address: peer.address, port: peer.port, cert: peer.cert, certFingerprint: peer.fingerprint}, 'POST', doneRoute, Buffer.alloc(0), {...this.authHeaders(peer, 'POST', doneRoute, Buffer.alloc(0)), 'X-AEM-Port': String(this.port)}), () => !t.abort && generation === this.generation && !!this.server);
       if (res.status !== 200) throw new Error(this.remoteError(res));
       await this.markComplete(t, peer);
     } catch (e) {
@@ -694,9 +696,7 @@ export class PeerTransferService {
 
   private async markComplete(t: TransferRecord, peer: PeerRecord) {
     t.state = 'complete'; t.offset = t.size; t.updatedAt = Date.now();
-    if (!this.history.some(h => h.state === 'complete' && h.direction === 'send' && h.name === t.name && h.sha256 === t.sha256)) {
-      this.record({at: Date.now(), direction: 'send', peer: peer.name, name: t.name, size: t.size, sha256: t.sha256, state: 'complete'});
-    }
+    this.record({at: Date.now(), direction: 'send', peer: peer.name, name: t.name, size: t.size, sha256: t.sha256, state: 'complete'});
     this.emit({type: 'completed', peer: peer.name, transferId: t.id, name: t.name, offset: t.size, size: t.size, message: 'SHA-256 verified and saved on the receiving PC'});
   }
 
@@ -709,7 +709,7 @@ export class PeerTransferService {
 
   private async stateOf(peer: PeerRecord, transferId: string) {
     const route = `/peer/transfers/${transferId}`;
-    const res = await this.request({address: peer.address, port: peer.port, cert: peer.cert}, 'GET', route, Buffer.alloc(0), {...this.authHeaders(peer, 'GET', route, Buffer.alloc(0)), 'X-AEM-Port': String(this.port)});
+    const res = await this.request({address: peer.address, port: peer.port, cert: peer.cert, certFingerprint: peer.fingerprint}, 'GET', route, Buffer.alloc(0), {...this.authHeaders(peer, 'GET', route, Buffer.alloc(0)), 'X-AEM-Port': String(this.port)});
     if (res.status !== 200) throw new Error(this.remoteError(res));
     const j = JSON.parse(res.body.toString());
     return {offset: Number(j?.offset) || 0, state: String(j?.state ?? 'pending') as PeerTransferState};
@@ -745,13 +745,24 @@ export class PeerTransferService {
       return Promise.reject(new Error('Peer address is not reachable from this PC'));
     }
     const pin = target.pin ? normFp(target.pin) : '';
+    const certPin = target.certFingerprint ? normFp(target.certFingerprint) : '';
     return new Promise<HttpResult>((resolve, reject) => {
       let req: ClientRequest;
       try {
         req = https.request({
           host: target.address, port: target.port, path: route, method,
           key: this.identity?.key, cert: this.identity?.cert,
-          ...(target.cert ? {ca: target.cert, rejectUnauthorized: true} : {rejectUnauthorized: false}),
+          ...(target.cert ? {
+            ca: target.cert,
+            rejectUnauthorized: true,
+            // LAN DHCP addresses can change between sessions; trust is anchored to the pinned certificate fingerprint.
+            checkServerIdentity: (_host, cert) => {
+              const raw = (cert as any)?.raw;
+              if (!raw) return new Error('Peer presented no TLS certificate');
+              if (certPin && !equal(fpOf(Buffer.from(raw)), certPin)) return new Error('Pinned peer certificate fingerprint mismatch');
+              return undefined;
+            },
+          } : {rejectUnauthorized: false}),
           // Node rejects an explicitly undefined checkServerIdentity, so only pin when we have to.
           ...(pin ? {agent: false, checkServerIdentity: () => undefined} : {}),
           timeout: 180_000,
@@ -786,7 +797,17 @@ export class PeerTransferService {
   /* ------------------------------------------------------------------ server routes */
   /** A declined or failed row is only kept long enough to answer a retried offer, never forever. */
   private pruneTerminal() {
-    for (const [key, t] of this.transfers) if ((t.state === 'declined' || t.state === 'failed') && Date.now() - t.updatedAt > 15 * 60_000) this.transfers.delete(key);
+    const now = Date.now();
+    for (const [key, t] of this.transfers) {
+      if ((t.state === 'declined' || t.state === 'failed') && now - t.updatedAt > 15 * 60_000) this.transfers.delete(key);
+    }
+    const terminal = [...this.transfers.entries()]
+      .filter(([, t]) => t.state === 'complete' || t.state === 'declined' || t.state === 'failed' || t.state === 'cancelled')
+      .sort((a, b) => a[1].updatedAt - b[1].updatedAt);
+    while (terminal.length > 128) {
+      const oldest = terminal.shift();
+      if (oldest) this.transfers.delete(oldest[0]);
+    }
   }
 
   private rememberCancelled(transferId: string) {
@@ -904,7 +925,8 @@ export class PeerTransferService {
       this.pruneTerminal();
       const dupe = [...this.transfers.values()].find(x => x.peerId === peer.id && x.direction === 'receive' && x.state === 'complete' && x.sha256 === m.sha256 && x.name === m.name);
       if (dupe) {json(res, this.publicTransfer(dupe)); return;}
-      if (this.transfers.size >= MAX_QUEUED) throw new HttpError(429, 'Transfer queue is full');
+      const activeCount = [...this.transfers.values()].filter(x => x.state === 'queued' || x.state === 'pending').length;
+      if (activeCount >= MAX_QUEUED) throw new HttpError(429, 'Transfer queue is full');
       // One consent prompt at a time per peer: offers never stack dialogs, but a finished or declined
       // transfer never wedges the channel either.
       if (this.pendingConsent.has(peer.id)) throw new HttpError(409, 'Another offer is still waiting for approval on this PC');
@@ -918,7 +940,7 @@ export class PeerTransferService {
           throw new HttpError(403, 'Declined on the receiving PC');
         }
         const disk = await fs.promises.statfs(this.options.root);
-        const used = [...this.transfers.values()].filter(x => x.direction === 'receive').reduce((s, x) => s + x.size, 0);
+        const used = [...this.transfers.values()].filter(x => x.direction === 'receive' && (x.state === 'pending' || x.state === 'complete')).reduce((s, x) => s + x.size, 0);
         if (used + m.size > PEER_MAX_TOTAL || disk.bavail * disk.bsize < m.size + FREE_RESERVE) throw new HttpError(507, `Insufficient transfer quota or free disk space (${limitLabel(PEER_MAX_TOTAL)} per session, ${limitLabel(FREE_RESERVE)} reserve)`);
         const file = path.join(this.options.root, '.pending', `${id}.part`);
         const record: TransferRecord = {id, peerId: peer.id, peerName: peer.name, ...m, offset: 0, state: 'pending', direction: 'receive', file, busy: false, abort: false, lastProgress: 0, updatedAt: Date.now()};

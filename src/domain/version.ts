@@ -54,12 +54,43 @@ export function compareAndroidRelease(
 
 /** Windows semantic versions are ordered independently of Android version codes. */
 export function selectLatestWindowsRelease(releases: Release[]): Release | undefined {
-  const tuple = (name: string) => /^v?(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.exec(name)?.slice(1).map(Number);
-  return releases.filter(r => r.status === "published" && r.channel === "stable" && tuple(r.version.name) && r.artifacts.some(a =>
-    a.platform === "windows" && a.kind === "exe" && a.packageIdentity && /^[a-f0-9]{64}$/i.test(a.sha256 || "") && /^https:\/\//.test(a.downloadUrl)
-  )).sort((a,b) => {
-    const av = tuple(a.version.name)!, bv = tuple(b.version.name)!;
-    for (let i=0;i<3;i++) if(av[i]!==bv[i]) return bv[i]-av[i];
-    return 0;
-  })[0];
+  const verifiedExe = (a: Artifact) =>
+    a.platform === "windows" && a.kind === "exe" && !!a.packageIdentity && /^[a-f0-9]{64}$/i.test(a.sha256 || "") && /^https:\/\//.test(a.downloadUrl);
+  const parseTuple = (value?: string): number[] | undefined => {
+    const clean = String(value || "").trim().replace(/^v/i, "");
+    const m = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:\.(0|[1-9]\d*))?$/.exec(clean);
+    if (m) return [Number(m[1]), Number(m[2]), Number(m[3]), Number(m[4] || 0)];
+    return undefined;
+  };
+  const extractFilenameTuple = (name?: string): number[] | undefined => {
+    const m = /(?:^|[^0-9.])v?(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:\.(0|[1-9]\d*))?(?:[-_. ]|$)/i.exec(String(name || ""));
+    return m ? [Number(m[1]), Number(m[2]), Number(m[3]), Number(m[4] || 0)] : undefined;
+  };
+  const releaseTuple = (r: Release): number[] | undefined => {
+    const direct = parseTuple(r.version?.name);
+    if (direct) return direct;
+    for (const a of r.artifacts || []) {
+      if (!verifiedExe(a)) continue;
+      const fromArt = parseTuple(a.versionName);
+      if (fromArt) return fromArt;
+      const fromFile = extractFilenameTuple(a.filename);
+      if (fromFile) return fromFile;
+    }
+    return undefined;
+  };
+  const releaseTs = (r: Release): number => {
+    const times = [
+      Date.parse(String(r.publishedAt || "")) || 0,
+      ...(r.artifacts || []).filter(verifiedExe).map((a) => Date.parse(String(a.sourceUpdatedAt || "")) || 0),
+    ];
+    return Math.max(0, ...times);
+  };
+  const eligible = releases.filter((r) => r.status === "published" && r.channel === "stable" && r.artifacts.some(verifiedExe));
+  const semver = eligible.filter((r) => !!releaseTuple(r)).sort((a, b) => {
+    const av = releaseTuple(a)!, bv = releaseTuple(b)!;
+    for (let i = 0; i < 4; i++) if ((av[i] || 0) !== (bv[i] || 0)) return (bv[i] || 0) - (av[i] || 0);
+    return releaseTs(b) - releaseTs(a);
+  });
+  if (semver.length) return semver[0];
+  return eligible.sort((a, b) => releaseTs(b) - releaseTs(a))[0];
 }

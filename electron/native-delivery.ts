@@ -92,7 +92,8 @@ export async function buildNativeSource(recipePath:string,makensis:string,output
 }
 export interface WindowsArtifact {url:string;filename:string;sha256:string;packageIdentity:string;version:string}
 export function validateWindowsArtifact(a:WindowsArtifact){
-  if(!a||typeof a.version!=='string'||!/^\d+\.\d+\.\d+$/.test(a.version))throw new Error('Windows variant requires a numeric platform version');
+  const cleanVer=typeof a?.version==='string'?a.version.trim().replace(/^v/i,''):'';
+  if(!a||!cleanVer||!/^\d+\.\d+\.\d+(\.\d+)?$/.test(cleanVer))throw new Error('Windows variant requires a numeric platform version');
   validateNativeIdentity(a.packageIdentity);
   if(!a||typeof a.filename!=='string'||!/^[\w.-]+\.exe$/i.test(a.filename)||!/^([a-f\d]{64})$/i.test(a.sha256)||!a.packageIdentity||!/^https:\/\//.test(a.url))throw new Error('Windows variant requires HTTPS, EXE filename, SHA-256 and platform package identity');
 }

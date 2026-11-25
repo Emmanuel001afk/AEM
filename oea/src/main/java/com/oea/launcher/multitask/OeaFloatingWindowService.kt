@@ -58,6 +58,7 @@ class OeaFloatingWindowService : AccessibilityService() {
         super.onServiceConnected()
         instance = this
         // Keep service alive on Android Go — use foreground notification via OeaFloatingWindows
+        OeaFloatingWindows.init(this)
         OeaFloatingWindows.ensureForegroundNotification(this)
         // Lower notification timeout is already in XML (50ms) for freshness
         serviceInfo = serviceInfo.apply {
@@ -183,13 +184,19 @@ class OeaFloatingWindowService : AccessibilityService() {
     fun findNodeByViewId(viewId: String): AccessibilityNodeInfo? {
         val root = rootInActiveWindow ?: return null
         val nodes = root.findAccessibilityNodeInfosByViewId(viewId)
-        return nodes.firstOrNull().also { root.recycle() } // caller must recycle returned node
+        val first = nodes.firstOrNull()
+        nodes.drop(1).forEach { try { it.recycle() } catch (_: Exception) {} }
+        try { root.recycle() } catch (_: Exception) {}
+        return first
     }
 
     fun findNodeByText(text: String): AccessibilityNodeInfo? {
         val root = rootInActiveWindow ?: return null
         val nodes = root.findAccessibilityNodeInfosByText(text)
-        return nodes.firstOrNull().also { /* root not recycled if returning node that holds reference */ }
+        val first = nodes.firstOrNull()
+        nodes.drop(1).forEach { try { it.recycle() } catch (_: Exception) {} }
+        try { root.recycle() } catch (_: Exception) {}
+        return first
     }
 
     fun getInteractiveWindows(): List<android.view.accessibility.AccessibilityWindowInfo> = windows ?: emptyList()

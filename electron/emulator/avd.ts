@@ -116,17 +116,17 @@ export async function createAvd(options: AvdCreateOptions, sdkRoot?: string): Pr
     proc.stdout?.on("data", d => { stdout += String(d); });
     proc.stderr?.on("data", d => { stderr += String(d); });
     // avdmanager may prompt "Do you wish to create a custom hardware profile? [no]"
-    proc.stdin?.write("no\n");
+    proc.stdin?.end("no\n");
+    const timer = setTimeout(() => {
+      try { proc.kill(); } catch {}
+      reject(new Error("avdmanager create timeout after 60s"));
+    }, 60000);
     proc.on("close", code => {
       clearTimeout(timer);
       if (code === 0) resolve();
       else reject(new Error(`avdmanager create failed (exit ${code}): ${stderr || stdout}`.slice(0, 1000)));
     });
     proc.on("error", err => { clearTimeout(timer); reject(err); });
-    const timer = setTimeout(() => {
-      try { proc.kill(); } catch {}
-      reject(new Error("avdmanager create timeout after 60s"));
-    }, 60000);
   });
 
   // Patch config.ini with custom RAM, cores, storage, GPU, etc.
@@ -168,7 +168,7 @@ export async function patchAvdConfig(avdName: string, options: AvdCreateOptions)
 
   // Ensure AVD is hardware-accelerated and has PlayStore quirks handled
   // Preserve avdmanager-selected architecture; never relabel an ARM image as x86.
-  set("hw.keyboard", "yes");
+  if (options.keyboard === undefined && !/^hw\.keyboard\s*=/m.test(cfg)) set("hw.keyboard", "yes");
   set("hw.backup", "no");
   set("hw.battery", "yes");
 
@@ -179,13 +179,19 @@ export async function deleteAvd(avdName: string): Promise<boolean> {
   const ini = getAvdIniPath(avdName);
   const dir = getAvdDir(avdName);
   let removed = false;
-  try {
-    if (fs.existsSync(ini)) { fs.unlinkSync(ini); removed = true; }
-    if (fs.existsSync(dir)) { fs.rmSync(dir, { recursive: true, force: true }); removed = true; }
-    // Also remove .lock files
-    const lock = path.join(getAvdRoot(), `${avdName}.avd.lock`);
-    if (fs.existsSync(lock)) fs.unlinkSync(lock);
-  } catch {}
+  if (fs.existsSync(ini)) {
+    try { fs.unlinkSync(ini); removed = true; }
+    catch (e: any) { if (e?.code !== "ENOENT") throw e; }
+  }
+  if (fs.existsSync(dir)) {
+    fs.rmSync(dir, { recursive: true, force: true });
+    removed = true;
+  }
+  const lock = path.join(getAvdRoot(), `${validateAvdName(avdName)}.avd.lock`);
+  if (fs.existsSync(lock)) {
+    try { fs.unlinkSync(lock); }
+    catch (e: any) { if (e?.code !== "ENOENT") throw e; }
+  }
   return removed;
 }
 
@@ -195,13 +201,13 @@ export async function wipeAvd(avdName: string): Promise<void> {
   const toDelete = ["userdata-qemu.img", "userdata-qemu.img.qcow2", "cache.img", "cache.img.qcow2", "sdcard.img.qcow2", "snapshots.img", "snapshots", "multiinstance.lock"];
   for (const f of toDelete) {
     const p = path.join(avdDir, f);
-    try {
-      if (fs.existsSync(p)) {
-        const stat = fs.statSync(p);
-        if (stat.isDirectory()) fs.rmSync(p, { recursive: true, force: true });
-        else fs.unlinkSync(p);
-      }
-    } catch {}
+    if (!fs.existsSync(p)) continue;
+    const stat = fs.statSync(p);
+    if (stat.isDirectory()) fs.rmSync(p, { recursive: true, force: true });
+    else {
+      try { fs.unlinkSync(p); }
+      catch (e: any) { if (e?.code !== "ENOENT") throw e; }
+    }
   }
 }
 
