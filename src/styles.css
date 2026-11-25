@@ -38,3 +38,14 @@
 .store:not(.dark) .peer-field{background:#12121608;border-color:#12121614;color:#121216}
 .peer-queue article{display:grid;gap:8px}
 .peer-muted{opacity:.6;font-size:.78rem}
+.store:not(.dark) button{border-color:#12121628}
+.store:not(.dark) nav{border-bottom-color:#12121618}
+.store:not(.dark) .search{background:#ffffff;border-color:#1212161c}
+.store:not(.dark) .card{background:#ffffff;border-color:#12121614}
+.store:not(.dark) .card details{border-top-color:#12121614}
+.store:not(.dark) .chips span{background:#1212160d}
+.store:not(.dark) .progress-track{background:#12121618}
+.store:not(.dark) .active-downloads{background:#ffffff;border-color:#12121618}
+.store:not(.dark) .active-download{background:#12121608}
+.store:not(.dark) .choice.active-choice{background:#f04444;color:#ffffff;border-color:#f04444}
+.store:not(.dark) .permission-list span{background:#12121608;border-color:#12121614}

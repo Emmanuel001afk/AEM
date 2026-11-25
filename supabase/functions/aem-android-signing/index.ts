@@ -1,5 +1,7 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { createRemoteJWKSet, jwtVerify } from "npm:jose@6";
+import { sha256 as sha256Hash } from "npm:@noble/hashes@1.8.0/sha256";
+import { bytesToHex } from "npm:@noble/hashes@1.8.0/utils";
 
 const cors = {
   "Access-Control-Allow-Origin": "*",
@@ -10,6 +12,11 @@ const PROJECT_URL = "https://zaaauldrktvytskerpmc.supabase.co";
 const OIDC_AUDIENCE = `${PROJECT_URL}/functions/v1/aem-android-signing`;
 const GITHUB_ISSUER = "https://token.actions.githubusercontent.com";
 const GITHUB_JWKS = createRemoteJWKSet(new URL("https://token.actions.githubusercontent.com/.well-known/jwks"));
+const MAX_SIGNED_APK_BYTES = 500 * 1024 * 1024;
+const ALLOWED_SIGNING_WORKFLOWS = [
+  "Emmanuel001afk/AEM/.github/workflows/aem-android-central-signing.yml@",
+  "Emmanuel001afk/AEM/.github/workflows/aem-android-central-signing-v2.yml@",
+];
 
 function json(body: unknown, status = 200) {
   return Response.json(body, { status, headers: { ...cors, "Content-Type": "application/json" } });
@@ -27,7 +34,7 @@ async function authorizeWorker(sb: ReturnType<typeof admin>, req: Request) {
   const token = String(req.headers.get("x-aem-worker-token") || "").trim();
   if (!token) return false;
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(token));
-  const hash = Array.from(new Uint8Array(digest)).map(b => b.toString(16).padStart(2, "0")).join("");
+  const hash = Array.from(new Uint8Array(digest)).map((b) => b.toString(16).padStart(2, "0")).join("");
   const { data, error } = await sb.from("aem_signing_worker_auth").select("id").eq("token_sha256", hash).eq("enabled", true).maybeSingle();
   if (error) throw error;
   return Boolean(data);
@@ -44,6 +51,13 @@ async function authorizeWorkflow(req: Request) {
   if (claims.repository !== "Emmanuel001afk/AEM" || claims.repository_owner !== "Emmanuel001afk") {
     throw new Error("Signing is restricted to the AEM repository.");
   }
+  if (claims.ref !== "refs/heads/main") {
+    throw new Error("Signing workflow must run from refs/heads/main.");
+  }
+  const jobWorkflowRef = String(claims.job_workflow_ref || "");
+  if (!ALLOWED_SIGNING_WORKFLOWS.some((prefix) => jobWorkflowRef.startsWith(prefix))) {
+    throw new Error("Signing is restricted to the central Android signing workflow.");
+  }
   return claims;
 }
 
@@ -54,6 +68,32 @@ function storagePath(downloadUrl: string) {
   const path = downloadUrl.slice(i + marker.length);
   if (!path || path.startsWith("/") || path.includes("..")) throw new Error("Invalid artifact storage path.");
   return path;
+}
+
+async function computeStreamDigest(url: string, maxBytes: number): Promise<{ bytes: number; sha256: string }> {
+  const res = await fetch(url, { cache: "no-store" });
+  if (!res.ok || !res.body) {
+    throw new Error(`Signed APK could not be read from Storage (HTTP ${res.status}).`);
+  }
+  const hasher = sha256Hash.create();
+  let bytes = 0;
+  const reader = res.body.getReader();
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (!value || !value.byteLength) continue;
+      bytes += value.byteLength;
+      if (bytes > maxBytes) {
+        await reader.cancel().catch(() => {});
+        throw new Error(`Signed APK exceeds maximum size limit (${maxBytes} bytes).`);
+      }
+      hasher.update(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  return { bytes, sha256: bytesToHex(hasher.digest()) };
 }
 
 Deno.serve(async (req) => {
@@ -71,15 +111,17 @@ Deno.serve(async (req) => {
       const limit = Math.max(1, Math.min(25, Number(body.limit || 25)));
       const { data, error } = await sb.rpc("claim_android_artifacts", { claim_limit: limit });
       if (error) throw error;
-      return json({ artifacts: (data || []).map((a: any) => ({
-        id: a.id,
-        filename: a.filename,
-        download_url: a.download_url,
-        package_identity: a.package_identity,
-        version_code: a.version_code,
-        sha256: a.sha256,
-        size_bytes: a.size_bytes,
-      }))});
+      return json({
+        artifacts: (data || []).map((a: any) => ({
+          id: a.id,
+          filename: a.filename,
+          download_url: a.download_url,
+          package_identity: a.package_identity,
+          version_code: a.version_code,
+          sha256: a.sha256,
+          size_bytes: a.size_bytes,
+        })),
+      });
     }
 
     const id = Number(body.artifact_id || 0);
@@ -106,7 +148,22 @@ Deno.serve(async (req) => {
       const sha = String(body.sha256 || "").toLowerCase();
       const size = Number(body.size_bytes || 0);
       if (!/^[0-9a-f]{64}$/.test(cert)) return json({ error: "Invalid signing certificate fingerprint." }, 400);
-      if (!/^[0-9a-f]{64}$/.test(sha) || size <= 0) return json({ error: "Invalid signed artifact checksum or size." }, 400);
+      if (!/^[0-9a-f]{64}$/.test(sha) || !Number.isInteger(size) || size <= 0 || size > MAX_SIGNED_APK_BYTES) {
+        return json({ error: "Invalid signed artifact checksum or size." }, 400);
+      }
+
+      const path = storagePath(String(current.data.download_url || ""));
+      const signedRead = await sb.storage.from("aem-artifacts").createSignedUrl(path, 120);
+      if (signedRead.error || !signedRead.data?.signedUrl) {
+        return json({ error: `Signed APK could not be located in Storage: ${signedRead.error?.message || "missing"}` }, 409);
+      }
+      const verified = await computeStreamDigest(signedRead.data.signedUrl, MAX_SIGNED_APK_BYTES);
+      if (verified.bytes !== size) {
+        return json({ error: `Signed APK size mismatch: expected ${size}, stored ${verified.bytes}.` }, 422);
+      }
+      if (verified.sha256 !== sha) {
+        return json({ error: `Signed APK SHA-256 mismatch: expected ${sha}, stored ${verified.sha256}.` }, 422);
+      }
 
       const updated = await sb.from("artifacts").update({
         signing_status: "ready",
@@ -122,7 +179,7 @@ Deno.serve(async (req) => {
 
     if (action === "fail") {
       await sb.from("artifacts").update({
-        signing_status: "pending",
+        signing_status: "failed",
         signing_authority: "source",
         signing_error: String(body.error || "Central signing failed").slice(0, 2000),
       }).eq("id", id).eq("signing_status", "processing");

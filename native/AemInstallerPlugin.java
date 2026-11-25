@@ -36,30 +36,63 @@ public class AemInstallerPlugin extends Plugin {
     private static final String NOTIFICATION_CHANNEL = "aem_downloads";
     private static final int NOTIFICATION_BASE = 38000;
     private android.content.BroadcastReceiver installReceiver;
+    private android.content.BroadcastReceiver packageReceiver;
 
     @Override public void load() {
         super.load();
         ensureNotificationChannel();
         installReceiver = new android.content.BroadcastReceiver() {
             @Override public void onReceive(android.content.Context context, android.content.Intent intent) {
+                String dlId = intent.getStringExtra("aem_download_id");
                 JSObject out = new JSObject();
-                out.put("downloadId", intent.getStringExtra("aem_download_id"));
+                out.put("downloadId", dlId);
                 int status = intent.getIntExtra(android.content.pm.PackageInstaller.EXTRA_STATUS, android.content.pm.PackageInstaller.STATUS_FAILURE);
                 out.put("success", status == android.content.pm.PackageInstaller.STATUS_SUCCESS);
                 out.put("status", status);
                 out.put("message", intent.getStringExtra(android.content.pm.PackageInstaller.EXTRA_STATUS_MESSAGE));
+                if (dlId != null && !dlId.isEmpty()) {
+                    clearDownloadNotification(dlId);
+                    getContext().getSharedPreferences(PREFS, android.content.Context.MODE_PRIVATE).edit().remove("session_" + dlId).remove("path_" + dlId).apply();
+                }
                 notifyListeners("installResult", out);
             }
         };
         android.content.IntentFilter filter = new android.content.IntentFilter("com.aem.store.INSTALL_RESULT");
         if (Build.VERSION.SDK_INT >= 33) getContext().registerReceiver(installReceiver, filter, android.content.Context.RECEIVER_NOT_EXPORTED);
         else getContext().registerReceiver(installReceiver, filter);
+
+        packageReceiver = new android.content.BroadcastReceiver() {
+            @Override public void onReceive(android.content.Context context, android.content.Intent intent) {
+                Uri data = intent.getData();
+                String pkg = data == null ? "" : data.getSchemeSpecificPart();
+                JSObject out = new JSObject();
+                out.put("packageName", pkg == null ? "" : pkg);
+                out.put("action", intent.getAction() == null ? "" : intent.getAction());
+                notifyListeners("packageChanged", out);
+            }
+        };
+        android.content.IntentFilter pkgFilter = new android.content.IntentFilter();
+        pkgFilter.addAction(Intent.ACTION_PACKAGE_ADDED);
+        pkgFilter.addAction(Intent.ACTION_PACKAGE_REPLACED);
+        pkgFilter.addAction(Intent.ACTION_PACKAGE_REMOVED);
+        pkgFilter.addDataScheme("package");
+        if (Build.VERSION.SDK_INT >= 33) getContext().registerReceiver(packageReceiver, pkgFilter, android.content.Context.RECEIVER_EXPORTED);
+        else getContext().registerReceiver(packageReceiver, pkgFilter);
+    }
+
+    @Override protected void handleOnResume() {
+        super.handleOnResume();
+        notifyListeners("appResume", new JSObject());
     }
 
     @Override protected void handleOnDestroy() {
         if (installReceiver != null) {
             try { getContext().unregisterReceiver(installReceiver); } catch (Exception ignored) {}
             installReceiver = null;
+        }
+        if (packageReceiver != null) {
+            try { getContext().unregisterReceiver(packageReceiver); } catch (Exception ignored) {}
+            packageReceiver = null;
         }
         super.handleOnDestroy();
     }
@@ -94,10 +127,10 @@ public class AemInstallerPlugin extends Plugin {
     private static final class DownloadSpec {
         final String url, filename, mode, sha256, packageIdentity, signingCert, downloadId;
         final long versionCode;
-        final boolean wifiOnly, allowDowngrade;
-        DownloadSpec(String url, String filename, String mode, String sha256, String packageIdentity, String signingCert, long versionCode, String downloadId, boolean wifiOnly, boolean allowDowngrade) {
+        final boolean wifiOnly, allowDowngrade, allowSameVersion;
+        DownloadSpec(String url, String filename, String mode, String sha256, String packageIdentity, String signingCert, long versionCode, String downloadId, boolean wifiOnly, boolean allowDowngrade, boolean allowSameVersion) {
             this.url=url; this.filename=filename; this.mode=mode; this.sha256=sha256; this.packageIdentity=packageIdentity; this.signingCert=signingCert;
-            this.versionCode=versionCode; this.downloadId=downloadId; this.wifiOnly=wifiOnly; this.allowDowngrade=allowDowngrade;
+            this.versionCode=versionCode; this.downloadId=downloadId; this.wifiOnly=wifiOnly; this.allowDowngrade=allowDowngrade; this.allowSameVersion=allowSameVersion;
         }
     }
     private static final class DownloadPausedException extends IOException {
@@ -127,6 +160,8 @@ public class AemInstallerPlugin extends Plugin {
                     item.put("packageName", p.packageName);
                     item.put("versionName", p.versionName == null ? "" : p.versionName);
                     item.put("versionCode", Build.VERSION.SDK_INT >= 28 ? p.getLongVersionCode() : p.versionCode);
+                    item.put("lastUpdateTime", p.lastUpdateTime);
+                    item.put("firstInstallTime", p.firstInstallTime);
                     item.put("signingCertificateSha256", signingCertificateSha256(p));
                     apps.put(item);
                 }
@@ -139,11 +174,14 @@ public class AemInstallerPlugin extends Plugin {
 
     private void addInstalled(JSArray apps, String packageName) {
         try {
-            android.content.pm.PackageInfo p = getContext().getPackageManager().getPackageInfo(packageName, android.content.pm.PackageManager.GET_SIGNING_CERTIFICATES);
+            int flags = Build.VERSION.SDK_INT >= 28 ? android.content.pm.PackageManager.GET_SIGNING_CERTIFICATES : android.content.pm.PackageManager.GET_SIGNATURES;
+            android.content.pm.PackageInfo p = getContext().getPackageManager().getPackageInfo(packageName, flags);
             JSObject item = new JSObject();
             item.put("packageName", p.packageName);
             item.put("versionName", p.versionName == null ? "" : p.versionName);
             item.put("versionCode", Build.VERSION.SDK_INT >= 28 ? p.getLongVersionCode() : p.versionCode);
+            item.put("lastUpdateTime", p.lastUpdateTime);
+            item.put("firstInstallTime", p.firstInstallTime);
             item.put("signingCertificateSha256", signingCertificateSha256(p));
             apps.put(item);
         } catch (Exception ignored) {}
@@ -192,19 +230,25 @@ public class AemInstallerPlugin extends Plugin {
         final String expectedSha256 = call.getString("sha256", "");
         final String expectedPackage = call.getString("packageIdentity", "");
         final String expectedSigningCert = call.getString("signingCertificateSha256", "");
-        final long requestedVersionCode = call.getLong("versionCode", -1L);
-        final long expectedVersionCode = requestedVersionCode > 0 ? requestedVersionCode : -1L;
+        final Long requestedVersionCode = call.getLong("versionCode", -1L);
+        final long expectedVersionCode = requestedVersionCode != null && requestedVersionCode > 0 ? requestedVersionCode : -1L;
         final String downloadId = call.getString("downloadId", "");
         final boolean wifiOnly = call.getBoolean("wifiOnly", false);
         final boolean allowDowngrade = call.getBoolean("allowDowngrade", false);
+        final boolean allowSameVersion = call.getBoolean("allowSameVersion", false);
 
         if (url == null || url.isEmpty()) { call.reject("Download URL is required"); return; }
         if (Build.VERSION.SDK_INT >= 26 && !getContext().getPackageManager().canRequestPackageInstalls()) {
             JSObject out = new JSObject(); out.put("permissionRequired", true); call.resolve(out); return;
         }
 
-        DownloadSpec spec = new DownloadSpec(url, filename, mode, expectedSha256, expectedPackage, expectedSigningCert, expectedVersionCode, downloadId, wifiOnly, allowDowngrade);
-        if (!downloadId.isEmpty()) { downloadSpecs.put(downloadId, spec); notifyDownload(downloadId, "AEM Store", "Download starting…", 0, true); }
+        DownloadSpec spec = new DownloadSpec(url, filename, mode, expectedSha256, expectedPackage, expectedSigningCert, expectedVersionCode, downloadId, wifiOnly, allowDowngrade, allowSameVersion);
+        if (!downloadId.isEmpty()) {
+            cancelledDownloads.remove(downloadId);
+            pausedDownloads.remove(downloadId);
+            downloadSpecs.put(downloadId, spec);
+            notifyDownload(downloadId, "AEM Store", "Download starting…", 0, true);
+        }
         startDownloadAndInstall(spec, call);
     }
 
@@ -212,9 +256,10 @@ public class AemInstallerPlugin extends Plugin {
         new Thread(() -> {
             try {
                 pausedDownloads.remove(spec.downloadId);
-                ensureInstalledCompatibility(spec.packageIdentity, spec.signingCert, spec.versionCode, spec.allowDowngrade);
+                ensureInstalledCompatibility(spec.packageIdentity, spec.signingCert, spec.versionCode, spec.allowDowngrade, spec.allowSameVersion);
                 File downloaded = download(spec.url, spec.filename, spec.sha256, spec.downloadId, spec.wifiOnly);
                 install(downloaded, spec.mode, spec.packageIdentity, spec.signingCert, spec.versionCode, spec.downloadId);
+                downloadSpecs.remove(spec.downloadId);
                 JSObject out = new JSObject();
                 out.put("started", true);
                 out.put("file", downloaded.getAbsolutePath());
@@ -225,7 +270,9 @@ public class AemInstallerPlugin extends Plugin {
                 if (pausedDownloads.contains(spec.downloadId)) {
                     JSObject out = new JSObject(); out.put("paused", true); out.put("downloadId", spec.downloadId); call.resolve(out); return;
                 }
-                if (cancelledDownloads.contains(spec.downloadId)) {
+                downloadSpecs.remove(spec.downloadId);
+                clearDownloadNotification(spec.downloadId);
+                if (cancelledDownloads.remove(spec.downloadId)) {
                     JSObject out = new JSObject(); out.put("cancelled", true); out.put("downloadId", spec.downloadId); call.resolve(out); return;
                 }
                 call.reject(e.getMessage() == null ? "Installation failed" : e.getMessage(), e);
@@ -247,10 +294,10 @@ public class AemInstallerPlugin extends Plugin {
             status.setAction("com.aem.store.INSTALL_STATUS");
             status.putExtra("aem_download_id",id);
             status.putExtra("aem_download_path",prefs.getString("path_"+id,""));
-            PendingIntent pi=PendingIntent.getActivity(getContext(),INSTALL_RESULT+Math.abs(id.hashCode()),status,PendingIntent.FLAG_UPDATE_CURRENT|PendingIntent.FLAG_MUTABLE);
+            PendingIntent pi=PendingIntent.getActivity(getContext(),INSTALL_RESULT+((id.hashCode() & 0x7fffffff) % 10000),status,PendingIntent.FLAG_UPDATE_CURRENT|PendingIntent.FLAG_MUTABLE);
             PackageInstaller.Session session=installer.openSession(sessionId);
             try{session.commit(pi.getIntentSender());}finally{session.close();}
-            notifyDownload(id,"Installation ready","Tap to continue installing",-1,true);
+            notifyDownload(id,"Installation ready","Tap to continue installing",-1,false);
             call.resolve();
         } catch(Exception e){call.reject(e.getMessage()==null?"Unable to reopen installer":e.getMessage(),e);}
     }
@@ -291,13 +338,16 @@ public class AemInstallerPlugin extends Plugin {
 
     private File download(String source, String filename, String expectedSha256, String downloadId, boolean wifiOnly) throws Exception {
         if (wifiOnly && !isWifiConnected()) throw new IOException("Network unavailable: Wi-Fi-only downloads are enabled.");
+        URL parsedUrl = new URL(source);
+        if (!"https".equalsIgnoreCase(parsedUrl.getProtocol())) throw new IOException("Only HTTPS package URLs are supported");
+        String safeId = downloadId == null ? "" : downloadId;
         File dir = new File(getContext().getCacheDir(), "aem-downloads");
         if (!dir.exists() && !dir.mkdirs()) throw new IOException("Cannot create download directory");
-        File partial = new File(dir, filename.replaceAll("[^A-Za-z0-9._-]", "_") + "." + downloadId.replaceAll("[^A-Za-z0-9._-]", "_") + ".part");
+        File partial = new File(dir, filename.replaceAll("[^A-Za-z0-9._-]", "_") + "." + safeId.replaceAll("[^A-Za-z0-9._-]", "_") + ".part");
         long existing = partial.exists() ? partial.length() : 0L;
 
-        HttpURLConnection c = (HttpURLConnection) new URL(source).openConnection();
-        if (downloadId != null && !downloadId.isEmpty()) activeDownloads.put(downloadId, c);
+        HttpURLConnection c = (HttpURLConnection) parsedUrl.openConnection();
+        if (!safeId.isEmpty()) activeDownloads.put(safeId, c);
         c.setInstanceFollowRedirects(true);
         c.setConnectTimeout(30000);
         c.setReadTimeout(120000);
@@ -305,8 +355,21 @@ public class AemInstallerPlugin extends Plugin {
         if (existing > 0) c.setRequestProperty("Range", "bytes=" + existing + "-");
         c.connect();
         int status = c.getResponseCode();
+        if (status == 416 && existing > 0) {
+            c.disconnect();
+            partial.delete();
+            existing = 0L;
+            c = (HttpURLConnection) parsedUrl.openConnection();
+            if (!safeId.isEmpty()) activeDownloads.put(safeId, c);
+            c.setInstanceFollowRedirects(true);
+            c.setConnectTimeout(30000);
+            c.setReadTimeout(120000);
+            c.setRequestProperty("User-Agent", "AEM Store");
+            c.connect();
+            status = c.getResponseCode();
+        }
         if (status < 200 || status >= 300) {
-            activeDownloads.remove(downloadId);
+            activeDownloads.remove(safeId);
             c.disconnect();
             throw new IOException("Network error: HTTP " + status);
         }
@@ -347,7 +410,7 @@ public class AemInstallerPlugin extends Plugin {
         File out = new File(dir, filename.replaceAll("[^A-Za-z0-9._-]", "_"));
         if (out.exists()) out.delete();
         if (!partial.renameTo(out)) throw new IOException("Unable to finalize downloaded package");
-        notifyDownload(downloadId, "Download complete", filename, 100, true);
+        notifyDownload(downloadId, "Download complete", filename, 100, false);
         if (expectedSha256 != null && !expectedSha256.isEmpty()) {
             String actual = sha256(out);
             if (!actual.equalsIgnoreCase(expectedSha256)) {
@@ -408,13 +471,22 @@ public class AemInstallerPlugin extends Plugin {
 
         if ("system".equalsIgnoreCase(mode)) {
             if (!lower.endsWith(".apk")) throw new IOException("Android system installer mode supports .apk only; use AEM Split Installer for split-package archives.");
+            long prevUpdated = 0L;
+            long prevCode = -1L;
+            if (expectedPackage != null && !expectedPackage.isEmpty()) {
+                try {
+                    android.content.pm.PackageInfo existingPkg = getContext().getPackageManager().getPackageInfo(expectedPackage, 0);
+                    prevUpdated = existingPkg.lastUpdateTime;
+                    prevCode = Build.VERSION.SDK_INT >= 28 ? existingPkg.getLongVersionCode() : existingPkg.versionCode;
+                } catch (Exception ignored) {}
+            }
             Uri uri = FileProvider.getUriForFile(getContext(), getContext().getPackageName() + ".fileprovider", file);
             Intent intent = new Intent(Intent.ACTION_VIEW);
             intent.setDataAndType(uri, "application/vnd.android.package-archive");
             intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_GRANT_READ_URI_PERMISSION);
             try { getContext().startActivity(intent); }
             catch (ActivityNotFoundException e) { throw new IOException("No Android package installer is available on this device.", e); }
-            monitorSystemInstall(expectedPackage, expectedVersionCode, expectedDownloadId);
+            monitorSystemInstall(expectedPackage, expectedVersionCode, expectedDownloadId, prevUpdated, prevCode);
             return;
         }
 
@@ -444,9 +516,12 @@ public class AemInstallerPlugin extends Plugin {
             status.setAction("com.aem.store.INSTALL_STATUS");
             status.putExtra("aem_download_path", file.getAbsolutePath());
             status.putExtra("aem_download_id", expectedDownloadId);
+            int requestCode = INSTALL_RESULT + (expectedDownloadId != null && !expectedDownloadId.isEmpty()
+                    ? ((expectedDownloadId.hashCode() & 0x7fffffff) % 10000)
+                    : (id % 10000));
             PendingIntent pi = PendingIntent.getActivity(
                     getContext(),
-                    INSTALL_RESULT,
+                    requestCode,
                     status,
                     PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_MUTABLE
             );
@@ -458,7 +533,7 @@ public class AemInstallerPlugin extends Plugin {
         } finally { AemPackageArchive.deleteTree(splitStaging); }
     }
 
-    private void monitorSystemInstall(final String packageName, final long targetVersionCode, final String downloadId) {
+    private void monitorSystemInstall(final String packageName, final long targetVersionCode, final String downloadId, final long previousUpdatedTime, final long previousCode) {
         if (packageName == null || packageName.isEmpty() || targetVersionCode < 0) return;
         new Thread(() -> {
             boolean installed = false;
@@ -466,7 +541,8 @@ public class AemInstallerPlugin extends Plugin {
                 try {
                     android.content.pm.PackageInfo p = getContext().getPackageManager().getPackageInfo(packageName, android.content.pm.PackageManager.GET_SIGNING_CERTIFICATES);
                     long code = Build.VERSION.SDK_INT >= 28 ? p.getLongVersionCode() : p.versionCode;
-                    if (code >= targetVersionCode) { installed = true; break; }
+                    boolean sameCodeFresh = code == targetVersionCode && (previousCode < targetVersionCode || p.lastUpdateTime > previousUpdatedTime);
+                    if (code > targetVersionCode || sameCodeFresh) { installed = true; break; }
                 } catch (Exception ignored) {}
                 try { Thread.sleep(1000L); } catch (InterruptedException e) { Thread.currentThread().interrupt(); break; }
             }
@@ -528,25 +604,37 @@ public class AemInstallerPlugin extends Plugin {
         }
     }
 
-    private void ensureInstalledCompatibility(String packageName, String expectedCert, long expectedVersionCode, boolean allowDowngrade) throws Exception {
+    private void ensureInstalledCompatibility(String packageName, String expectedCert, long expectedVersionCode, boolean allowDowngrade, boolean allowSameVersion) throws Exception {
         if (packageName == null || packageName.isEmpty()) return;
         try {
-            android.content.pm.PackageInfo installed = getContext().getPackageManager().getPackageInfo(packageName, android.content.pm.PackageManager.GET_SIGNING_CERTIFICATES);
-            if (!allowDowngrade && expectedVersionCode >= 0 && Build.VERSION.SDK_INT >= 28 && installed.getLongVersionCode() >= expectedVersionCode) {
-                throw new IOException("Installed version code " + installed.getLongVersionCode() + " is already at or newer than store version " + expectedVersionCode);
+            int flags = Build.VERSION.SDK_INT >= 28 ? android.content.pm.PackageManager.GET_SIGNING_CERTIFICATES : android.content.pm.PackageManager.GET_SIGNATURES;
+            android.content.pm.PackageInfo installed = getContext().getPackageManager().getPackageInfo(packageName, flags);
+            long installedCode = Build.VERSION.SDK_INT >= 28 ? installed.getLongVersionCode() : installed.versionCode;
+            if (!allowDowngrade && expectedVersionCode >= 0 && (installedCode > expectedVersionCode || (!allowSameVersion && installedCode == expectedVersionCode))) {
+                throw new IOException("Installed version code " + installedCode + " is already at or newer than store version " + expectedVersionCode);
             }
-            if (expectedCert != null && !expectedCert.isEmpty() && Build.VERSION.SDK_INT >= 28) {
-                if (!getContext().getPackageManager().hasSigningCertificate(packageName, hexBytes(expectedCert), android.content.pm.PackageManager.CERT_INPUT_SHA256)) {
-                    throw new IOException("Installed package signature is incompatible with this update.");
+            if (expectedCert != null && !expectedCert.isEmpty()) {
+                if (Build.VERSION.SDK_INT >= 28) {
+                    if (!getContext().getPackageManager().hasSigningCertificate(packageName, hexBytes(expectedCert), android.content.pm.PackageManager.CERT_INPUT_SHA256)) {
+                        throw new IOException("Installed package signature is incompatible with this update.");
+                    }
+                } else {
+                    String actual = signingCertificateSha256(installed);
+                    if (!actual.isEmpty() && !expectedCert.replace(":", "").replace(" ", "").equalsIgnoreCase(actual)) {
+                        throw new IOException("Installed package signature is incompatible with this update.");
+                    }
                 }
             }
         } catch (android.content.pm.PackageManager.NameNotFoundException ignored) {}
     }
 
     private String signingCertificateSha256(android.content.pm.PackageInfo p) {
-        if (Build.VERSION.SDK_INT < 28 || p.signingInfo == null) return "";
         try {
-            android.content.pm.Signature[] signers = p.signingInfo.getApkContentsSigners();
+            android.content.pm.Signature[] signers = null;
+            if (Build.VERSION.SDK_INT >= 28 && p.signingInfo != null) {
+                signers = p.signingInfo.getApkContentsSigners();
+            }
+            if (signers == null || signers.length == 0) signers = p.signatures;
             if (signers == null || signers.length == 0) return "";
             return certSha256(signers[0].toByteArray());
         } catch (Exception ignored) { return ""; }

@@ -2,6 +2,8 @@ name: AEM Central Android Signing
 
 on:
   push:
+    branches:
+      - main
     paths:
       - ".github/workflows/aem-android-central-signing-v2.yml"
       - "supabase/functions/aem-android-signing/index.ts"
@@ -110,9 +112,9 @@ jobs:
               continue
             fi
             verify_out="$("${{ steps.tools.outputs.apksigner }}" verify --print-certs "$output" 2>&1 || true)"
-            cert="$(printf '%s\n' "$verify_out" | grep -Eio '[0-9a-f]{64}' | head -n 1 | tr '[:upper:]' '[:lower:]' || true)"
+            cert="$(printf '%s\n' "$verify_out" | grep -i 'Signer #1 certificate SHA-256 digest:' | head -n 1 | grep -Eio '[0-9a-f]{64}' | head -n 1 | tr '[:upper:]' '[:lower:]' || true)"
             if [ -z "$cert" ]; then
-              cert="$(keytool -printcert -jarfile "$output" 2>/dev/null | grep -Eio '[0-9a-f]{64}' | head -n 1 | tr '[:upper:]' '[:lower:]' || true)"
+              cert="$(keytool -printcert -jarfile "$output" 2>/dev/null | grep -i 'SHA256:' | head -n 1 | tr -d ':' | grep -Eio '[0-9a-f]{64}' | head -n 1 | tr '[:upper:]' '[:lower:]' || true)"
             fi
             if [ -z "$cert" ]; then
               fail_item "$id" "No certificate fingerprint could be extracted. apksigner: $(printf '%s' "$verify_out" | tail -c 1400 | tr '\n' ' ')"

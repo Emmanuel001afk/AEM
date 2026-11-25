@@ -8,6 +8,7 @@ on:
 permissions:
   actions: read
   contents: read
+  id-token: write
 
 concurrency:
   group: aem-store-stable-publish
@@ -44,7 +45,6 @@ jobs:
       - name: Publish through AEM Supabase gateway
         env:
           APK: release/app-release.apk
-          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           APKSIGNER="$(command -v apksigner || true)"
@@ -53,7 +53,7 @@ jobs:
           fi
           signing_cert=""
           if [ -n "$APKSIGNER" ] && [ -x "$APKSIGNER" ]; then
-            signing_cert="$("$APKSIGNER" verify --print-certs "$APK" 2>/dev/null | sed -n 's/.*Signer #1 certificate SHA-256 digest: //p' | head -n 1 || true)"
+            signing_cert="$("$APKSIGNER" verify --print-certs "$APK" 2>/dev/null | grep -i 'Signer #1 certificate SHA-256 digest:' | head -n 1 | grep -Eio '[0-9a-f]{64}' | head -n 1 || true)"
           fi
           if [ -z "$signing_cert" ]; then
             signing_cert="$(keytool -printcert -jarfile "$APK" 2>/dev/null | sed -n '/SHA256:/{s/^[[:space:]]*SHA256:[[:space:]]*//;p;q}' || true)"
@@ -61,6 +61,9 @@ jobs:
           signing_cert="$(printf '%s' "$signing_cert" | tr -d ':' | tr '[:upper:]' '[:lower:]')"
           test -n "$signing_cert"
           SUPABASE_KEY="$(sed -n 's/.*DEFAULT_PUBLISHABLE_KEY="\([^"]*\)".*/\1/p' src/services/supabase/client.ts)"
+          PUBLISH_URL="https://zaaauldrktvytskerpmc.supabase.co/functions/v1/aem-publish-github-artifact"
+          OIDC_TOKEN="$(curl -fsSL -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=$PUBLISH_URL" | jq -er '.value')"
+          echo "::add-mask::$OIDC_TOKEN"
           AAPT="$(find "${ANDROID_HOME:-/opt/android-sdk}" -type f -name aapt | sort -V | tail -n 1)"
           badging="$("$AAPT" dump badging "$APK")"
           package="$(sed -n "s/.*package: name='\\([^']*\\)'.*/\\1/p" <<<"$badging" | head -n 1)"
@@ -90,9 +93,9 @@ jobs:
               status="$(
                 curl -sS -o "$response_file" -w '%{http_code}' \
                   --connect-timeout 30 --max-time 60 \
-                  -X POST "https://zaaauldrktvytskerpmc.supabase.co/functions/v1/aem-publish-github-artifact" \
+                  -X POST "$PUBLISH_URL" \
                   -H "apikey: $SUPABASE_KEY" -H "Authorization: Bearer $SUPABASE_KEY" \
-                  -H "Content-Type: application/json" -H "x-github-token: $GH_TOKEN" \
+                  -H "Content-Type: application/json" -H "x-aem-oidc: $OIDC_TOKEN" \
                   --data "$META"
               )" || status="000"
               if [[ "$status" =~ ^2[0-9][0-9]$ ]]; then
@@ -192,9 +195,9 @@ jobs:
           finalize_status="$(
             curl -sS -D "$finalize_headers" -o "$finalize_response" -w '%{http_code}' \
               --connect-timeout 30 --max-time 120 \
-              -X POST "https://zaaauldrktvytskerpmc.supabase.co/functions/v1/aem-publish-github-artifact" \
+              -X POST "$PUBLISH_URL" \
               -H "apikey: $SUPABASE_KEY" -H "Authorization: Bearer $SUPABASE_KEY" \
-              -H "Content-Type: application/json" -H "x-github-token: $GH_TOKEN" \
+              -H "Content-Type: application/json" -H "x-aem-oidc: $OIDC_TOKEN" \
               --data "$FINALIZE"
           )" || finalize_status="000"
           if [[ ! "$finalize_status" =~ ^2[0-9][0-9]$ ]]; then

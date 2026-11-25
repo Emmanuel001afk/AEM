@@ -28,6 +28,8 @@ export default function EmulatorView() {
   const [createForm, setCreateForm] = useState({ name: "aem_pixel_7", ramMB: 3072, cores: 4, storageMB: 8192, gpuMode: "auto" });
   const fileInputRef = useRef<HTMLInputElement>(null);
   const pollRef = useRef<number | null>(null);
+  const initializedFormRef = useRef(false);
+  const msgTimerRef = useRef<number | null>(null);
 
   const refreshAll = useCallback(async () => {
     if (!bridge) return;
@@ -49,9 +51,12 @@ export default function EmulatorView() {
       try { const imgs = await bridge.listSystemImages(); setSystemImages(imgs || []); } catch {}
       if (rec) {
         setRecommendation(rec);
-        // Pre-fill the AVD creation form with the host-recommended profile
-        const p = rec.profiles.find((x: { id: string }) => x.id === rec.recommended);
-        if (p) setCreateForm({ name: "aem_pixel_7", ramMB: p.ramMB, cores: p.cores, storageMB: p.storageMB, gpuMode: p.gpuMode });
+        // Pre-fill the AVD creation form once from the host-recommended profile without wiping user edits
+        if (!initializedFormRef.current) {
+          initializedFormRef.current = true;
+          const p = rec.profiles.find((x: { id: string }) => x.id === rec.recommended);
+          if (p) setCreateForm({ name: "aem_pixel_7", ramMB: p.ramMB, cores: p.cores, storageMB: p.storageMB, gpuMode: p.gpuMode });
+        }
       }
       if (st?.state === "running") {
         try { const a = await bridge.getInstalledApps(); setApps(a); } catch {}
@@ -76,8 +81,12 @@ export default function EmulatorView() {
   }, [bridge]);
 
   const showMsg = (type: "info" | "success" | "error", text: string) => {
+    if (msgTimerRef.current) clearTimeout(msgTimerRef.current);
     setMessage({ type, text });
-    setTimeout(() => setMessage(null), 6000);
+    msgTimerRef.current = window.setTimeout(() => {
+      msgTimerRef.current = null;
+      setMessage(null);
+    }, 6000);
   };
 
   const handleInstallSdk = async () => {
@@ -171,16 +180,10 @@ export default function EmulatorView() {
     e.target.value = "";
   };
 
-  const handleInstallStoreArtifact = async (artifact: { url: string; filename: string }) => {
-    if (!bridge) return;
-    setInstalling(true);
-    try {
-      const res = await bridge.installApkFromUrl(artifact.url, artifact.filename);
-      showMsg(res.success ? "success" : "error", res.message);
-      if (res.success) refreshAll();
-    } catch (e: any) { showMsg("error", e.message); }
-    finally { setInstalling(false); }
-  };
+  const state = status?.state || "not-installed";
+  const isRunning = state === "running";
+  const isStarting = state === "starting" || state === "installing";
+  const canStart = state === "ready" || state === "not-installed";
 
   const handleLaunch = async (pkg: string) => {
     if (!bridge) return;
@@ -191,14 +194,6 @@ export default function EmulatorView() {
     if (!bridge) return;
     try { const r = await bridge.uninstallApp(pkg); showMsg(r.success ? "success" : "error", r.message); if (r.success) refreshAll(); } catch (e: any) { showMsg("error", e.message); }
   };
-
-  const state = status?.state || "not-installed";
-  const isRunning = state === "running";
-  const isStarting = state === "starting" || state === "installing";
-  const canStart = state === "ready" || state === "not-installed";
-
-  // Expose installStoreArtifact globally for App.tsx integration
-  (window as any)._aemEmulatorInstall = handleInstallStoreArtifact;
 
   if (!bridge && !isMock) {
     return <section className="content emulator-page"><div className="status-message"><span>Emulator is only available in the AEM Store Windows desktop app. Download the installer from GitHub Releases.</span></div></section>;
@@ -235,8 +230,8 @@ export default function EmulatorView() {
               {status?.state === "ready" && avds.length > 0 && <button className="choice" onClick={() => handleStart({ wipeData: true })}>COLD BOOT</button>}
             </div>
             <div className="choice-row">
-              {isRunning && <button className="choice" onClick={() => bridge?.takeScreenshot().then((r: any) => r.success ? showMsg("success", "Screenshot captured") : showMsg("error", r.error || "Failed"))}>SCREENSHOT</button>}
-              {isRunning && <button className="choice" onClick={() => navigator.clipboard.writeText(status?.adbSerial || "")}>COPY SERIAL</button>}
+              {isRunning && <button className="choice" onClick={() => bridge?.takeScreenshot().then((r: any) => r.success ? showMsg("success", "Screenshot captured") : showMsg("error", r.error || "Failed")).catch((e: any) => showMsg("error", e?.message || "Screenshot failed"))}>SCREENSHOT</button>}
+              {isRunning && <button className="choice" onClick={() => navigator.clipboard?.writeText(status?.adbSerial || "").then(() => showMsg("info", "Serial copied")).catch(() => showMsg("error", "Clipboard unavailable"))}>COPY SERIAL</button>}
               <button className="choice" onClick={refreshAll}>REFRESH</button>
             </div>
           </div>
@@ -257,10 +252,10 @@ export default function EmulatorView() {
           <input ref={fileInputRef} type="file" accept=".apk,.apks,.xapk,.apkm,.zip" multiple style={{ display: "none" }} onChange={handleFileInput} />
           <p>Pick an APK/APKS/XAPK from your PC and install it to the running emulator.</p>
           <div className="choice-row">
-            <button className="choice" onClick={() => bridge?.shell("input keyevent 82").then(() => showMsg("info", "Sent MENU key"))} disabled={!isRunning}>UNLOCK</button>
-            <button className="choice" onClick={() => bridge?.shell("pm list features").then((out: any) => showMsg("info", out.slice(0, 300)))} disabled={!isRunning}>FEATURES</button>
+            <button className="choice" onClick={() => bridge?.shell("input keyevent 82").then(() => showMsg("info", "Sent MENU key")).catch((e: any) => showMsg("error", e?.message || "Failed"))} disabled={!isRunning}>UNLOCK</button>
+            <button className="choice" onClick={() => bridge?.shell("pm list features").then((out: any) => showMsg("info", out.slice(0, 300))).catch((e: any) => showMsg("error", e?.message || "Failed"))} disabled={!isRunning}>FEATURES</button>
           </div>
-          {isRunning && <div className="choice-row"><button className="choice" onClick={() => bridge?.setLocation(6.5244, 3.3792).then((ok: any) => showMsg(ok ? "success" : "error", ok ? "Location set to Lagos" : "Failed"))}>SET LOCATION (LAGOS)</button><button className="choice" onClick={() => bridge?.rotate(1).then(() => showMsg("info", "Rotated"))}>ROTATE</button></div>}
+          {isRunning && <div className="choice-row"><button className="choice" onClick={() => bridge?.setLocation(6.5244, 3.3792).then((ok: any) => showMsg(ok ? "success" : "error", ok ? "Location set to Lagos" : "Failed")).catch((e: any) => showMsg("error", e?.message || "Failed"))}>SET LOCATION (LAGOS)</button><button className="choice" onClick={() => bridge?.rotate(1).then((ok: any) => showMsg(ok ? "info" : "error", ok ? "Rotated" : "Rotate failed")).catch((e: any) => showMsg("error", e?.message || "Failed"))}>ROTATE</button></div>}
           <p className="fine">Storage, networking and permissions are managed by Android. See diagnostics for hardware integration.</p>
         </div>
       </div>
@@ -276,14 +271,14 @@ export default function EmulatorView() {
               {recommendation.host.diskFreeMB == null ? "disk unknown" : (recommendation.host.diskFreeMB / 1024).toFixed(1) + " GB free"} ·
               {recommendation.host.virtualizationEnabled == null ? "virtualization unknown" : recommendation.host.virtualizationEnabled ? "virtualization enabled" : "virtualization disabled"}
             </p>
-            <p><strong>Recommended:</strong> {recommendation.profiles.find((p: any) => p.id === recommendation.recommended)?.name} — engineering budget, not a performance guarantee.</p>
+            <p><strong>Recommended:</strong> {recommendation.profiles.find((p: any) => p.id === recommendation.recommended)?.name || "None (unsupported)"} — engineering budget, not a performance guarantee.</p>
             {recommendation.reasons.map((r: string, i: number) => <p key={`reason-${i}`} style={{ marginTop: 6 }}>• {r}</p>)}
             {recommendation.limitations.length > 0 && <div style={{ marginTop: 8 }}>
               <strong>Limitations:</strong>
               {recommendation.limitations.map((l: string, i: number) => <p key={`limit-${i}`} style={{ marginTop: 4, color: "var(--aem-warn, #f04444)" }}>⚠ {l}</p>)}
             </div>}
             <div className="choice-row" style={{ marginTop: 10 }}>
-              <button className="choice" onClick={() => bridge.getResourceProfiles().then((r: any) => setRecommendation(r))}>RE-EVALUATE</button>
+              <button className="choice" onClick={() => bridge.getResourceProfiles().then((r: any) => setRecommendation(r)).catch((e: any) => showMsg("error", e?.message || "Failed"))}>RE-EVALUATE</button>
               <button className="install" onClick={() => { const p = recommendation.profiles.find((x: any) => x.id === recommendation.recommended); if (p) setCreateForm({ name: "aem_pixel_7", ramMB: p.ramMB, cores: p.cores, storageMB: p.storageMB, gpuMode: p.gpuMode }); }} disabled={!sdk?.installed||!recommendation.recommended}>APPLY TO AVD FORM</button>
             </div>
           </>}
@@ -291,19 +286,12 @@ export default function EmulatorView() {
       </div>
 
       {/* Diagnostics */}
-
-      {/* Diagnostics */}
       <div className="setting open" style={{ marginTop: 16 }}>
-        <button className="setting-head" onClick={() => setDiagnostics(d => d)}><strong>Host diagnostics</strong><span>{(diagnostics?.summary.canRun ? "● Ready" : "● Check required")}</span></button>
+        <button className="setting-head" onClick={() => bridge.getDiagnostics(true).then((d: any) => setDiagnostics(d)).catch(() => {})}><strong>Host diagnostics</strong><span>{(diagnostics?.summary.canRun ? "● Ready" : "● Check required")}</span></button>
         <div className="setting-body">
           {!diagnostics ? <p>Loading diagnostics…</p> : <>
             <div className="diag-summary"><span>✅ {diagnostics.summary.passed} pass</span><span>⚠️ {diagnostics.summary.warnings} warn</span><span>❌ {diagnostics.summary.failed} fail</span><span className={diagnostics.summary.canRun ? "ok" : "bad"}>{diagnostics.summary.canRun ? "Can run emulator" : "Cannot run — fix required"}</span></div>
             <p>Host: {diagnostics.host.cpuModel} · {diagnostics.host.cpuCores} cores · {diagnostics.host.totalMemMB} MB RAM · {diagnostics.host.osVersion}</p>
-            {diagnostics.recommendation && <div className="setting-body">
-              <strong>Comfortable resource recommendation: {diagnostics.recommendation.supported ? diagnostics.recommendation.profile : "not currently supported"}</strong>
-              <p>{diagnostics.recommendation.ramMB} MB guest RAM · {diagnostics.recommendation.cores} cores. Profiles are engineering budgets, not measured performance guarantees.</p>
-              <button className="choice" disabled={!diagnostics.recommendation.supported} onClick={() => setCreateForm({...createForm, ramMB: diagnostics.recommendation!.ramMB, cores: diagnostics.recommendation!.cores})}>USE RECOMMENDED RESOURCES FOR NEW AVD</button>
-            </div>}
             <div className="diag-list">
               {diagnostics.checks.map((c: any) => (
                 <div key={c.id} className={`diag-check diag-${c.status}`}>
@@ -314,7 +302,7 @@ export default function EmulatorView() {
                 </div>
               ))}
             </div>
-            <div className="choice-row"><button className="choice" onClick={() => bridge.getDiagnostics(true).then((d: any) => setDiagnostics(d))}>RE-RUN DIAGNOSTICS</button><button className="choice" onClick={() => bridge.shell ? bridge.shell("getprop").then((out: any) => setMessage({ type: "info", text: out.slice(0, 600) })) : showMsg("info", "Shell not available")}>DUMP PROPS</button></div>
+            <div className="choice-row"><button className="choice" onClick={() => bridge.getDiagnostics(true).then((d: any) => setDiagnostics(d)).catch((e: any) => showMsg("error", e?.message || "Diagnostics failed"))}>RE-RUN DIAGNOSTICS</button><button className="choice" onClick={() => bridge.shell ? bridge.shell("getprop").then((out: any) => setMessage({ type: "info", text: out.slice(0, 600) })).catch((e: any) => showMsg("error", e?.message || "Failed")) : showMsg("info", "Shell not available")}>DUMP PROPS</button></div>
           </>}
         </div>
       </div>
@@ -367,7 +355,7 @@ export default function EmulatorView() {
                     <div className="choice-row" style={{ flexDirection: "column" }}>
                       <button className="install" onClick={() => handleLaunch(a.packageName)}>LAUNCH</button>
                       <button className="choice" onClick={() => handleUninstall(a.packageName)}>UNINSTALL</button>
-                      <button className="choice" onClick={() => bridge.getAppPermissions(a.packageName).then((p: any) => showMsg("info", `Permissions: ${p.requested.slice(0, 5).join(", ") || "none"}`))}>PERMISSIONS</button>
+                      <button className="choice" onClick={() => bridge.getAppPermissions(a.packageName).then((p: any) => showMsg("info", `Permissions: ${p.requested.slice(0, 5).join(", ") || "none"}`)).catch((e: any) => showMsg("error", e?.message || "Failed"))}>PERMISSIONS</button>
                     </div>
                   </article>
                 ))}
@@ -381,7 +369,7 @@ export default function EmulatorView() {
         <div className="setting-body">
           <h4>Emulator logs</h4>
           <pre className="emulator-logs">{logs.slice(-80).join("\n") || "No logs yet"}</pre>
-          <div className="choice-row"><button className="choice" onClick={() => bridge.getLogs(200).then(setLogs)}>REFRESH LOGS</button><button className="choice" onClick={() => { const blob = new Blob([logs.join("\n")], { type: "text/plain" }); const url = URL.createObjectURL(blob); const a = document.createElement("a"); a.href = url; a.download = "emulator.log"; a.click(); }}>DOWNLOAD LOGS</button></div>
+          <div className="choice-row"><button className="choice" onClick={() => bridge.getLogs(200).then(setLogs).catch(() => {})}>REFRESH LOGS</button><button className="choice" onClick={() => { const blob = new Blob([logs.join("\n")], { type: "text/plain" }); const url = URL.createObjectURL(blob); const a = document.createElement("a"); a.href = url; a.download = "emulator.log"; a.click(); setTimeout(() => URL.revokeObjectURL(url), 10000); }}>DOWNLOAD LOGS</button></div>
         </div>
       </div>
 

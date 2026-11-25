@@ -57,7 +57,9 @@ async function processArtifact(artifact) {
     await writeFile(input, Buffer.from(await download.arrayBuffer()));
     await run(APK_SIGNER, ["sign", "--ks", KEYSTORE, "--ks-key-alias", KEY_ALIAS, "--ks-pass", `pass:${KEYSTORE_PASSWORD}`, "--key-pass", `pass:${KEY_PASSWORD}`, "--out", output, input]);
     const verified = await run(APK_SIGNER, ["verify", "--print-certs", output]);
-    const certMatch = verified.stdout.match(/(?:SHA-256|SHA256).*?([0-9a-f]{64})/i) || verified.stderr.match(/(?:SHA-256|SHA256).*?([0-9a-f]{64})/i);
+    const certMatch = verified.stdout.match(/Signer #1 certificate SHA-256 digest:\s*([0-9a-f]{64})/i)
+      || verified.stderr.match(/Signer #1 certificate SHA-256 digest:\s*([0-9a-f]{64})/i)
+      || verified.stdout.match(/(?:SHA-256|SHA256).*?([0-9a-f]{64})/i);
     const cert = certMatch?.[1]?.toLowerCase();
     if (!cert) throw new Error("Unable to extract signing certificate fingerprint");
     const prep = await api("prepare-upload", { artifact_id: artifact.id });

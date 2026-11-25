@@ -55,6 +55,7 @@ class OeaProjectionController(
         // Transparent touch interceptor — maps to nodes/gestures
         setOnTouchListener { _, e -> onProjectionTouch(e); true }
     }
+    private val nodeLayer = FrameLayout(context)
     private val inputField = EditText(context).apply {
         hint = "Type message…"
         visibility = View.GONE
@@ -81,7 +82,8 @@ class OeaProjectionController(
     init {
         container.addView(imageView, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
         container.addView(touchOverlay, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
-        container.addView(inputField, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, 100).apply { gravity = android.view.Gravity.BOTTOM })
+        container.addView(nodeLayer, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
+        container.addView(inputField, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.WRAP_CONTENT).apply { gravity = android.view.Gravity.BOTTOM })
         container.addView(staleView, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.WRAP_CONTENT).apply { gravity = android.view.Gravity.TOP })
         container.addView(secureView)
     }
@@ -95,9 +97,12 @@ class OeaProjectionController(
     fun stopSync() {
         isRunning = false
         handler.removeCallbacks(syncLoop)
+        OeaFloatingWindows.setWindowFocusable(spec.id, false)
         lastNodes.forEach { try { it.node.recycle() } catch (_: Exception) {} }
         lastNodes = emptyList()
-        lastBitmap?.recycle()
+        imageView.setImageDrawable(null)
+        lastBitmap?.let { if (!it.isRecycled) it.recycle() }
+        lastBitmap = null
         Log.i(tag, "Sync stopped")
     }
 
@@ -124,9 +129,10 @@ class OeaProjectionController(
         // Try node tree first (primary mechanism)
         val root = service.rootInActiveWindow
         if (root != null && root.packageName?.toString() == targetPackage) {
+            var nodes: List<MappedNode> = emptyList()
             try {
                 val handler = AppRegistry.handlerFor(targetPackage)
-                val nodes = if (handler != null) handler.extractInteractiveNodes(root) else emptyList()
+                nodes = if (handler != null) handler.extractInteractiveNodes(root) else emptyList()
                 lastNodes.forEach { try { it.node.recycle() } catch (_: Exception) {} }
                 lastNodes = nodes
                 lastCaptureAt = System.currentTimeMillis()
@@ -141,15 +147,24 @@ class OeaProjectionController(
             } catch (e: Exception) {
                 Log.w(tag, "Node extraction failed: $e")
             } finally {
-                // Do not recycle root if we kept nodes that reference it — here nodes hold child refs
+                if (nodes.none { it.node === root }) {
+                    try { root.recycle() } catch (_: Exception) {}
+                }
             }
         } else {
             // Target not foreground — cannot get its node tree; try screenshot fallback
             Log.d(tag, "Root pkg=${root?.packageName} != target $targetPackage — target not foreground, attempting screenshot (expected to be stale)")
+            if (root != null) {
+                try { root.recycle() } catch (_: Exception) {}
+            }
         }
         // Screenshot fallback — captures current display (likely original foreground app, not target)
         service.captureScreenshotIfAllowed { bitmap ->
             handler.post {
+                if (!isRunning) {
+                    bitmap?.let { if (!it.isRecycled) it.recycle() }
+                    return@post
+                }
                 if (bitmap == null) {
                     // Secure screen or permission denied
                     secureView.visibility = View.VISIBLE
@@ -157,16 +172,29 @@ class OeaProjectionController(
                     spec.secureBlocked = true
                     return@post
                 }
+                val previous = lastBitmap
                 lastBitmap = bitmap
                 lastCaptureAt = System.currentTimeMillis()
                 spec.lastCaptureAt = lastCaptureAt
+                spec.secureBlocked = false
+                secureView.visibility = View.GONE
                 imageView.setImageBitmap(bitmap)
+                if (previous != null && previous !== bitmap && !previous.isRecycled) {
+                    previous.recycle()
+                }
                 // OCR fallback if no nodes
                 if (lastNodes.isEmpty()) {
-                    OcrFallback.recognize(bitmap, onResult = { blocks ->
+                    val softwareBitmap = if (android.os.Build.VERSION.SDK_INT >= 26 && bitmap.config == Bitmap.Config.HARDWARE) {
+                        bitmap.copy(Bitmap.Config.ARGB_8888, false)
+                    } else null
+                    val ocrInput = softwareBitmap ?: bitmap
+                    OcrFallback.recognize(ocrInput, onResult = { blocks ->
+                        if (softwareBitmap != null && !softwareBitmap.isRecycled) softwareBitmap.recycle()
                         // Render OCR blocks as clickable overlays (experimental)
                         Log.i(tag, "OCR fallback ${blocks.size} blocks — not yet interactive")
-                    }, onFail = {})
+                    }, onFail = {
+                        if (softwareBitmap != null && !softwareBitmap.isRecycled) softwareBitmap.recycle()
+                    })
                 }
                 // Mark stale if target not foreground
                 val fg = OeaFloatingWindowService.lastForegroundPackage
@@ -179,24 +207,26 @@ class OeaProjectionController(
     }
 
     private fun renderNodeProjection() {
-        // Minimal POC rendering: show first 6 node texts as tappable chips over imageView
-        container.removeViews(2, container.childCount - 2) // keep imageView/touchOverlay, rebuild overlay
-        // Re-add overlays
-        lastNodes.take(8).forEach { mapped ->
+        nodeLayer.removeAllViews()
+        val density = context.resources.displayMetrics.density
+        val chipW = (180 * density).toInt()
+        val chipH = (40 * density).toInt()
+        val rowGap = (44 * density).toInt()
+        lastNodes.take(8).forEachIndexed { idx, mapped ->
             val tv = TextView(context).apply {
                 text = mapped.text ?: mapped.viewId ?: "•"
                 setBackgroundColor(0x33FF0000.toInt())
-                setPadding(4,2,4,2)
+                setPadding(8, 4, 8, 4)
                 setOnClickListener {
                     val h = AppRegistry.handlerFor(targetPackage)
                     if (h != null) h.onMappedTap(mapped, this@OeaProjectionController)
                     else mapped.node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
                 }
             }
-            // Position via boundsInScreen mapped to container coords (simplified)
-            // Full mapping requires display metrics + container offset — Stage B measures accuracy
-            val lp = FrameLayout.LayoutParams(200, 48)
-            container.addView(tv, lp)
+            val lp = FrameLayout.LayoutParams(chipW, chipH).apply {
+                topMargin = idx * rowGap
+            }
+            nodeLayer.addView(tv, lp)
         }
         imageView.setImageBitmap(lastBitmap) // keep showing last screenshot under chips
     }
@@ -206,9 +236,10 @@ class OeaProjectionController(
         val service = OeaFloatingWindowService.instance ?: return
         val x = e.x; val y = e.y
         // Map container touch to screen coords — container is at spec.x/spec.y on display
-        // Plus header offset 48dp
+        // Plus 48dp header offset scaled by display density
+        val headerPx = 48f * context.resources.displayMetrics.density
         val screenX = spec.x + x
-        val screenY = spec.y + y + 48 // header
+        val screenY = spec.y + y + headerPx
 
         // Try node hit-test first
         val hit = lastNodes.firstOrNull {
@@ -231,8 +262,9 @@ class OeaProjectionController(
     }
 
     fun requestKeyboardForEditable(node: MappedNode) {
-        // Toggle window to focusable so IME appears
+        // Toggle window FLAG_NOT_FOCUSABLE off so IME appears
         // This will temporarily make original app not touchable — measured trade-off
+        OeaFloatingWindows.setWindowFocusable(spec.id, true)
         inputField.visibility = View.VISIBLE
         inputField.requestFocus()
         val imm = context.getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
@@ -242,17 +274,27 @@ class OeaProjectionController(
 
     private fun commitTextToTarget() {
         val text = inputField.text.toString()
-        if (text.isEmpty()) return
-        val editable = lastNodes.firstOrNull { it.isEditable } ?: return
-        val args = Bundle().apply { putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, text) }
-        val ok = editable.node.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)
-        Log.i(tag, "ACTION_SET_TEXT '$text' ok=$ok")
-        if (ok) {
-            // After typing, trigger send button if present
-            val send = lastNodes.firstOrNull { it.viewId?.contains("send") == true || it.text?.equals("Send", true) == true }
-            send?.node?.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+        if (text.isEmpty()) {
+            OeaFloatingWindows.setWindowFocusable(spec.id, false)
+            inputField.visibility = View.GONE
+            return
+        }
+        val editable = lastNodes.firstOrNull { it.isEditable }
+        if (editable != null) {
+            val args = Bundle().apply { putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, text) }
+            val ok = editable.node.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)
+            Log.i(tag, "ACTION_SET_TEXT '$text' ok=$ok")
+            if (ok) {
+                // After typing, trigger send button if present
+                val send = lastNodes.firstOrNull { it.viewId?.contains("send") == true || it.text?.equals("Send", true) == true }
+                send?.node?.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+            }
         }
         inputField.text.clear()
+        inputField.visibility = View.GONE
+        val imm = context.getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
+        imm.hideSoftInputFromWindow(inputField.windowToken, 0)
+        OeaFloatingWindows.setWindowFocusable(spec.id, false)
     }
 
     private fun showUnsupported(msg: String) {

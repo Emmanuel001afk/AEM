@@ -54,8 +54,52 @@ export function detectHostPlatform(signals: HostPlatformSignals): StoreHostPlatf
 
 const ANDROID_INSTALLABLE_KINDS = new Set(["apk", "apks", "xapk", "apkm", "zip"]);
 const WINDOWS_INSTALLABLE_KINDS = new Set(["exe"]);
+const WINDOWS_IDENTITY_RE = /^[A-Za-z][A-Za-z0-9_.-]{2,199}$/;
+const WINDOWS_GUID_RE = /^\{[a-f\d]{8}(-[a-f\d]{4}){3}-[a-f\d]{12}\}$/i;
 
-export function androidArtifact(release: any, packageIdentity?: string) {
+export function normalizeWindowsPackageIdentity(rawIdentity?: string | null, fallbackIdentity?: string | null): string {
+  const raw = String(rawIdentity || "").trim();
+  if (WINDOWS_IDENTITY_RE.test(raw) || WINDOWS_GUID_RE.test(raw)) return raw;
+  const fallback = String(fallbackIdentity || "").trim();
+  if (WINDOWS_IDENTITY_RE.test(fallback) || WINDOWS_GUID_RE.test(fallback)) return fallback;
+  const sanitized = raw
+    .replace(/^github:/i, "github.")
+    .replace(/[^A-Za-z0-9_.-]+/g, ".")
+    .replace(/\.+/g, ".")
+    .replace(/^\.+|\.+$/g, "");
+  return WINDOWS_IDENTITY_RE.test(sanitized) ? sanitized.slice(0, 200) : "aem.windows.app";
+}
+
+export function extractNumericWindowsVersion(raw?: string | null): string {
+  const text = String(raw || "").trim();
+  if (!text) return "";
+  const exact = /^v?(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:\.(0|[1-9]\d*))?$/i.exec(text);
+  if (exact) {
+    const [, a, b, c, d] = exact;
+    return !d || d === "0" ? `${a}.${b}.${c}` : `${a}.${b}.${c}.${d}`;
+  }
+  const embedded = /(?:^|[^0-9.])v?(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:\.(0|[1-9]\d*))?(?:[-_. ]|$)/i.exec(text);
+  if (embedded) {
+    const [, a, b, c, d] = embedded;
+    return !d || d === "0" ? `${a}.${b}.${c}` : `${a}.${b}.${c}.${d}`;
+  }
+  return "";
+}
+
+export function resolveWindowsVersion(release?: any, artifact?: any): string {
+  return (
+    extractNumericWindowsVersion(artifact?.versionName ?? artifact?.artifact_version_name) ||
+    extractNumericWindowsVersion(release?.version?.name ?? release?.version_name) ||
+    extractNumericWindowsVersion(artifact?.filename) ||
+    String(artifact?.versionName ?? artifact?.artifact_version_name ?? release?.version?.name ?? release?.version_name ?? "").replace(/^v/i, "")
+  );
+}
+
+function isX86_64Filename(filename?: string): boolean {
+  return /(^|[-_.])(x86_64|amd64)([-. _]|$)/i.test(String(filename || ""));
+}
+
+export function androidArtifact(release: any, packageIdentity?: string, options?: { preferArch?: "x86_64" | "mobile" }) {
   const list = (release?.artifacts || []).filter((artifact: any) =>
     artifact.platform === "android" &&
     ANDROID_INSTALLABLE_KINDS.has(String(artifact.kind || "").toLowerCase()) &&
@@ -68,10 +112,28 @@ export function androidArtifact(release: any, packageIdentity?: string) {
   return (known.length ? known : candidates).sort((a: any, b: any) => {
     const code = Number(b.versionCode ?? 0) - Number(a.versionCode ?? 0);
     if (code) return code;
+    if (options?.preferArch === "x86_64") {
+      const diff = (isX86_64Filename(b.filename) ? 1 : 0) - (isX86_64Filename(a.filename) ? 1 : 0);
+      if (diff) return diff;
+    } else if (options?.preferArch === "mobile") {
+      const diff = (isX86_64Filename(a.filename) ? 1 : 0) - (isX86_64Filename(b.filename) ? 1 : 0);
+      if (diff) return diff;
+    }
     const aRelease = /(^|[-_. ])debug([-. _]|$)/i.test(String(a.filename || "")) ? 0 : 1;
     const bRelease = /(^|[-_. ])debug([-. _]|$)/i.test(String(b.filename || "")) ? 0 : 1;
-    return bRelease - aRelease;
+    if (bRelease !== aRelease) return bRelease - aRelease;
+    const bTime = Date.parse(String(b.sourceUpdatedAt ?? b.source_updated_at ?? "")) || 0;
+    const aTime = Date.parse(String(a.sourceUpdatedAt ?? a.source_updated_at ?? "")) || 0;
+    return bTime - aTime;
   })[0];
+}
+
+function windowsArtifactPriority(filename?: string): number {
+  const lower = String(filename || "").toLowerCase();
+  if (/worker|helper|service/.test(lower)) return 0;
+  if (/portable/.test(lower)) return 1;
+  if (/setup|installer/.test(lower)) return 3;
+  return 2;
 }
 
 export function windowsArtifacts(release: any) {
@@ -81,7 +143,7 @@ export function windowsArtifacts(release: any) {
     !!artifact.packageIdentity &&
     /^[a-f0-9]{64}$/i.test(String(artifact.sha256 || "")) &&
     /^https:\/\//i.test(String(artifact.downloadUrl || "")),
-  );
+  ).sort((a: any, b: any) => windowsArtifactPriority(b.filename) - windowsArtifactPriority(a.filename));
 }
 
 export function platformSummary(app: any, host: StoreHostPlatform): string {
@@ -95,17 +157,18 @@ export function platformSummary(app: any, host: StoreHostPlatform): string {
 }
 
 export function primaryReleaseInfo(app: any, host: StoreHostPlatform) {
-  const android = androidArtifact(app?.latest, app?.packageIdentity);
+  const preferArch = host === "android" ? "mobile" as const : undefined;
+  const android = androidArtifact(app?.latest, app?.packageIdentity, preferArch ? { preferArch } : undefined);
   const windows = windowsArtifacts(app?.windowsLatest)[0];
   const androidVersion = String(android?.versionName || app?.latest?.version?.name || "Unknown version");
-  const windowsVersion = String(app?.windowsLatest?.version?.name || "Unknown version");
+  const windowsVersion = resolveWindowsVersion(app?.windowsLatest, windows) || String(app?.windowsLatest?.version?.name || "Unknown version");
 
   if (host === "windows" && windows) {
     return {
       platform: "windows" as const,
       label: "Windows EXE",
       version: windowsVersion,
-      detail: `Package · ${windows.packageIdentity}`,
+      detail: `Package · ${normalizeWindowsPackageIdentity(windows.packageIdentity, app?.packageIdentity)}`,
       dateLabel: artifactDateLabel(windows, app.windowsLatest, "Windows installer"),
       release: app.windowsLatest,
       artifact: windows,
@@ -140,7 +203,7 @@ export function primaryReleaseInfo(app: any, host: StoreHostPlatform) {
       platform: "windows" as const,
       label: host === "android" ? "Windows EXE · for Windows only" : "Windows EXE",
       version: windowsVersion,
-      detail: `Package · ${windows.packageIdentity}`,
+      detail: `Package · ${normalizeWindowsPackageIdentity(windows.packageIdentity, app?.packageIdentity)}`,
       dateLabel: artifactDateLabel(windows, app.windowsLatest, "Windows installer"),
       release: app.windowsLatest,
       artifact: windows,
@@ -149,10 +212,20 @@ export function primaryReleaseInfo(app: any, host: StoreHostPlatform) {
   return undefined;
 }
 
-export function appCardVersion(app: any, host: StoreHostPlatform, installed?: { versionName: string; versionCode: number }): string {
+export function appCardVersion(
+  app: any,
+  host: StoreHostPlatform,
+  installed?: { versionName: string; versionCode: number },
+  windowsStatus?: { installed: Array<{ version: string }>; state: string },
+): string {
   const info = primaryReleaseInfo(app, host);
   if (!info) return installed ? `Installed ${installed.versionName}` : "No installable release published";
-  const installedLabel = info.platform === "android" && installed ? ` · Installed ${installed.versionName}` : "";
+  const winInstalledVer = windowsStatus?.installed?.[0]?.version;
+  const installedLabel = info.platform === "android" && installed
+    ? ` · Installed ${installed.versionName}`
+    : info.platform === "windows" && winInstalledVer
+    ? ` · Installed ${winInstalledVer}${windowsStatus?.state === "update" ? " · Update available" : ""}`
+    : "";
   const dateLabel = info.dateLabel ? ` · ${info.dateLabel}` : "";
   return `${info.label} · Version ${info.version}${dateLabel}${installedLabel}`;
 }

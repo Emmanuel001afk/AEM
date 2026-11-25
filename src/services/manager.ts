@@ -45,13 +45,14 @@ export function createManager(options:ManagerOptions){
 
     selectLatest,
 
-    /** Select the newest published Android release with an installable package. */
+    /** Select the newest published Android release with a ready installable package. */
     selectLatestRelease(releases:any[]){
       return (Array.isArray(releases)?releases:[])
         .filter((release:any)=>release?.status==="published")
         .filter((release:any)=>(release?.artifacts||[]).some((artifact:any)=>
           artifact?.platform==="android" &&
-          ["apk","apks","xapk","apkm"].includes(String(artifact?.kind||"").toLowerCase())
+          ["apk","apks","xapk","apkm"].includes(String(artifact?.kind||"").toLowerCase()) &&
+          (artifact?.signingStatus ?? artifact?.signing_status ?? "ready")==="ready"
         ))
         .sort(compareReleases)[0];
     }

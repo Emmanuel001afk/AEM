@@ -117,43 +117,54 @@ export async function adbGetPackageInfo(sdkRoot: string, serial: string, package
 }
 
 export async function adbListInstalledApps(sdkRoot: string, serial: string): Promise<InstalledApp[]> {
-  const pkgs = await adbListPackages(sdkRoot, serial, false);
-  const apps: InstalledApp[] = [];
-  // For performance, batch dumpsys for third-party only; system apps are less interesting
   const thirdParty = await adbListPackages(sdkRoot, serial, true);
-  const candidates = thirdParty.length > 0 ? thirdParty : pkgs.slice(0, 80); // cap for speed
-  for (const pkg of candidates) {
-    const info = await adbGetPackageInfo(sdkRoot, serial, pkg);
+  const thirdPartySet = new Set(thirdParty);
+  const allPkgs = thirdParty.length > 0 ? thirdParty : (await adbListPackages(sdkRoot, serial, false)).slice(0, 80);
+  const targetSet = new Set(allPkgs);
+  const apps: InstalledApp[] = [];
+
+  // Parse all target packages from a single `dumpsys package packages` invocation to avoid O(N) spawns.
+  const dump = await adbExec(sdkRoot, ["-s", serial, "shell", "dumpsys", "package", "packages"], 30000);
+  const parsed = new Map<string, { versionName?: string; versionCode?: number; enabled: boolean }>();
+  if (dump.success && dump.stdout) {
+    let currentPkg: string | null = null;
+    for (const line of dump.stdout.split(/\r?\n/)) {
+      const header = line.match(/^\s*Package \[([^\]]+)\]/);
+      if (header) {
+        currentPkg = targetSet.has(header[1]) ? header[1] : null;
+        if (currentPkg && !parsed.has(currentPkg)) parsed.set(currentPkg, { enabled: true });
+        continue;
+      }
+      if (!currentPkg) continue;
+      const entry = parsed.get(currentPkg)!;
+      if (!entry.versionCode) {
+        const vc = line.match(/\bversionCode=(\d+)/)?.[1];
+        if (vc) entry.versionCode = parseInt(vc, 10);
+      }
+      if (!entry.versionName) {
+        const vn = line.match(/\bversionName=([^\s]+)/)?.[1];
+        if (vn) entry.versionName = vn;
+      }
+      if (/enabled=false/.test(line)) entry.enabled = false;
+    }
+  }
+
+  for (const pkg of allPkgs) {
+    let info = parsed.get(pkg);
+    if (!info || info.versionCode === undefined) {
+      const single = await adbGetPackageInfo(sdkRoot, serial, pkg);
+      if (single) info = { versionName: single.versionName, versionCode: single.versionCode, enabled: single.enabled ?? true };
+    }
     if (!info) continue;
-    const isSystem = !thirdParty.includes(pkg);
-    // Try to get label via aapt or pm dump? Use package name as label fallback
     apps.push({
       packageName: pkg,
       label: pkg.split(".").slice(-1)[0] || pkg,
       versionName: info.versionName || "unknown",
       versionCode: info.versionCode || 0,
-      systemApp: isSystem,
-      enabled: info.enabled ?? true,
+      systemApp: !thirdPartySet.has(pkg),
+      enabled: info.enabled,
     });
   }
-  // Also enrich with launcher activities to get real labels
-  try {
-    const r = await adbExec(sdkRoot, ["-s", serial, "shell", "cmd", "package", "query-activities", "-a", "android.intent.action.MAIN", "-c", "android.intent.category.LAUNCHER"]);
-    if (r.success && r.stdout) {
-      // Parse lines like "ActivityInfo{... com.example/.MainActivity}"
-      const lines = r.stdout.split("\n");
-      for (const line of lines) {
-        const m = line.match(/([a-zA-Z0-9._]+)\/[a-zA-Z0-9._]+/);
-        if (m) {
-          const pkg = m[1];
-          const existing = apps.find(a => a.packageName === pkg);
-          if (existing) {
-            // Keep but we could update label if we parsed it
-          }
-        }
-      }
-    }
-  } catch {}
   return apps;
 }
 
@@ -217,15 +228,40 @@ export async function adbShell(sdkRoot: string, serial: string, command: string)
 }
 
 export async function adbScreencap(sdkRoot: string, serial: string): Promise<{ success: boolean; dataBase64?: string; error?: string }> {
-  const r = await adbExec(sdkRoot, ["-s", serial, "exec-out", "screencap", "-p"], 15000);
-  if (!r.success) return { success: false, error: r.stderr || "screencap failed" };
-  // stdout is binary PNG but execFile returns string; need spawn approach for binary
-  // Fallback: pull via /sdcard
-  const tmp = `/sdcard/aem_screencap_${Date.now()}.png`;
-  const r2 = await adbExec(sdkRoot, ["-s", serial, "shell", `screencap -p ${tmp} && echo OK`]);
-  if (!r2.success) return { success: false, error: r2.stderr };
-  // For now return pending — main process will pull file if needed
-  return { success: true };
+  const bin = ensureAdbExists(sdkRoot);
+  return new Promise((resolve) => {
+    const child = spawn(bin, ["-s", serial, "exec-out", "screencap", "-p"], { stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
+    const chunks: Buffer[] = [];
+    let errText = "";
+    let total = 0;
+    const MAX_PNG = 32 * 1024 * 1024;
+    const timer = setTimeout(() => {
+      try { child.kill(); } catch {}
+      resolve({ success: false, error: "screencap timed out" });
+    }, 15000);
+    child.stdout?.on("data", (chunk: Buffer) => {
+      total += chunk.length;
+      if (total > MAX_PNG) {
+        clearTimeout(timer);
+        try { child.kill(); } catch {}
+        resolve({ success: false, error: "Screenshot exceeded size limit" });
+        return;
+      }
+      chunks.push(chunk);
+    });
+    child.stderr?.on("data", (chunk: Buffer) => { errText += String(chunk); });
+    child.on("error", err => { clearTimeout(timer); resolve({ success: false, error: err.message }); });
+    child.on("close", code => {
+      clearTimeout(timer);
+      const buf = Buffer.concat(chunks);
+      const pngMagic = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+      if (code !== 0 || buf.length < 8 || !buf.subarray(0, 8).equals(pngMagic)) {
+        resolve({ success: false, error: errText.trim() || `screencap exited ${code}` });
+        return;
+      }
+      resolve({ success: true, dataBase64: buf.toString("base64") });
+    });
+  });
 }
 
 export async function adbSetLocation(sdkRoot: string, serial: string, lat: number, lng: number): Promise<AdbResult> {

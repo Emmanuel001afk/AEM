@@ -64,6 +64,7 @@ data class FloatingWindowSpec(
     var height: Int,
     var minimized: Boolean = false,
     var expanded: Boolean = false,
+    var restoredHeight: Int = height,
     var lastCaptureAt: Long = 0L,
     var stale: Boolean = false,
     var secureBlocked: Boolean = false
@@ -102,15 +103,16 @@ object OeaFloatingWindows {
 
     fun ensureForegroundNotification(service: AccessibilityService) {
         val ctx = service
-        val intent = Intent(ctx, OeaFloatingWindowService::class.java) // placeholder; launcher can override
-        val pi = PendingIntent.getActivity(ctx, 0, ctx.packageManager.getLaunchIntentForPackage(ctx.packageName), PendingIntent.FLAG_IMMUTABLE)
-        val notif = NotificationCompat.Builder(ctx, CHANNEL_ID)
+        createNotificationChannel(ctx)
+        val launchIntent = ctx.packageManager.getLaunchIntentForPackage(ctx.packageName)
+        val pi = launchIntent?.let { PendingIntent.getActivity(ctx, 0, it, PendingIntent.FLAG_IMMUTABLE) }
+        val builder = NotificationCompat.Builder(ctx, CHANNEL_ID)
             .setContentTitle(ctx.getString(com.oea.launcher.R.string.oea_notification_title))
             .setContentText(ctx.getString(com.oea.launcher.R.string.oea_notification_text))
             .setSmallIcon(android.R.drawable.sym_def_app_icon)
-            .setContentIntent(pi)
             .setOngoing(true)
-            .build()
+        if (pi != null) builder.setContentIntent(pi)
+        val notif = builder.build()
         // On Android 14+, foregroundServiceType must be declared: specialUse
         if (Build.VERSION.SDK_INT >= 34) {
             service.startForeground(NOTIF_ID, notif, android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
@@ -266,10 +268,25 @@ object OeaFloatingWindows {
         windowManager?.updateViewLayout(view, params)
     }
 
+    fun setWindowFocusable(id: String, focusable: Boolean) {
+        val view = windows[id] ?: return
+        val params = view.tag as? WindowManager.LayoutParams ?: return
+        if (focusable) {
+            params.flags = params.flags and WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE.inv()
+        } else {
+            params.flags = params.flags or WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+        }
+        try {
+            windowManager?.updateViewLayout(view, params)
+        } catch (e: Exception) {
+            Log.w(TAG, "setWindowFocusable($id, $focusable): $e")
+        }
+    }
+
     // ── Move / Resize / Expand / Shrink / Minimize / Restore / Close ──
 
     fun move(id: String, dx: Int, dy: Int) { specs[id]?.let { it.x += dx; it.y += dy; updateLayout(it) } }
-    fun resize(id: String, dw: Int, dh: Int) { specs[id]?.let { it.width = (it.width + dw).coerceIn(220, 1080); it.height = (it.height + dh).coerceIn(180, 1800); updateLayout(it) } }
+    fun resize(id: String, dw: Int, dh: Int) { specs[id]?.let { it.width = (it.width + dw).coerceIn(220, 1080); it.height = (it.height + dh).coerceIn(180, 1800); it.restoredHeight = it.height; updateLayout(it) } }
     fun expand(id: String) {
         specs[id]?.let {
             it.expanded = true
@@ -280,16 +297,21 @@ object OeaFloatingWindows {
     }
     fun shrink(id: String) {
         specs[id]?.let {
+            val density = appContext?.resources?.displayMetrics?.density ?: 1f
             it.expanded = false
-            it.width = 500; it.height = 640
+            it.width = (300 * density).toInt().coerceAtLeast(300)
+            it.height = (360 * density).toInt().coerceAtLeast(360)
+            it.restoredHeight = it.height
             updateLayout(it)
         }
     }
     fun minimize(id: String) {
         specs[id]?.let {
+            if (!it.minimized) it.restoredHeight = it.height
             it.minimized = true
             windows[it.id]?.findViewById<View>(R.id.oea_content)?.visibility = View.GONE
-            it.height = 48 // header only
+            val density = appContext?.resources?.displayMetrics?.density ?: 1f
+            it.height = (48 * density).toInt().coerceAtLeast(48) // 48dp header only
             updateLayout(it)
         }
     }
@@ -297,7 +319,8 @@ object OeaFloatingWindows {
         specs[id]?.let {
             it.minimized = false
             windows[it.id]?.findViewById<View>(R.id.oea_content)?.visibility = View.VISIBLE
-            it.height = 640
+            val density = appContext?.resources?.displayMetrics?.density ?: 1f
+            it.height = if (it.restoredHeight > (48 * density)) it.restoredHeight else (360 * density).toInt().coerceAtLeast(360)
             updateLayout(it)
         }
     }
@@ -346,6 +369,7 @@ object OeaFloatingWindows {
     // ── Sync loop — screenshot freshness + stale indicator ──
 
     private fun startSyncLoop() {
+        syncRunnable?.let { handler.removeCallbacks(it) }
         syncRunnable = object : Runnable {
             override fun run() {
                 val now = System.currentTimeMillis()
@@ -386,7 +410,7 @@ object OeaFloatingWindows {
                 spec.stale = true
                 windows[spec.id]?.findViewById<View>(R.id.oea_stale_banner)?.apply {
                     visibility = View.VISIBLE
-                    (this as TextView).text = appContext?.getString(R.string.oea_unsupported_state) ?: "Not interactive — check permissions"
+                    (this as? TextView)?.text = appContext?.getString(R.string.oea_unsupported_state) ?: "Not interactive — check permissions"
                 }
             }
         }

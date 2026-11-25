@@ -1,16 +1,17 @@
 import {useEffect,useState} from 'react';
 import {getDesktop} from '../services/emulator/contract';
 export default function DevicesView(){
-  const desktop=getDesktop()!;
+  const desktop=getDesktop();
   const [devices,setDevices]=useState<{serial:string;state:string;model:string}[]>([]);
   const [serial,setSerial]=useState(''),[apps,setApps]=useState<string[]>([]),[pkg,setPkg]=useState('');
   const [remote,setRemote]=useState('/sdcard/Download/'),[message,setMessage]=useState(''),[busy,setBusy]=useState(false);
-  const [status,setStatus]=useState<Awaited<ReturnType<typeof desktop.phone.status>>|null>(null);
+  const [status,setStatus]=useState<any>(null);
   const [received,setReceived]=useState('');
-  const [update,setUpdate]=useState<Awaited<ReturnType<typeof desktop.checkForUpdates>>|null>(null);
+  const [update,setUpdate]=useState<any>(null);
+  useEffect(()=>{if(!desktop)return;let active=true;const poll=()=>desktop.phone.status().then(s=>{if(active)setStatus(s);}).catch(()=>{});void poll();const timer=setInterval(poll,1500);return()=>{active=false;clearInterval(timer);};},[desktop]);
+  if(!desktop)return null;
   const act=async(fn:()=>Promise<unknown>)=>{setBusy(true);setMessage('Working…');try{const result=await fn();setMessage(result===null?'Cancelled':typeof result==='string'?result:'Operation finished.');}catch(e){setMessage(e instanceof Error?e.message:String(e));}finally{setBusy(false);}};
   const refresh=async()=>{const list=await desktop.phone.devices();setDevices(list);setSerial(s=>list.some(d=>d.serial===s)?s:list.find(d=>d.state==='device')?.serial||'');return `${list.length} phone(s) discovered. Authorization is controlled by Android.`;};
-  useEffect(()=>{let active=true;const poll=()=>desktop.phone.status().then(s=>{if(active)setStatus(s);}).catch(()=>{});void poll();const timer=setInterval(poll,1500);return()=>{active=false;clearInterval(timer);};},[]);
   const connected=devices.some(d=>d.serial===serial&&d.state==='device');
   const saveResult=(r:{path:string;sha256:string}|null)=>{if(!r)return null;setReceived(r.path);return `Verified SHA-256 ${r.sha256}. Saved: ${r.path}`;};
   return <section className="content">

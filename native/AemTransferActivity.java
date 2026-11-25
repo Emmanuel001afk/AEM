@@ -216,10 +216,13 @@ public class AemTransferActivity extends Activity {
     private static final class ActiveReceive {
         String sender;
         long total;
-        long done;
+        volatile long done;
         int count;
         long startedAt;
-        boolean completed;
+        volatile boolean completed;
+        TextView pctView;
+        TextView detailView;
+        ProgressBar progressBar;
     }
 
     // Bound decoded media thumbnails to a small fraction of the Java heap on low-RAM phones.
@@ -252,6 +255,7 @@ public class AemTransferActivity extends Activity {
 
     private volatile String acceptedTransferId = null;
     private volatile String acceptedHost = null;
+    private volatile Socket activeSendSocket = null;
     private AlertDialog incomingDialog;
     private File pendingInstall = null;
     private String installingName = null;
@@ -520,6 +524,8 @@ public class AemTransferActivity extends Activity {
         cancelDiscoveryLoop();
         localToken = null;
         remoteToken = null;
+        acceptedTransferId = null;
+        acceptedHost = null;
         connected = false;
         receiving = false;
         receivePreparing = false;
@@ -2515,6 +2521,9 @@ public class AemTransferActivity extends Activity {
         card.addView(bar, barParams);
         TextView detail = text(a.count + (a.count==1?" file":" files") + " · " + format(a.done) + " / " + format(a.total), 11.5f, secondary());
         card.addView(detail);
+        a.pctView = pct;
+        a.progressBar = bar;
+        a.detailView = detail;
         return card;
     }
 
@@ -3303,6 +3312,8 @@ public class AemTransferActivity extends Activity {
         if (sendingNow.get()) {
             sendAborted = true;
         }
+        closeQuietly(activeSendSocket);
+        activeSendSocket = null;
         sessionActive.set(false);
         sendingNow.set(false);
         activeTransferCancel = null;
@@ -3511,6 +3522,8 @@ public class AemTransferActivity extends Activity {
         remoteName = null;
         localToken = null;
         remoteToken = null;
+        acceptedTransferId = null;
+        acceptedHost = null;
         sessionActive.set(false);
         sendingNow.set(false);
         closeServer();
@@ -3753,6 +3766,8 @@ public class AemTransferActivity extends Activity {
                 if (!sendingNow.get()) return;
                 sendAborted = true;
                 sessionActive.set(false);
+                closeQuietly(activeSendSocket);
+                activeSendSocket = null;
                 activeTransferCancel = null;
                 showBanner("Transfer cancelled", "The link stays open so you can send again.", TONE_ACCENT, 4000);
                 updateBottomBar();
@@ -3815,7 +3830,7 @@ public class AemTransferActivity extends Activity {
         final long transferStartedAt = SystemClock.elapsedRealtime();
         String lastError = "The transfer stopped.";
         for (int attempt = 1; attempt <= 3; attempt++) {
-            if (!sessionActive.get()) {
+            if (!sessionActive.get() || sendAborted) {
                 logTiming("sender_transfer_cancelled", "attempt=" + attempt + " elapsed_ms=" + elapsedMillisSince(transferStartedAt));
                 return "The transfer was stopped.";
             }
@@ -3833,7 +3848,7 @@ public class AemTransferActivity extends Activity {
                 android.util.Log.w(TIMING_TAG, "event=sender_attempt_failed attempt=" + attempt
                         + " elapsed_ms=" + elapsedMillisSince(attemptStartedAt)
                         + " exception=" + error.getClass().getSimpleName());
-                if (!sessionActive.get()) return "The transfer was stopped.";
+                if (!sessionActive.get() || sendAborted) return "The transfer was stopped.";
                 if (attempt < 3) {
                     sleep(500L * attempt);
                 }
@@ -3846,6 +3861,7 @@ public class AemTransferActivity extends Activity {
     private void sendOnce(String host, ArrayList<Item> items, int attempt) throws Exception {
         final long attemptStartedAt = SystemClock.elapsedRealtime();
         Socket socket = new Socket();
+        activeSendSocket = socket;
         openSockets.add(socket);
         try {
             postTransferStage("Connecting to the other phone", "Opening the Wi-Fi Direct connection…", 0, false);
@@ -3972,6 +3988,7 @@ public class AemTransferActivity extends Activity {
                     + " total_ms=" + elapsedMillisSince(attemptStartedAt));
             if (result != 1) throw new IOException("The other phone could not verify the files.");
         } finally {
+            if (activeSendSocket == socket) activeSendSocket = null;
             openSockets.remove(socket);
             closeQuietly(socket);
         }
@@ -4202,11 +4219,22 @@ public class AemTransferActivity extends Activity {
                         long now = System.currentTimeMillis();
                         if (now - paintedAt > 150L) {
                             paintedAt = now;
-                            final String detail = percent(doneBytes, total) + "% · " + meter.update(doneBytes) + " · " + baseName(header.path);
-                            final int value = percent(doneBytes, total);
+                            final long doneSnapshot = doneBytes;
+                            final long totalSnapshot = total;
+                            final String detail = percent(doneSnapshot, totalSnapshot) + "% · " + meter.update(doneSnapshot) + " · " + baseName(header.path);
+                            final int value = percent(doneSnapshot, totalSnapshot);
                             runOnUiThread(new Runnable() {
                                 @Override public void run() {
                                     showTransferBanner("Receiving from " + senderLabel, detail, value, true);
+                                    if (active.pctView != null && active.pctView.getParent() != null) {
+                                        active.pctView.setText(totalSnapshot > 0 ? value + "%" : "…");
+                                    }
+                                    if (active.progressBar != null && active.progressBar.getParent() != null) {
+                                        active.progressBar.setProgress(value);
+                                    }
+                                    if (active.detailView != null && active.detailView.getParent() != null) {
+                                        active.detailView.setText(active.count + (active.count == 1 ? " file" : " files") + " · " + format(doneSnapshot) + " / " + format(totalSnapshot));
+                                    }
                                 }
                             });
                         }

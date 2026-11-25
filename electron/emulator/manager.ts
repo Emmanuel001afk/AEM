@@ -9,7 +9,7 @@ import { runDiagnostics } from "./diagnostics";
 import { getSdkStatus, installSdk, listSystemImages } from "./sdk";
 import { listAvds, getAvdInfo, createAvd, deleteAvd, wipeAvd, updateAvdConfig } from "./avd";
 import { EmulatorInstance } from "./instance";
-import { adbInstall, adbInstallMultiple, adbListInstalledApps, adbLaunchApp, adbUninstall, adbDevices, adbGetPackageInfo, adbGrantPermission, adbRevokePermission, adbClearData, adbForceStop, adbPush, adbPull, adbShell, adbGetPermissions, adbExec, adbStartServer } from "./adb";
+import { adbInstall, adbInstallMultiple, adbListInstalledApps, adbLaunchApp, adbUninstall, adbDevices, adbGetPackageInfo, adbGrantPermission, adbRevokePermission, adbClearData, adbForceStop, adbPush, adbPull, adbShell, adbGetPermissions, adbExec, adbStartServer, adbScreencap } from "./adb";
 import type { EmulatorStatus, SdkStatus, DiagnosticsResult, AvdInfo, AvdCreateOptions, InstalledApp, InstallResult, EmulatorLaunchOptions, ApkInfo } from "./types";
 import { createHash } from "crypto";
 
@@ -144,6 +144,15 @@ export class EmulatorManager {
   }
 
   async updateAvd(name: string, patch: Partial<AvdCreateOptions>): Promise<AvdInfo | null> {
+    if (this.emu.getStatus().avdName === name && this.emu.isRunning()) {
+      throw new Error(`Stop emulator before updating AVD ${name}`);
+    }
+    const existing = await getAvdInfo(name);
+    if (!existing) throw new Error(`AVD not found: ${name}`);
+    if (patch.ramMB !== undefined || patch.cores !== undefined) {
+      const diag = await this.getDiagnostics(true);
+      validateAllocation(patch.ramMB ?? existing.ramMB, patch.cores ?? existing.cores, diag.recommendation, diag.host.cpuCores);
+    }
     return updateAvdConfig(name, patch);
   }
 
@@ -289,8 +298,11 @@ export class EmulatorManager {
   }
 
   async shell(command: string): Promise<string> {
+    const trimmed = String(command ?? "").trim();
+    const allowed = trimmed === "input keyevent 82" || trimmed === "pm list features" || trimmed === "getprop" || /^getprop\s+[A-Za-z0-9._-]+$/.test(trimmed);
+    if (!allowed) throw new Error("Unsupported emulator shell command");
     const serial = await this.requireSerial();
-    const r = await adbShell(this.sdkRoot, serial, command);
+    const r = await adbShell(this.sdkRoot, serial, trimmed);
     return r.stdout || r.stderr;
   }
 
@@ -319,21 +331,7 @@ export class EmulatorManager {
 
   async takeScreenshot(): Promise<{ success: boolean; dataBase64?: string; error?: string }> {
     const serial = await this.requireSerial();
-    const tmpLocal = path.join(app.getPath("temp"), `aem_screenshot_${Date.now()}.png`);
-    const remote = `/sdcard/Pictures/aem_screenshot_${Date.now()}.png`;
-    try {
-      // screencap to file then pull
-      const r1 = await adbExec(this.sdkRoot, ["-s", serial, "shell", `screencap -p ${remote} && echo OK`]);
-      if (!r1.success) return { success: false, error: r1.stderr };
-      const r2 = await adbPull(this.sdkRoot, serial, remote, tmpLocal);
-      if (!r2.success) return { success: false, error: r2.stderr };
-      const b64 = fs.readFileSync(tmpLocal).toString("base64");
-      try { fs.unlinkSync(tmpLocal); } catch {}
-      try { await adbExec(this.sdkRoot, ["-s", serial, "shell", `rm ${remote}`]); } catch {}
-      return { success: true, dataBase64: b64 };
-    } catch (e: any) {
-      return { success: false, error: e.message };
-    }
+    return adbScreencap(this.sdkRoot, serial);
   }
 
   async setLocation(lat: number, lng: number): Promise<boolean> {
@@ -343,9 +341,11 @@ export class EmulatorManager {
   }
 
   async rotate(rotation: 0 | 1 | 2 | 3): Promise<boolean> {
+    if (![0, 1, 2, 3].includes(rotation)) throw new Error("Rotation must be 0, 1, 2, or 3");
     const serial = await this.requireSerial();
-    const r = await adbShell(this.sdkRoot, serial, `settings put system user_rotation ${rotation}`);
-    return true;
+    await adbExec(this.sdkRoot, ["-s", serial, "shell", "settings", "put", "system", "accelerometer_rotation", "0"]);
+    const r = await adbExec(this.sdkRoot, ["-s", serial, "shell", "settings", "put", "system", "user_rotation", String(rotation)]);
+    return r.success;
   }
 
   async getLogs(limit = 200): Promise<string[]> {

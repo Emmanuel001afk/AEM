@@ -54,7 +54,9 @@ export const SDK_URLS = {
   mac: {
     cmdlineTools: "https://dl.google.com/android/repository/commandlinetools-mac-11076708_latest.zip",
     platformTools: "https://dl.google.com/android/repository/platform-tools-latest-darwin.zip",
-    emulator: "https://dl.google.com/android/repository/emulator-darwin_aarch64-12207491.zip",
+    emulator: process.arch === "arm64"
+      ? "https://dl.google.com/android/repository/emulator-darwin_aarch64-12207491.zip"
+      : "https://dl.google.com/android/repository/emulator-darwin_x64-12207491.zip",
   },
   linux: {
     cmdlineTools: "https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip",

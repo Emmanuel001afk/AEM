@@ -38,13 +38,16 @@ class WhatsAppProjectionHandler : AppProjectionHandler {
         val viewId = try { node.viewIdResourceName } catch (_: Exception) { null }
 
         // Heuristic: consider node interactive if any of these
-        if ((isClickable || isEditable || isScrollable) && !rect.isEmpty && rect.width() > 8 && rect.height() > 8) {
+        val kept = (isClickable || isEditable || isScrollable) && !rect.isEmpty && rect.width() > 8 && rect.height() > 8
+        if (kept) {
             out.add(MappedNode(node, rect, text, viewId, isEditable, isClickable, isScrollable))
         }
         for (i in 0 until node.childCount) {
             val child = node.getChild(i) ?: continue
             collect(child, out, depth + 1)
-            // Do NOT recycle here — MappedNode holds reference; caller recycles
+        }
+        if (depth > 0 && !kept) {
+            try { node.recycle() } catch (_: Exception) {}
         }
     }
 
