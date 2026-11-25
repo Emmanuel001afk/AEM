@@ -1,5 +1,5 @@
 import {selectLatestWindowsRelease} from "../../domain/version";
-import type {StoreApp} from "../../domain/catalog";
+import {selectPendingAndroidUpdate,type StoreApp} from "../../domain/catalog";
 import {supabaseRequest} from "../supabase/client";
 
 export function mapSupabaseRelease(appMeta:{provider:string;project:string},x:any):any{
@@ -80,8 +80,9 @@ export async function loadSupabaseCatalog():Promise<StoreApp[]>{
   const latestRelease=(preferMobileAbi&&androidReleases.length>1&&isX86Only(androidReleases[0])
    ?androidReleases.find((rel:any)=>Math.max(Number(rel.version?.code??0),...(rel.artifacts||[]).map((z:any)=>Number(z.versionCode??0)))===topCode&&!isX86Only(rel))||androidReleases[0]
    :androidReleases[0]);
+  const pendingAndroidUpdate=selectPendingAndroidUpdate(releases,a.package_identity,topCode);
   const windowsLatest=selectLatestWindowsRelease(releases.map(toRelease));
   const catalogPackageIdentity=latestRelease?.artifacts?.find((z:any)=>z.platform==="android"&&z.packageIdentity)?.packageIdentity||a.package_identity||releases.flatMap((x:any)=>x.artifacts||[]).map((z:any)=>z.package_identity).find(Boolean);
-  return {databaseId:Number(a.id),id:{provider:a.provider,project:a.project},packageIdentity:catalogPackageIdentity,name:a.name,description:a.description,sourceUrl:a.source_url,iconUrl:a.icon_url,platforms:a.platforms??[],category:a.category??"Other",functionality:a.functionality??[],screenshots:a.screenshots??[],permissions:a.permissions??[],latest:latestRelease,androidReleases,windowsLatest};
+  return {databaseId:Number(a.id),id:{provider:a.provider,project:a.project},packageIdentity:catalogPackageIdentity,name:a.name,description:a.description,sourceUrl:a.source_url,iconUrl:a.icon_url,platforms:a.platforms??[],category:a.category??"Other",functionality:a.functionality??[],screenshots:a.screenshots??[],permissions:a.permissions??[],latest:latestRelease,androidReleases,windowsLatest,pendingAndroidUpdate};
  });
 }

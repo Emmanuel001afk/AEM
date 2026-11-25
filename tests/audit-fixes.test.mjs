@@ -48,6 +48,7 @@ async function loadTs(relPath, supabaseMockJson) {
       : 'const supabaseRequest = async () => { throw new Error("stub"); };';
     source = source
       .replace('import {selectLatestWindowsRelease} from "../../domain/version";', '')
+      .replace('import {selectPendingAndroidUpdate,type StoreApp} from "../../domain/catalog";', 'const selectPendingAndroidUpdate = () => undefined;')
       .replace('import type {StoreApp} from "../../domain/catalog";', '')
       .replace('import {supabaseRequest} from "../supabase/client";', mockFn)
       .replace('selectLatestWindowsRelease', '((x:any[])=>x[0])');

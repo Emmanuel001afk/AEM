@@ -53,6 +53,18 @@ test('Windows variants remain discoverable without changing Android version orde
  assert.equal(selectLatestWindowsRelease([{...release('9.0.0',1),artifacts:[{...artifact,sha256:''}]}]),undefined);
 });
 
+test('newer Android updates remain visible while signing is pending without becoming installable',async()=>{
+ const {selectPendingAndroidUpdate}=await domain('catalog.ts');
+ const releases=[
+  {status:'published',version_name:'1.2.0',version_code:12,artifacts:[{platform:'android',kind:'apk',package_identity:'org.example.app',version_code:12,signing_status:'ready'}]},
+  {status:'published',version_name:'1.3.0',version_code:13,artifacts:[{platform:'android',kind:'apk',package_identity:'org.example.app',version_code:13,artifact_version_name:'1.3.0',signing_status:'pending'}]},
+  {status:'published',version_name:'9.0.0',version_code:90,artifacts:[{platform:'android',kind:'apk',package_identity:'org.other.app',version_code:90,signing_status:'pending'}]},
+  {status:'draft',version_name:'2.0.0',version_code:20,artifacts:[{platform:'android',kind:'apk',package_identity:'org.example.app',version_code:20,signing_status:'pending'}]},
+ ];
+ assert.deepEqual(selectPendingAndroidUpdate(releases,'org.example.app',12),{versionName:'1.3.0',versionCode:13,status:'pending',packageIdentity:'org.example.app'});
+ assert.equal(selectPendingAndroidUpdate(releases,'org.example.app',13),undefined);
+});
+
 test('Store resolves the laptop and Android host format independently of desktop capabilities',async()=>{
  const {detectHostPlatform,androidArtifact,windowsArtifacts,platformSummary,primaryReleaseInfo,appCardVersion}=await domain('platform.ts');
  assert.equal(detectHostPlatform({desktopPlatform:'win32',nativePlatform:'web'}),'windows');
@@ -73,10 +85,12 @@ test('Store resolves the laptop and Android host format independently of desktop
  assert.equal(primaryReleaseInfo(app,'windows').platform,'windows');
  const refreshed={...app,latest:{version:{name:'apk-latest',code:12},publishedAt:'2026-10-13T20:07:18Z',artifacts:[{...apk,versionName:'6.2.4',sourceUpdatedAt:'2026-11-24T10:22:25Z'}]}};
  assert.equal(primaryReleaseInfo(refreshed,'android').version,'6.2.4');
- assert.equal(primaryReleaseInfo(refreshed,'android').dateLabel,'APK updated 2026-11-24');
- assert.equal(appCardVersion(refreshed,'android'),'Android APK · Version 6.2.4 · APK updated 2026-11-24');
+ assert.equal(primaryReleaseInfo(refreshed,'android').dateLabel,'Release published 2026-10-13');
+ assert.equal(appCardVersion(refreshed,'android'),'Android APK · Version 6.2.4 · Release published 2026-10-13');
  const dateOnly={...app,latest:{version:{name:'tag-v1'},publishedAt:'2026-10-13T20:07:18Z',artifacts:[apk]}};
  assert.equal(primaryReleaseInfo(dateOnly,'android').dateLabel,'Release published 2026-10-13');
+ const assetDateFallback={...app,latest:{version:{name:'tag-v1'},artifacts:[{...apk,sourceUpdatedAt:'2026-11-24T10:22:25Z'}]}};
+ assert.equal(primaryReleaseInfo(assetDateFallback,'android').dateLabel,'APK asset updated 2026-11-24');
  const unverified={...app,windowsLatest:{version:{name:'9.9.9'},artifacts:[{...exe,sha256:''}]}};
  assert.equal(platformSummary(unverified,'windows'),'Android APK');
  assert.match(appCardVersion(unverified,'windows'),/no Windows EXE available/);
