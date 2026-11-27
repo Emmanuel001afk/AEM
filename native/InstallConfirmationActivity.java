@@ -14,6 +14,12 @@ import android.content.pm.PackageInstaller;
  * forwarded to the existing InstallResultReceiver.
  */
 public class InstallConfirmationActivity extends Activity {
+    // Android supplies the actual confirmation intent after a session is committed.
+    // It cannot be reconstructed by committing the sealed session a second time.
+    private static final java.util.concurrent.ConcurrentHashMap<String, Intent> pendingConfirmations = new java.util.concurrent.ConcurrentHashMap<>();
+
+    static Intent pendingConfirmation(String id) { return pendingConfirmations.get(id); }
+    static void clearConfirmation(String id) { if (id != null) pendingConfirmations.remove(id); }
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -41,6 +47,8 @@ public class InstallConfirmationActivity extends Activity {
         if (status == PackageInstaller.STATUS_PENDING_USER_ACTION) {
             Intent confirm = getParcelableExtraCompat(intent, Intent.EXTRA_INTENT);
             if (confirm != null) {
+                String downloadId = intent.getStringExtra("aem_download_id");
+                if (downloadId != null && !downloadId.isEmpty()) pendingConfirmations.put(downloadId, new Intent(confirm));
                 try {
                     startActivity(confirm);
                 } catch (Exception e) {
@@ -60,6 +68,7 @@ public class InstallConfirmationActivity extends Activity {
             return;
         }
 
+        clearConfirmation(intent.getStringExtra("aem_download_id"));
         Intent result = new Intent(this, InstallResultReceiver.class);
         result.putExtra(
                 PackageInstaller.EXTRA_STATUS,

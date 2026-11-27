@@ -105,7 +105,10 @@ export function selectLatestWindowsRelease(releases: Release[]): Release | undef
     ];
     return Math.max(0, ...times);
   };
-  const eligible = releases.filter((r) => r.status === "published" && r.channel === "stable" && r.artifacts.some(verifiedExe));
+  const all = releases.filter((r) => r.status === "published" && r.artifacts.some(verifiedExe));
+  const published = all.filter((r) => String(r.sourceReleaseId || "").startsWith("github-release-"));
+  // Prefer a GitHub release; workflow or repository binaries remain a fallback.
+  const eligible = published.length ? published : all;
   const semver = eligible.filter((r) => !!releaseTuple(r)).sort((a, b) => {
     const av = releaseTuple(a)!, bv = releaseTuple(b)!;
     for (let i = 0; i < 4; i++) if ((av[i] || 0) !== (bv[i] || 0)) return (bv[i] || 0) - (av[i] || 0);

@@ -117,11 +117,11 @@ export function androidArtifact(release: any, packageIdentity?: string, options?
     (artifact.signingStatus ?? artifact.signing_status) === "ready",
   );
   const matching = packageIdentity ? list.filter((artifact: any) => artifact.packageIdentity === packageIdentity) : [];
-  const candidates = matching.length ? matching : list;
+  let candidates = packageIdentity ? matching : list;
+  const mobile = options?.preferArch === "mobile" || (!options?.preferArch && typeof navigator !== "undefined" && /android/i.test(navigator.userAgent || "") && !/x86_64|amd64/i.test(navigator.userAgent || ""));
+  if (mobile) candidates = candidates.filter((artifact: any) => !/(^|[-_.])(x86_64|amd64|x86)([-. _]|$)/i.test(String(artifact.filename || "")));
   const known = candidates.filter((artifact: any) => Number(artifact.versionCode ?? 0) > 0);
   return (known.length ? known : candidates).sort((a: any, b: any) => {
-    const code = Number(b.versionCode ?? 0) - Number(a.versionCode ?? 0);
-    if (code) return code;
     if (options?.preferArch === "x86_64") {
       const diff = (isX86_64Filename(b.filename) ? 1 : 0) - (isX86_64Filename(a.filename) ? 1 : 0);
       if (diff) return diff;
@@ -132,6 +132,8 @@ export function androidArtifact(release: any, packageIdentity?: string, options?
     const aRelease = /(^|[-_. ])debug([-. _]|$)/i.test(String(a.filename || "")) ? 0 : 1;
     const bRelease = /(^|[-_. ])debug([-. _]|$)/i.test(String(b.filename || "")) ? 0 : 1;
     if (bRelease !== aRelease) return bRelease - aRelease;
+    const code = Number(b.versionCode ?? 0) - Number(a.versionCode ?? 0);
+    if (code) return code;
     const bTime = parseCatalogTimestamp(b.sourceUpdatedAt ?? b.source_updated_at);
     const aTime = parseCatalogTimestamp(a.sourceUpdatedAt ?? a.source_updated_at);
     return bTime - aTime;

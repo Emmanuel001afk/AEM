@@ -49,7 +49,9 @@ test('Windows variants remain discoverable without changing Android version orde
  const artifact={platform:'windows',kind:'exe',packageIdentity:'com.example.win',sha256:'a'.repeat(64),downloadUrl:'https://example.org/app.exe'};
  const release=(name,code,channel='stable')=>({id:name,version:{name,code},status:'published',channel,artifacts:[artifact]});
  assert.equal(selectLatestWindowsRelease([release('1.0.9',99999),release('1.0.10',1)]).id,'1.0.10');
- assert.equal(selectLatestWindowsRelease([release('2.0.0',4,'beta'),release('1.0.10',1)]).id,'1.0.10');
+ assert.equal(selectLatestWindowsRelease([release('2.0.0',4,'beta'),release('1.0.10',1)]).id,'2.0.0');
+ assert.equal(selectLatestWindowsRelease([{...release('1.0.0',1,'development'),sourceReleaseId:'github-actions-artifact-1'}]).id,'1.0.0');
+ assert.equal(selectLatestWindowsRelease([{...release('1.0.0',1),sourceReleaseId:'github-release-1'},{...release('2.0.0',2,'development'),sourceReleaseId:'github-actions-artifact-2'}]).id,'1.0.0');
  assert.equal(selectLatestWindowsRelease([{...release('9.0.0',1),artifacts:[{...artifact,sha256:''}]}]),undefined);
 });
 
@@ -156,4 +158,26 @@ test('generic recognition preserves arbitrary publisher identities without defau
  const requested=emptyRecognition(['org.example.reader','org.independent.research']);
  const result=mergeRecognition(requested,{recognized:[{platform:'org.example.reader',identity:{appId:'reader.win'}}],notFound:[]});
  assert.deepEqual(result.notFound,['org.independent.research']);assert.equal(result.recognized.length,1);
+});
+
+
+test('Android artifact selection never swaps package identity and favors release over debug',async()=>{
+ const {androidArtifact}=await domain('platform.ts');
+ const apk=(filename,packageIdentity,versionCode)=>({platform:'android',kind:'apk',filename,packageIdentity,versionCode,signingStatus:'ready'});
+ const release={artifacts:[apk('game-release.apk','com.oea.chess',99),apk('launcher-debug.apk','com.oea.launcher',10),apk('launcher-release.apk','com.oea.launcher',9)]};
+ assert.equal(androidArtifact(release,'com.oea.launcher').filename,'launcher-release.apk');
+ assert.equal(androidArtifact({artifacts:[apk('game-release.apk','com.oea.chess',99)]},'com.oea.launcher'),undefined);
+ assert.equal(androidArtifact({artifacts:[apk('app-debug.apk','com.example.app',1)]},'com.example.app').filename,'app-debug.apk');
+});
+
+test('install confirmation never mistakes another version or missing timestamps for success',async()=>{
+ const {isInstallConfirmed,isRecoveredInstallConfirmed}=await domain('installConfirmation.ts');
+ assert.equal(isInstallConfirmed({targetVersionCode:5,installedVersionCode:6}),false);
+ assert.equal(isInstallConfirmed({targetVersionCode:5,previousVersionCode:5,previousLastUpdateTime:100,installedVersionCode:5,installedLastUpdateTime:100}),false);
+ assert.equal(isInstallConfirmed({targetVersionCode:5,previousVersionCode:5,previousLastUpdateTime:100,installedVersionCode:5,installedLastUpdateTime:101}),true);
+ assert.equal(isInstallConfirmed({targetVersionCode:5,previousVersionCode:6,installedVersionCode:5}),true);
+ assert.equal(isRecoveredInstallConfirmed(5,5,0,100),false);
+ assert.equal(isRecoveredInstallConfirmed(5,5,100,0),false);
+ assert.equal(isRecoveredInstallConfirmed(5,6,100,101),false);
+ assert.equal(isRecoveredInstallConfirmed(5,5,100,101),true);
 });

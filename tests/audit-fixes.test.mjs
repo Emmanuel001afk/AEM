@@ -421,13 +421,13 @@ test('Windows version resolution, Setup priority, and registry update comparison
   assert.match(cardText, /Installed 0\.2\.70 · Update available/);
 });
 
-test('Android catalog prefers stable releases over higher development versions when both exist',async()=>{
+test('Android catalog selects the newest release build across channels',async()=>{
  const {loadSupabaseCatalog}=await loadTs('src/services/catalog/supabase.ts',[{id:12,provider:'github',project:'org/sample',name:'Sample',package_identity:'org.sample.app',platforms:['android'],releases:[
   {id:1,status:'published',channel:'stable',version_name:'1.2.0',version_code:12,published_at:'2026-11-20T00:00:00Z',artifacts:[{id:11,platform:'android',kind:'apk',filename:'sample.apk',download_url:'https://example.test/stable.apk',package_identity:'org.sample.app',version_code:12,artifact_version_name:'1.2.0',signing_status:'ready'}]},
   {id:2,status:'published',channel:'development',version_name:'9.0.0',version_code:90,published_at:'2026-11-20T01:00:00Z',artifacts:[{id:22,platform:'android',kind:'apk',filename:'sample-dev.apk',download_url:'https://example.test/dev.apk',package_identity:'org.sample.app',version_code:90,artifact_version_name:'9.0.0',signing_status:'ready'}]},
  ]}]);
  const catalog=await loadSupabaseCatalog();
- assert.equal(catalog[0].latest.version.name,'1.2.0');
+ assert.equal(catalog[0].latest.version.name,'9.0.0');
 });
 
 test('loadSupabaseCatalog selects fresher equal-versionCode mutable releases and preserves ABI variants', async () => {
@@ -541,4 +541,37 @@ test('loadSupabaseCatalog selects fresher equal-versionCode mutable releases and
   const ema = catalog.find((a) => a.name === 'EMA');
   assert.equal(oea.androidReleases.length, 2);
   assert.equal(ema.latest.artifacts[0].downloadUrl, 'https://example.test/new-ema-debug.apk');
+});
+
+
+test('catalog prioritizes release APKs and never substitutes an OEA game for the launcher', async () => {
+  const apk=(id,pkg,name,code)=>({id,platform:'android',kind:'apk',filename:name,package_identity:pkg,version_code:code,signing_status:'ready'});
+  const {loadSupabaseCatalog}=await loadTs('src/services/catalog/supabase.ts',[{id:5,provider:'github',project:'Emmanuel001afk/OEA',name:'OEA',package_identity:'com.oea.launcher',platforms:['android'],releases:[
+    {id:1,status:'published',channel:'stable',version_name:'1.0',source_release_id:'github-release-1',artifacts:[apk(1,'com.oea.chess','game-release.apk',100),apk(2,'com.oea.launcher','launcher-release.apk',1)]},
+    {id:2,status:'published',channel:'development',version_name:'2.0',source_release_id:'github-actions-artifact-2',artifacts:[apk(3,'com.oea.launcher','launcher-debug.apk',2)]},
+    {id:3,status:'published',channel:'stable',version_name:'3.0',artifacts:[apk(4,'com.oea.runner','game-release.apk',200)]},
+  ]}]);
+  const [app]=await loadSupabaseCatalog();
+  assert.equal(app.packageIdentity,'com.oea.launcher');
+  assert.equal(app.latest.id,'1');
+  assert.equal(app.androidReleases.length,2);
+});
+
+test('equal-version APKs prefer a published release over a workflow copy', async () => {
+  const apk=(id)=>({id,platform:'android',kind:'apk',filename:'app-release.apk',package_identity:'org.example',version_code:2,signing_status:'ready'});
+  const {loadSupabaseCatalog}=await loadTs('src/services/catalog/supabase.ts',[{id:1,provider:'github',project:'org/app',name:'App',package_identity:'org.example',releases:[
+    {id:1,status:'published',channel:'stable',version_name:'2.0',source_release_id:'github-release-1',published_at:'2026-11-20T00:00:00Z',artifacts:[apk(1)]},
+    {id:2,status:'published',channel:'development',version_name:'2.0',source_release_id:'github-actions-artifact-2',published_at:'2026-11-21T00:00:00Z',artifacts:[apk(2)]},
+  ]}]);
+  assert.equal((await loadSupabaseCatalog())[0].latest.id,'1');
+});
+
+test('installer reopens Android confirmation instead of recommitting a sealed session',()=>{
+ const plugin=fss.readFileSync(new URL('../native/AemInstallerPlugin.java',import.meta.url),'utf8');
+ const activity=fss.readFileSync(new URL('../native/InstallConfirmationActivity.java',import.meta.url),'utf8');
+ const reopen=plugin.slice(plugin.indexOf('public void reopenInstall'),plugin.indexOf('public void pauseDownload'));
+ assert.match(reopen,/pendingConfirmation\(id\)/);
+ assert.doesNotMatch(reopen,/session\.commit/);
+ assert.match(activity,/pendingConfirmations\.put\(downloadId/);
+ assert.match(activity,/clearConfirmation\(intent\.getStringExtra/);
 });

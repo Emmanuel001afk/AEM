@@ -93,7 +93,10 @@ jobs:
               fail_item "$id" "apksigner sign failed: $(tail -c 1800 "$sign_log" | tr '\n' ' ')"
               continue
             fi
-            verify_out="$("${{ steps.tools.outputs.apksigner }}" verify --print-certs "$output" 2>&1 || true)"
+            if ! verify_out="$("${{ steps.tools.outputs.apksigner }}" verify --print-certs "$output" 2>&1)"; then
+              fail_item "$id" "APK signature verification failed: $(printf '%s' "$verify_out" | tail -c 1400 | tr '\n' ' ')"
+              continue
+            fi
             cert="$(printf '%s\n' "$verify_out" | grep -i 'Signer #1 certificate SHA-256 digest:' | head -n 1 | grep -Eio '[0-9a-f]{64}' | head -n 1 | tr '[:upper:]' '[:lower:]' || true)"
             if [ -z "$cert" ]; then
               cert="$(keytool -printcert -jarfile "$output" 2>/dev/null | grep -i 'SHA256:' | head -n 1 | tr -d ':' | grep -Eio '[0-9a-f]{64}' | head -n 1 | tr '[:upper:]' '[:lower:]' || true)"

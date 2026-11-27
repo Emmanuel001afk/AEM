@@ -2,6 +2,16 @@
 
 Updated 2026-11-22. This records observed setup and remaining limitations. No secret values belong in this file, Git, or chat.
 
+## Update — 2026-11-27
+
+The owner intentionally includes public and private repositories and accepts that their store artifacts can be public. EMA's existing large debug APK/source-signing behavior is accepted; do not replace it solely to address that exception.
+
+Migration `20261127105514_aem_oea_launcher_catalog_only` is applied to the destination. Anonymous and authenticated catalog reads now expose only the OEA launcher APK (`com.oea.launcher`), not the six separate game APK records. No objects or rows were deleted; storage URLs already known remain accessible. An anonymous-role check returned seven launcher records and no game packages.
+
+The checked-in sync and store updates on the working branch are **not deployed**. They add release-over-debug selection, strict package matching, Windows workflow fallback, scan warnings and additional release pagination, and keep debug and release APK retention separate. The live sync function's full source could not be retrieved for a safe comparison with this checkout, so it has not been replaced. Large workflow archives and private binaries above the existing limits remain unsupported; resolving this requires a tested streaming/background import path rather than simply raising Edge memory limits. A physical-device test is still needed to confirm the OEA launcher includes and runs its games.
+
+The remainder of this document is a historical handoff from November 22 and is not a current inventory of deployed versions or artifacts.
+
 ## Destination and storage safety
 
 - Supabase org AEO (`tzqhxxbljvumijeejzfy`), project AEM (`zaaauldrktvytskerpmc`), region `eu-west-1`.

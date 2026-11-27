@@ -17,6 +17,9 @@ const artifactKind = (name: string): string | null => {
   return ["apk", "apks", "xapk", "apkm", "exe"].find((ext) => n.endsWith(`.${ext}`)) || null;
 };
 const platform = (kind: string) => kind === "exe" ? "windows" : "android";
+// OEA's games belong inside its launcher, not as installable store packages.
+const isCatalogApk = (repo: string, packageName?: string) =>
+  repo.toLowerCase() !== "emmanuel001afk/oea" || packageName === "com.oea.launcher";
 const releaseChannel = (text: string): "stable" | "beta" | "development" => {
   if (/(^|[-_.])(beta|b)([-_.]|\d|$)/i.test(text)) return "beta";
   if (/(^|[-_.])(dev|development|debug|nightly|alpha|canary)([-_.]|\d|$)/i.test(text)) return "development";
@@ -62,11 +65,14 @@ const extractExeVersion = (bytes: Uint8Array | undefined, filename: string, rele
 const apkVariantKey = (filename: string, packageIdentity: string): string => {
   const pkg = String(packageIdentity || "").toLowerCase() || "unknown";
   const lower = String(filename || "").toLowerCase();
-  if (/(^|[-_.])(x86_64|amd64)([-. _]|$)/.test(lower)) return `${pkg}:x86_64`;
-  if (/(^|[-_.])(x86)([-. _]|$)/.test(lower)) return `${pkg}:x86`;
-  if (/(^|[-_.])(arm64|aarch64|arm64-v8a)([-. _]|$)/.test(lower)) return `${pkg}:arm64`;
-  if (/(^|[-_.])(armeabi|armv7)([-. _]|$)/.test(lower)) return `${pkg}:armv7`;
-  return `${pkg}:default`;
+  const build = /(^|[-_. ])debug([-. _]|$)/.test(lower) ? "debug" : "release";
+  let abi = "default";
+  if (/(^|[-_.])(x86_64|amd64)([-. _]|$)/.test(lower)) abi = "x86_64";
+  else if (/(^|[-_.])(x86)([-. _]|$)/.test(lower)) abi = "x86";
+  else if (/(^|[-_.])(arm64|aarch64|arm64-v8a)([-. _]|$)/.test(lower)) abi = "arm64";
+  else if (/(^|[-_.])(armeabi|armv7)([-. _]|$)/.test(lower)) abi = "armv7";
+  // A newer debug build must never evict the last usable release build.
+  return `${pkg}:${abi}:${build}`;
 };
 const sourceTimestampForOrdering = (value: unknown): number => {
   const parsed = Date.parse(String(value || ""));
@@ -101,6 +107,20 @@ const gh = async (url: string, headers: HeadersInit) => {
   if (!response.ok) throw new Error(`GitHub API HTTP ${response.status}`);
   return response.json();
 };
+
+// Bound API work while inspecting more than the first page. If the bound is
+// reached, surface that the scan may have missed an older release.
+async function githubReleasePages(repo: string, headers: HeadersInit): Promise<{items: any[]; truncated: boolean}> {
+  const items: any[] = [];
+  const perPage = 100, maxPages = 5;
+  for (let page = 1; page <= maxPages; page++) {
+    const result = await gh(`${GH}/repos/${repo}/releases?per_page=${perPage}&page=${page}`, headers);
+    if (!Array.isArray(result)) throw new Error("GitHub releases response is not an array");
+    items.push(...result);
+    if (result.length < perPage) return {items, truncated: false};
+  }
+  return {items, truncated: true};
+}
 
 function previousFailures(value: unknown): { count: number; details: string[] } {
   if (!value) return { count: 0, details: [] };
@@ -450,7 +470,8 @@ async function retainCurrentAndPreviousApks(sb: any, applicationId: number) {
   // Clean up orphaned empty release rows so they do not bloat catalog queries or block re-sync.
   const relRes = await sb.from("releases").select("id,source_release_id").eq("application_id", applicationId);
   if (!relRes.error && Array.isArray(relRes.data)) {
-    const { data: remainingArts } = await sb.from("artifacts").select("release_id").in("release_id", relRes.data.map((r: any) => r.id));
+    const { data: remainingArts, error: remainingError } = await sb.from("artifacts").select("release_id").in("release_id", relRes.data.map((r: any) => r.id));
+    if (remainingError) throw new Error(`APK retention could not check remaining artifacts: ${remainingError.message}`);
     const hasArtifacts = new Set<number>((remainingArts || []).map((a: any) => Number(a.release_id)));
     for (const rel of relRes.data) {
       const relId = Number(rel.id);
@@ -524,15 +545,24 @@ Deno.serve(async (request) => {
     for (let repoOffset = 0; repoOffset < batchRepositories.length; repoOffset++) {
       const repo = batchRepositories[repoOffset];
       lastScannedRepoId = Number(repo.id);
+      const repoWarnings: string[] = [];
+      let repoFailed = false;
       try {
-        const tree = await gh(`${GH}/repos/${repo.full_name}/git/trees/${repo.default_branch || "main"}?recursive=1`, headers).catch(() => ({ tree: [] }));
-        const treeFiles = (tree.tree || []).filter((x: any) => x.type === "blob" && artifactKind(String(x.path)) && Number(x.size || 0) <= 50 * 1024 * 1024 && !/(^|\/)(tests?|fixtures?|samples?)\//i.test(String(x.path)));
+        const tree = await gh(`${GH}/repos/${repo.full_name}/git/trees/${repo.default_branch || "main"}?recursive=1`, headers).catch((e) => { repoWarnings.push(`Could not inspect repository files: ${String(e)}`); return { tree: [] }; });
+        if (tree.truncated) repoWarnings.push("Repository file listing was truncated");
+        const allTreeBinaries = (tree.tree || []).filter((x: any) => x.type === "blob" && artifactKind(String(x.path)) && !/(^|\/)(tests?|fixtures?|samples?)\//i.test(String(x.path)));
+        if (allTreeBinaries.some((x: any) => Number(x.size || 0) > 50 * 1024 * 1024)) repoWarnings.push("Some repository binary files exceed the 50 MiB sync limit");
+        const treeFiles = allTreeBinaries.filter((x: any) => Number(x.size || 0) <= 50 * 1024 * 1024);
         const sourceFiles: any[] = [];
         for (const plat of ["android", "windows"]) {
-          const file = treeFiles.find((x: any) => platform(artifactKind(String(x.path)) || "") === plat);
+          const candidates = treeFiles.filter((x: any) => platform(artifactKind(String(x.path)) || "") === plat);
+          candidates.sort((a: any, b: any) => Number(/(^|[-_. ])debug([-. _]|$)/i.test(String(a.path))) - Number(/(^|[-_. ])debug([-. _]|$)/i.test(String(b.path))) || String(a.path).localeCompare(String(b.path)));
+          const file = candidates[0];
           if (file) sourceFiles.push(file);
         }
-        const releaseRows = await gh(`${GH}/repos/${repo.full_name}/releases?per_page=50`, headers).catch(() => []);
+        const releasePage = await githubReleasePages(String(repo.full_name), headers).catch((e) => { repoWarnings.push(`Could not inspect releases: ${String(e)}`); return {items: [], truncated: false}; });
+        const releaseRows = releasePage.items;
+        if (releasePage.truncated) repoWarnings.push("Release scan reached its 500-release limit");
         const sortedReleases = Array.isArray(releaseRows) ? releaseRows
           .filter((r: any) => !r.draft && (r.assets || []).some((a: any) => artifactKind(a.name)))
           .sort((a: any, b: any) => releaseActivity(b) - releaseActivity(a)) : [];
@@ -544,12 +574,18 @@ Deno.serve(async (request) => {
             return k !== null && platform(k) === plat;
           }));
           if (match) pickedReleases.set(Number(match.id), match);
+          // Keep the newest non-debug release as well as the newest artifact.
+          const releaseBuild = sortedReleases.find((r: any) => (r.assets || []).some((a: any) => {
+            const k = artifactKind(String(a.name));
+            return k !== null && platform(k) === plat && !/(^|[-_. ])debug([-. _]|$)/i.test(String(a.name));
+          }));
+          if (releaseBuild) pickedReleases.set(Number(releaseBuild.id), releaseBuild);
         }
         const releases = [...pickedReleases.values()].sort((a: any, b: any) => releaseActivity(b) - releaseActivity(a));
-        const runs = await gh(`${GH}/repos/${repo.full_name}/actions/runs?status=success&per_page=10`, headers).catch(() => ({ workflow_runs: [] }));
+        const runs = await gh(`${GH}/repos/${repo.full_name}/actions/runs?status=success&branch=${encodeURIComponent(repo.default_branch || "main")}&per_page=50`, headers).catch((e) => { repoWarnings.push(`Could not inspect workflow runs: ${String(e)}`); return { workflow_runs: [] }; });
         const actionRuns = (runs.workflow_runs || []).filter((run: any) =>
           run.head_branch === (repo.default_branch || "main")
-        ).slice(0, 5);
+        ).slice(0, 10);
         const platforms = new Set<string>(sourceFiles.map((f: any) => platform(artifactKind(String(f.path)) || "")));
         for (const release of releases) for (const asset of release.assets || []) {
           const kind = artifactKind(String(asset.name)); if (kind) platforms.add(platform(kind));
@@ -564,12 +600,16 @@ Deno.serve(async (request) => {
         for (const run of actionRuns) {
           if (inspectedActionArtifacts >= MAX_WORKFLOW_ARTIFACTS_PER_REPO || downloadedArchiveBytes >= MAX_WORKFLOW_ARCHIVE_BYTES_PER_REPO || discoveredBinaryBytes >= MAX_DISCOVERED_BINARY_BYTES_PER_REPO) break;
           const publishedRun = app && await sb.from("releases").select("id").eq("application_id", app.id).eq("source_release_id", `github-actions-${run.id}`).maybeSingle();
-          const items = await gh(`${GH}/repos/${repo.full_name}/actions/runs/${run.id}/artifacts?per_page=100&direction=desc`, headers).catch(() => ({ artifacts: [] }));
+          const items = await gh(`${GH}/repos/${repo.full_name}/actions/runs/${run.id}/artifacts?per_page=100&direction=desc`, headers).catch((e) => { repoWarnings.push(`Could not inspect workflow artifacts: ${String(e)}`); return { artifacts: [] }; });
           for (const item of items.artifacts || []) {
             if (inspectedActionArtifacts >= MAX_WORKFLOW_ARTIFACTS_PER_REPO || downloadedArchiveBytes >= MAX_WORKFLOW_ARCHIVE_BYTES_PER_REPO || discoveredBinaryBytes >= MAX_DISCOVERED_BINARY_BYTES_PER_REPO) break;
             if (publishedRun?.data && String(item.name || "") === "aem-store-release-apk") continue;
             const archiveSize = Number(item.size_in_bytes || 0);
-            if (item.expired || archiveSize <= 0 || archiveSize > 35 * 1024 * 1024 || downloadedArchiveBytes + archiveSize > MAX_WORKFLOW_ARCHIVE_BYTES_PER_REPO) continue;
+            if (item.expired || archiveSize <= 0) continue;
+            if (archiveSize > 35 * 1024 * 1024 || downloadedArchiveBytes + archiveSize > MAX_WORKFLOW_ARCHIVE_BYTES_PER_REPO) {
+              if (/apk|android|exe|windows|release/i.test(String(item.name || ""))) repoWarnings.push(`Skipped workflow artifact ${String(item.name).slice(0,100)}: archive exceeds sync limits`);
+              continue;
+            }
             const releaseId = `github-actions-artifact-${item.id}`;
             const actionStamp = String(item.updated_at || item.created_at || "");
             if (actionStamp && prunedCache[releaseId] === actionStamp) continue;
@@ -585,7 +625,8 @@ Deno.serve(async (request) => {
             }
             inspectedActionArtifacts++;
             const response = await fetch(item.archive_download_url, { headers });
-            if (!response.ok || Number(response.headers.get("content-length") || 0) > 40 * 1024 * 1024) continue;
+            if (!response.ok) { repoWarnings.push(`Could not download workflow artifact ${String(item.name).slice(0,100)}: HTTP ${response.status}`); continue; }
+            if (Number(response.headers.get("content-length") || 0) > 40 * 1024 * 1024) { repoWarnings.push(`Skipped workflow artifact ${String(item.name).slice(0,100)}: archive exceeds sync limits`); continue; }
             const archive = new Uint8Array(await response.arrayBuffer());
             downloadedArchiveBytes += archive.byteLength;
             const binaries = await archiveBinaries(archive);
@@ -596,6 +637,7 @@ Deno.serve(async (request) => {
               const kind = artifactKind(binary.name);
               if (!kind || binary.bytes.byteLength > 50 * 1024 * 1024 || discoveredBinaryBytes + binary.bytes.byteLength > MAX_DISCOVERED_BINARY_BYTES_PER_REPO) continue;
               if (kind === "apk") {
+                if (!isCatalogApk(String(repo.full_name), binary.packageName)) continue;
                 const vc = Number(binary.versionCode || 0);
                 if (!wouldKeepApk(apkBuckets, "development", binary.name, String(binary.packageName || ""), vc, itemUpdatedMs, releaseId)) {
                   prunedAny = true;
@@ -702,7 +744,9 @@ Deno.serve(async (request) => {
           const existingRelease = await sb.from("releases").select("id").eq("application_id", app.id).eq("source_release_id", id).maybeSingle();
           if (existingRelease.error) throw existingRelease.error;
           const validAssets: Array<{ asset: any; kind: string; bytes?: Uint8Array; metadata: any; digest?: string; external?: boolean; sourceUpdatedAt?: string | null }> = [];
-          for (const asset of (release.assets || []).filter((x: any) => artifactKind(String(x.name)) && Number(x.size || 0) <= 300 * 1024 * 1024)) {
+          const releaseBinaries = (release.assets || []).filter((x: any) => artifactKind(String(x.name)));
+          if (releaseBinaries.some((x: any) => Number(x.size || 0) > 300 * 1024 * 1024)) repoWarnings.push(`Some assets in ${name.slice(0,100)} exceed the 300 MiB sync limit`);
+          for (const asset of releaseBinaries.filter((x: any) => Number(x.size || 0) <= 300 * 1024 * 1024)) {
             const kind = artifactKind(String(asset.name))!;
             const size = Number(asset.size || 0);
             const digest = String(asset.digest || "").replace(/^sha256:/i, "").toLowerCase();
@@ -736,11 +780,11 @@ Deno.serve(async (request) => {
             const assetStamp = hasSourceDigest ? digest : String(sourceUpdatedAt || "");
             if (kind === "apk" && assetStamp && prunedCache[pruneKey] === assetStamp) continue;
             const oversizedPublicApk = kind === "apk" && !repo.private && size > 50 * 1024 * 1024 && size <= MAX_PUBLIC_RELEASE_APK_BYTES;
-            if (size > 50 * 1024 * 1024 && !oversizedPublicApk) continue;
-            const response = await fetch(asset.browser_download_url, { headers }); if (!response.ok) continue;
+            if (size > 50 * 1024 * 1024 && !oversizedPublicApk) { repoWarnings.push(`Skipped ${String(asset.name).slice(0,100)}: release asset exceeds sync limits`); continue; }
+            const response = await fetch(asset.browser_download_url, { headers }); if (!response.ok) { repoWarnings.push(`Could not download ${String(asset.name).slice(0,100)}: HTTP ${response.status}`); continue; }
             const bytes = new Uint8Array(await response.arrayBuffer());
             const metadata = kind === "apk" ? await apkMetadata(bytes) : { versionName: extractExeVersion(bytes, String(asset.name), name) };
-            if (kind === "apk" && (!metadata.packageName || (oversizedPublicApk && !apkHasSignature(bytes)))) continue;
+            if (kind === "apk" && (!metadata.packageName || !isCatalogApk(String(repo.full_name), metadata.packageName) || (oversizedPublicApk && !apkHasSignature(bytes)))) continue;
             if (kind === "apk") {
               const ch = releaseChannel(name);
               const vc = Number(metadata.versionCode || 0);
@@ -817,7 +861,7 @@ Deno.serve(async (request) => {
           if (!response.ok) continue;
           const bytes = new Uint8Array(await response.arrayBuffer());
           const metadata = kind === "apk" ? await apkMetadata(bytes) : {};
-          if (kind === "apk" && !metadata.packageName) continue;
+          if (kind === "apk" && (!metadata.packageName || !isCatalogApk(String(repo.full_name), metadata.packageName))) continue;
           const created = await ensureRelease(id, "Repository binary", "development", path, null, true);
           await save(created, path.split("/").pop() || `application.${kind}`, bytes, kind,
             `${repo.full_name}/source/${file.sha}/${safeName(path.split("/").pop() || "application")}`, metadata);
@@ -836,12 +880,17 @@ Deno.serve(async (request) => {
         }
         await retainCurrentAndPreviousApks(sb, Number(app.id));
       } catch (error) {
+        repoFailed = true;
         totals.failures++;
         const issue = error as any;
         const detail = `${repo.full_name}: ${issue?.message || JSON.stringify(issue) || String(error)}`;
         failureDetails.push(detail.slice(0, 500));
         console.error("Repository discovery failed", detail);
       } finally {
+        if (repoWarnings.length) {
+          if (!repoFailed) totals.failures++;
+          failureDetails.push(`${repo.full_name}: ${[...new Set(repoWarnings)].slice(0, 4).join("; ")}`.slice(0,500));
+        }
         const progress = startIndex + repoOffset + 1;
         await sb.from("source_providers").update({
           config: { ...providerConfig, cursor_repo_id: lastScannedRepoId, batch_active: false, pruned_cache: compactPrunedCache(prunedCache) },
@@ -868,7 +917,7 @@ Deno.serve(async (request) => {
     const stateWrite = await sb.from("source_sync_state").upsert({
       provider: "github", status, last_started_at: started.toISOString(),
       last_success_at: status === "success" ? finished : state?.last_success_at || null,
-      last_error: error, repositories_scanned: complete ? repositories.length : nextIndex,
+      last_error: status === "running" && totals.failures ? JSON.stringify({count: totals.failures, details: failureDetails.slice(-7)}).slice(0,4000) : error, repositories_scanned: complete ? repositories.length : nextIndex,
       applications_discovered: totals.applications, releases_discovered: totals.releases,
       artifacts_discovered: totals.artifacts, updated_at: finished,
     }, { onConflict: "provider" });
