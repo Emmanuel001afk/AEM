@@ -1,4 +1,6 @@
 import type {StoreApp} from "../domain/catalog";
+import {compareVersionNamesNewestFirst} from "../domain/version";
+import {parseCatalogTimestamp} from "../domain/time";
 
 export interface ManagerOptions {
   loadCatalog: () => Promise<StoreApp[]>;
@@ -13,9 +15,7 @@ function releaseCode(release:any):number {
 }
 
 function releaseTime(release:any):number {
-  const value = release?.publishedAt;
-  const time = value ? new Date(value).getTime() : 0;
-  return Number.isFinite(time) ? time : 0;
+  return parseCatalogTimestamp(release?.publishedAt ?? release?.published_at);
 }
 
 /**
@@ -33,6 +33,8 @@ export function createManager(options:ManagerOptions){
   const compareReleases=(a:any,b:any)=>{
     const codeDiff=releaseCode(b)-releaseCode(a);
     if(codeDiff!==0)return codeDiff;
+    const namedVersion=compareVersionNamesNewestFirst(String(a?.version?.name??a?.version_name??""),String(b?.version?.name??b?.version_name??""));
+    if(namedVersion)return namedVersion;
     return releaseTime(b)-releaseTime(a);
   };
 
@@ -47,13 +49,16 @@ export function createManager(options:ManagerOptions){
 
     /** Select the newest published Android release with a ready installable package. */
     selectLatestRelease(releases:any[]){
-      return (Array.isArray(releases)?releases:[])
+      const eligible=(Array.isArray(releases)?releases:[])
         .filter((release:any)=>release?.status==="published")
         .filter((release:any)=>(release?.artifacts||[]).some((artifact:any)=>
           artifact?.platform==="android" &&
           ["apk","apks","xapk","apkm"].includes(String(artifact?.kind||"").toLowerCase()) &&
           (artifact?.signingStatus ?? artifact?.signing_status ?? "ready")==="ready"
-        ))
+        ));
+      const preferredChannel=["stable","beta","development"].find(channel=>eligible.some((release:any)=>String(release.channel||"").toLowerCase()===channel));
+      return eligible
+        .filter((release:any)=>!preferredChannel||String(release.channel||"").toLowerCase()===preferredChannel)
         .sort(compareReleases)[0];
     }
   };

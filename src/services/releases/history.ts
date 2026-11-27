@@ -1,14 +1,16 @@
 import type {Release} from "../../domain/model";
+import {dedupeReleaseHistory,type ReleaseHistoryEntry} from "../../domain/releaseHistory";
 import {mapSupabaseRelease} from "../catalog/supabase";
 import {supabaseRequest} from "../supabase/client";
 
-export interface ReleaseHistoryEntry{release:Release;reason:"published"|"withdrawn"|"rollback-target";createdAt:string;}
+export type {ReleaseHistoryEntry} from "../../domain/releaseHistory";
 
 export async function listReleaseHistory(applicationId:number,appMeta:{provider:string;project:string}={provider:"github",project:""}):Promise<ReleaseHistoryEntry[]>{
  const r=await supabaseRequest(`/rest/v1/release_history?select=*,releases(*,artifacts(*))&application_id=eq.${encodeURIComponent(String(applicationId))}&order=created_at.desc`);
  if(!r.ok) throw new Error(`Release history failed: ${r.status}`);
  const rows=await r.json();
- return rows.map((x:any)=>({release:mapSupabaseRelease(appMeta,x.releases),reason:x.reason,createdAt:x.created_at}));
+ const entries:ReleaseHistoryEntry[]=rows.map((x:any)=>({release:mapSupabaseRelease(appMeta,x.releases),reason:x.reason,createdAt:x.created_at}));
+ return dedupeReleaseHistory(entries);
 }
 
 export async function setRollbackTarget(applicationId:number,releaseId:number){
