@@ -47,15 +47,62 @@ async function loadTs(relPath, supabaseMockJson) {
       ? `const supabaseRequest = async () => ({ ok: true, status: 200, json: async () => (${JSON.stringify(supabaseMockJson)}) });`
       : 'const supabaseRequest = async () => { throw new Error("stub"); };';
     source = source
-      .replace('import {selectLatestWindowsRelease} from "../../domain/version";', '')
+      .replace('import {compareVersionNamesNewestFirst,selectLatestWindowsRelease} from "../../domain/version";', 'const compareVersionNamesNewestFirst = () => 0;')
+      .replace('import {parseCatalogTimestamp} from "../../domain/time";', 'const parseCatalogTimestamp = value => Date.parse(String(value||"")) || 0;')
+      .replace('import {parseCatalogTimestamp} from "./time";', 'const parseCatalogTimestamp = value => Date.parse(String(value||"")) || 0;')
+      .replace('import {isFutureCatalogTimestamp,parseCatalogTimestamp} from "./time";', 'const parseCatalogTimestamp=value=>Date.parse(String(value||""))||0; const isFutureCatalogTimestamp=value=>parseCatalogTimestamp(value)>Date.now()+300000;')
       .replace('import {selectPendingAndroidUpdate,type StoreApp} from "../../domain/catalog";', 'const selectPendingAndroidUpdate = () => undefined;')
       .replace('import type {StoreApp} from "../../domain/catalog";', '')
       .replace('import {supabaseRequest} from "../supabase/client";', mockFn)
       .replace('selectLatestWindowsRelease', '((x:any[])=>x[0])');
   }
+  source = source
+    .replace('import {compareVersionNamesNewestFirst} from "../domain/version";', 'const compareVersionNamesNewestFirst = () => 0;')
+    .replace('import {parseCatalogTimestamp} from "../domain/time";', 'const parseCatalogTimestamp=value=>Date.parse(String(value||""))||0;')
+    .replace('import {parseCatalogTimestamp} from "./time";', 'const parseCatalogTimestamp=value=>Date.parse(String(value||""))||0;')
+    .replace('import {isFutureCatalogTimestamp,parseCatalogTimestamp} from "./time";', 'const parseCatalogTimestamp=value=>Date.parse(String(value||""))||0; const isFutureCatalogTimestamp=value=>parseCatalogTimestamp(value)>Date.now()+300000;');
   const js = ts.transpileModule(source, {compilerOptions: {module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022}}).outputText;
   return import('data:text/javascript;base64,' + Buffer.from(js).toString('base64'));
 }
+
+test('catalog ordering ignores future timestamps instead of promoting them as newer releases', async () => {
+  const {parseCatalogTimestamp,isFutureCatalogTimestamp}=await loadTs('src/domain/time.ts');
+  const now=Date.parse('2026-11-21T00:00:00Z');
+  assert.equal(parseCatalogTimestamp('2026-11-20T23:00:00Z',now),Date.parse('2026-11-20T23:00:00Z'));
+  assert.equal(parseCatalogTimestamp('2026-11-25T13:05:46Z',now),0);
+  assert.equal(isFutureCatalogTimestamp('2026-11-25T13:05:46Z',now),true);
+  assert.equal(isFutureCatalogTimestamp('2026-11-21T00:02:00Z',now),false);
+});
+
+test('dotted version tie-break is deterministic and same-code Android updates use package version names', async () => {
+  const {compareVersionNamesNewestFirst,compareAndroidRelease}=await loadTs('src/domain/version.ts');
+  assert.ok(compareVersionNamesNewestFirst('1.0.5','1.0.4')<0);
+  assert.equal(compareVersionNamesNewestFirst('oea-latest','oea-laptop-latest'),0);
+  const release={version:{name:'1.0.5',code:7},artifacts:[{platform:'android',kind:'apk',packageIdentity:'org.example.app',versionCode:7,versionName:'1.0.5'}]};
+  assert.equal(compareAndroidRelease(release,{packageIdentity:'org.example.app',versionName:'1.0.4',versionCode:7}),'update-available');
+  assert.equal(compareAndroidRelease({...release,version:{name:'1.0.4',code:7},artifacts:[{...release.artifacts[0],versionName:'1.0.4'}]},{packageIdentity:'org.example.app',versionName:'1.0.5',versionCode:7}),'local-newer');
+});
+
+test('release history collapses duplicate source rows without conflating distinct releases that reuse version codes', async () => {
+  const {dedupeReleaseHistory,historyReleaseState,releaseHistoryIdentity}=await loadTs('src/domain/releaseHistory.ts');
+  const artifact=(id,sha)=>({id,platform:'android',kind:'apk',filename:'app.apk',downloadUrl:`https://example.test/${id}`,packageIdentity:'org.example.app',versionCode:7,versionName:'0.6.5',sha256:sha,signingStatus:'ready'});
+  const release=(id,name,code,artifacts,publishedAt='2026-10-01T00:00:00Z')=>({id,version:{name,code},channel:'stable',status:'published',publishedAt,artifacts});
+  const entries=dedupeReleaseHistory([
+    {release:release('workflow','0.6.5',7,[artifact('apk-a','a'.repeat(64))]),reason:'published',createdAt:'2026-10-01T00:00:01Z'},
+    {release:release('tag','v0.6.5',7,[artifact('apk-b','b'.repeat(64))]),reason:'published',createdAt:'2026-10-01T00:00:02Z'},
+    {release:release('rollback','0.6.5',7,[artifact('apk-c','c'.repeat(64))]),reason:'rollback-target',createdAt:'2026-10-01T00:00:03Z'},
+    {release:release('older','0.6.4',7,[artifact('apk-d','d'.repeat(64))],'2026-09-01T00:00:00Z'),reason:'published',createdAt:'2026-09-01T00:00:01Z'},
+    {release:{...release('withdrawn','0.6.3',7,[artifact('apk-e','e'.repeat(64))]),status:'withdrawn'},reason:'withdrawn',createdAt:'2026-08-01T00:00:01Z'},
+  ]);
+  assert.equal(entries.length,3,'same named version from workflow/tag is shown once; different tags remain distinct');
+  const newest=entries.find(x=>releaseHistoryIdentity(x.release).includes('0.6.5')).release;
+  assert.equal(newest.artifacts.length,2,'equivalent source rows retain their installable artifacts');
+  assert.equal(historyReleaseState(newest,entries,newest),'current');
+  const older=entries.find(x=>x.release.version.name==='0.6.4').release;
+  assert.equal(historyReleaseState(older,entries,newest),'previous');
+  const withdrawn=entries.find(x=>x.reason==='withdrawn').release;
+  assert.equal(historyReleaseState(withdrawn,entries,newest),'archived','withdrawn releases must never get an install/rollback button');
+});
 
 test('mapSupabaseRelease normalizes snake_case release history rows for androidArtifact', async () => {
   const {mapSupabaseRelease} = await loadTs('src/services/catalog/supabase.ts');
@@ -122,6 +169,11 @@ test('selectLatestRelease excludes pending and failed Android artifacts while al
     {id: 'legacy', status: 'published', version: {name: '1.1.0', code: 11}, artifacts: [{platform: 'android', kind: 'apk'}]},
   ]);
   assert.equal(legacy?.id, 'legacy');
+  const stablePreferred=mgr.selectLatestRelease([
+    {id:'stable',status:'published',channel:'stable',version:{name:'1.0.0',code:10},artifacts:[{platform:'android',kind:'apk',signingStatus:'ready'}]},
+    {id:'development',status:'published',channel:'development',version:{name:'9.0.0',code:90},artifacts:[{platform:'android',kind:'apk',signingStatus:'ready'}]},
+  ]);
+  assert.equal(stablePreferred?.id,'stable');
 });
 
 test('unzipSafe blocks path traversal, rejects symlinks, and restores Unix executable bits', async (t) => {
@@ -286,6 +338,10 @@ test('Supabase Edge Functions preserve auth, OIDC, signing-failure tracking and 
   assert.match(syncFn, /batch_active/);
   assert.match(syncFn, /wouldKeepApk/);
   assert.match(syncFn, /pruned_cache/);
+  assert.match(syncFn, /published_at:\s*publishedAt/);
+  assert.doesNotMatch(syncFn, /published_at:\s*sourceUpdatedAt/);
+  assert.doesNotMatch(syncFn, /published_at:\s*source\.updatedAt/);
+  assert.match(syncFn, /"Repository binary", "development", path, null, true/);
 
   const pluginJava = fss.readFileSync(path.resolve('native/AemInstallerPlugin.java'), 'utf8');
   assert.match(pluginJava, /lastUpdateTime/);
@@ -363,6 +419,15 @@ test('Windows version resolution, Setup priority, and registry update comparison
     {installed: [{version: '0.2.70'}], state: 'update'},
   );
   assert.match(cardText, /Installed 0\.2\.70 · Update available/);
+});
+
+test('Android catalog prefers stable releases over higher development versions when both exist',async()=>{
+ const {loadSupabaseCatalog}=await loadTs('src/services/catalog/supabase.ts',[{id:12,provider:'github',project:'org/sample',name:'Sample',package_identity:'org.sample.app',platforms:['android'],releases:[
+  {id:1,status:'published',channel:'stable',version_name:'1.2.0',version_code:12,published_at:'2026-11-20T00:00:00Z',artifacts:[{id:11,platform:'android',kind:'apk',filename:'sample.apk',download_url:'https://example.test/stable.apk',package_identity:'org.sample.app',version_code:12,artifact_version_name:'1.2.0',signing_status:'ready'}]},
+  {id:2,status:'published',channel:'development',version_name:'9.0.0',version_code:90,published_at:'2026-11-20T01:00:00Z',artifacts:[{id:22,platform:'android',kind:'apk',filename:'sample-dev.apk',download_url:'https://example.test/dev.apk',package_identity:'org.sample.app',version_code:90,artifact_version_name:'9.0.0',signing_status:'ready'}]},
+ ]}]);
+ const catalog=await loadSupabaseCatalog();
+ assert.equal(catalog[0].latest.version.name,'1.2.0');
 });
 
 test('loadSupabaseCatalog selects fresher equal-versionCode mutable releases and preserves ABI variants', async () => {

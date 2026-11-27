@@ -1,4 +1,5 @@
-import {selectLatestWindowsRelease} from "../../domain/version";
+import {compareVersionNamesNewestFirst,selectLatestWindowsRelease} from "../../domain/version";
+import {parseCatalogTimestamp} from "../../domain/time";
 import {selectPendingAndroidUpdate,type StoreApp} from "../../domain/catalog";
 import {supabaseRequest} from "../supabase/client";
 
@@ -41,8 +42,8 @@ function isReadyAndroidArtifact(z:any){
 function releaseFreshnessMs(r:any):number{
  const arts=Array.isArray(r?.artifacts)?r.artifacts.filter(isReadyAndroidArtifact):[];
  const times=[
-  Date.parse(String(r?.published_at??r?.publishedAt??r?.created_at??r?.createdAt??""))||0,
-  ...arts.map((z:any)=>Date.parse(String(z?.source_updated_at??z?.sourceUpdatedAt??""))||0)
+  parseCatalogTimestamp(r?.published_at??r?.publishedAt??r?.created_at??r?.createdAt),
+  ...arts.map((z:any)=>parseCatalogTimestamp(z?.source_updated_at??z?.sourceUpdatedAt))
  ];
  return Math.max(0,...times);
 }
@@ -58,12 +59,16 @@ export async function loadSupabaseCatalog():Promise<StoreApp[]>{
   // The actionable catalog release must have a ready Android artifact.
   // A newer published release with signing_status=pending/processing must not
   // block installation/update from the newest already-ready APK.
-  const readyAndroidRaw=releases.filter((x:any)=>x.status==="published"&&(x.artifacts||[]).some(isReadyAndroidArtifact)).sort((x:any,y:any)=>{
+  const readyAndroidCandidates=releases.filter((x:any)=>x.status==="published"&&(x.artifacts||[]).some(isReadyAndroidArtifact));
+  const preferredAndroidChannel=["stable","beta","development"].find(channel=>readyAndroidCandidates.some((release:any)=>String(release.channel||"").toLowerCase()===channel))||String(readyAndroidCandidates[0]?.channel||"").toLowerCase();
+  const readyAndroidRaw=readyAndroidCandidates.filter((release:any)=>String(release.channel||"").toLowerCase()===preferredAndroidChannel).sort((x:any,y:any)=>{
    const yReady=(y.artifacts||[]).filter(isReadyAndroidArtifact);
    const xReady=(x.artifacts||[]).filter(isReadyAndroidArtifact);
    const yc=Math.max(Number(y.version_code??0),...yReady.map((z:any)=>Number(z.version_code??0)));
    const xc=Math.max(Number(x.version_code??0),...xReady.map((z:any)=>Number(z.version_code??0)));
    if(yc!==xc)return yc-xc;
+   const namedVersion=compareVersionNamesNewestFirst(String(x.version_name??x.version?.name??""),String(y.version_name??y.version?.name??""));
+   if(namedVersion)return namedVersion;
    const yt=releaseFreshnessMs(y),xt=releaseFreshnessMs(x);
    const yHasRelease=yReady.some((z:any)=>!/(^|[-_. ])debug([-. _]|$)/i.test(String(z.filename||"")))?1:0;
    const xHasRelease=xReady.some((z:any)=>!/(^|[-_. ])debug([-. _]|$)/i.test(String(z.filename||"")))?1:0;
@@ -80,7 +85,8 @@ export async function loadSupabaseCatalog():Promise<StoreApp[]>{
   const latestRelease=(preferMobileAbi&&androidReleases.length>1&&isX86Only(androidReleases[0])
    ?androidReleases.find((rel:any)=>Math.max(Number(rel.version?.code??0),...(rel.artifacts||[]).map((z:any)=>Number(z.versionCode??0)))===topCode&&!isX86Only(rel))||androidReleases[0]
    :androidReleases[0]);
-  const pendingAndroidUpdate=selectPendingAndroidUpdate(releases,a.package_identity,topCode);
+  const latestReadyVersionName=readyAndroidRaw[0]?.artifacts?.find((z:any)=>isReadyAndroidArtifact(z)&&(!a.package_identity||z.package_identity===a.package_identity))?.artifact_version_name||readyAndroidRaw[0]?.version_name||undefined;
+  const pendingAndroidUpdate=selectPendingAndroidUpdate(releases,a.package_identity,topCode,latestReadyVersionName,preferredAndroidChannel);
   const windowsLatest=selectLatestWindowsRelease(releases.map(toRelease));
   const catalogPackageIdentity=latestRelease?.artifacts?.find((z:any)=>z.platform==="android"&&z.packageIdentity)?.packageIdentity||a.package_identity||releases.flatMap((x:any)=>x.artifacts||[]).map((z:any)=>z.package_identity).find(Boolean);
   return {databaseId:Number(a.id),id:{provider:a.provider,project:a.project},packageIdentity:catalogPackageIdentity,name:a.name,description:a.description,sourceUrl:a.source_url,iconUrl:a.icon_url,platforms:a.platforms??[],category:a.category??"Other",functionality:a.functionality??[],screenshots:a.screenshots??[],permissions:a.permissions??[],latest:latestRelease,androidReleases,windowsLatest,pendingAndroidUpdate};

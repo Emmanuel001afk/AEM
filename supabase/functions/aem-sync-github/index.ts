@@ -68,9 +68,13 @@ const apkVariantKey = (filename: string, packageIdentity: string): string => {
   if (/(^|[-_.])(armeabi|armv7)([-. _]|$)/.test(lower)) return `${pkg}:armv7`;
   return `${pkg}:default`;
 };
+const sourceTimestampForOrdering = (value: unknown): number => {
+  const parsed = Date.parse(String(value || ""));
+  return Number.isFinite(parsed) && parsed <= Date.now() + 5 * 60 * 1000 ? parsed : 0;
+};
 const releaseActivity = (release: any) => Math.max(
-  Date.parse(release.published_at || release.created_at || "") || 0,
-  ...(release.assets || []).map((asset: any) => Date.parse(asset.updated_at || "") || 0),
+  sourceTimestampForOrdering(release.published_at || release.created_at),
+  ...(release.assets || []).map((asset: any) => sourceTimestampForOrdering(asset.updated_at)),
 );
 const MAX_WORKFLOW_ARTIFACTS_PER_REPO = 20;
 const MAX_WORKFLOW_ARCHIVE_BYTES_PER_REPO = 70 * 1024 * 1024;
@@ -314,8 +318,8 @@ async function loadApkRetentionBuckets(sb: any, applicationId: number): Promise<
     const sourceId = String(release.source_release_id || release.id);
     const code = Math.max(Number(artifact.version_code || 0), Number(release.version_code || 0));
     const date = Math.max(
-      Date.parse(artifact.source_updated_at || "") || 0,
-      Date.parse(release.published_at || release.created_at || "") || 0,
+      sourceTimestampForOrdering(artifact.source_updated_at),
+      sourceTimestampForOrdering(release.published_at || release.created_at),
     );
     const entries = byBucket.get(bucketKey) || new Map<string, ApkRetentionEntry>();
     const prev = entries.get(sourceId);
@@ -401,8 +405,8 @@ async function retainCurrentAndPreviousApks(sb: any, applicationId: number) {
     const key = String(release.id);
     const versionCode = Math.max(Number(artifact.version_code || 0), Number(release.version_code || 0));
     const date = Math.max(
-      Date.parse(artifact.source_updated_at || "") || 0,
-      Date.parse(release.published_at || release.created_at || "") || 0,
+      sourceTimestampForOrdering(artifact.source_updated_at),
+      sourceTimestampForOrdering(release.published_at || release.created_at),
     );
     const group = groups.get(key) || { code: 0, date: 0, rows: [] };
     group.code = Math.max(group.code, versionCode);
@@ -586,7 +590,7 @@ Deno.serve(async (request) => {
             downloadedArchiveBytes += archive.byteLength;
             const binaries = await archiveBinaries(archive);
             const supported: any[] = [];
-            const itemUpdatedMs = Date.parse(String(item.updated_at || item.created_at || run.updated_at || run.created_at || "")) || 0;
+            const itemUpdatedMs = sourceTimestampForOrdering(item.updated_at || item.created_at || run.updated_at || run.created_at);
             let prunedAny = false;
             for (const binary of binaries) {
               const kind = artifactKind(binary.name);
@@ -661,26 +665,34 @@ Deno.serve(async (request) => {
             release.version_code = Number(metadata.versionCode);
             await sb.from("releases").update({ version_code: Number(metadata.versionCode) }).eq("id", release.id);
           }
-          if (source.updatedAt) {
-            const relTs = release.published_at ? Date.parse(release.published_at) : 0;
-            const srcTs = Date.parse(source.updatedAt) || 0;
-            if (srcTs > relTs) {
-              release.published_at = source.updatedAt;
-              await sb.from("releases").update({ published_at: source.updatedAt }).eq("id", release.id);
-            }
-          }
           const detected = platform(kind);
           if (!(app!.platforms || []).includes(detected)) {
             app!.platforms = [...(app!.platforms || []), detected];
             await sb.from("applications").update({ platforms: app!.platforms, updated_at: new Date().toISOString() }).eq("id", app!.id);
           }
         };
-        const ensureRelease = async (sourceId: string, name: string, channel: string, title: string, date: string) => {
+        const ensureRelease = async (sourceId: string, name: string, channel: string, title: string, publishedAt: string | null, clearUnknownDate = false) => {
           const found = await sb.from("releases").select("id,version_name,version_code,published_at").eq("application_id", app!.id).eq("source_release_id", sourceId).maybeSingle();
-          if (found.data) return found.data;
+          if (found.error) throw found.error;
+          if (found.data) {
+            // Repair stale catalog values from the authoritative source date. Asset
+            // updated_at is intentionally never copied into a release publication date.
+            const currentPublishedMs = Date.parse(String(found.data.published_at || "")) || 0;
+            const sourcePublishedMs = Date.parse(String(publishedAt || "")) || 0;
+            if (publishedAt && sourcePublishedMs && currentPublishedMs !== sourcePublishedMs) {
+              const repaired = await sb.from("releases").update({ published_at: publishedAt }).eq("id", found.data.id);
+              if (repaired.error) throw repaired.error;
+              found.data.published_at = publishedAt;
+            } else if (!publishedAt && clearUnknownDate && found.data.published_at) {
+              const cleared = await sb.from("releases").update({ published_at: null }).eq("id", found.data.id);
+              if (cleared.error) throw cleared.error;
+              found.data.published_at = null;
+            }
+            return found.data;
+          }
           const created = await sb.from("releases").insert({
             application_id: app!.id, source_release_id: sourceId, version_name: name,
-            channel: releaseChannel(channel), status: "published", title, published_at: date,
+            channel: releaseChannel(channel), status: "published", title, published_at: publishedAt,
           }).select("id,version_name,version_code,published_at").single();
           if (created.error) throw created.error; totals.releases++; return created.data;
         };
@@ -732,7 +744,7 @@ Deno.serve(async (request) => {
             if (kind === "apk") {
               const ch = releaseChannel(name);
               const vc = Number(metadata.versionCode || 0);
-              const ts = Date.parse(String(sourceUpdatedAt || release.published_at || release.created_at || "")) || 0;
+              const ts = sourceTimestampForOrdering(sourceUpdatedAt || release.published_at || release.created_at);
               if (!wouldKeepApk(apkBuckets, ch, String(asset.name), String(metadata.packageName || ""), vc, ts, id)) {
                 if (assetStamp) prunedCache[pruneKey] = assetStamp;
                 continue;
@@ -747,7 +759,7 @@ Deno.serve(async (request) => {
             }
           }
           if (!validAssets.length) continue;
-          const row = await ensureRelease(id, name, name, release.name || name, release.published_at || release.created_at);
+          const row = await ensureRelease(id, name, name, release.name || name, release.published_at || null);
           for (const item of validAssets) {
             const { asset, kind, bytes, metadata, digest, sourceUpdatedAt } = item;
             if (kind === "exe" && !repo.private && Number(asset.size || 0) > 50 * 1024 * 1024 && digest) {
@@ -781,10 +793,6 @@ Deno.serve(async (request) => {
                 row.version_code = Number(metadata.versionCode);
                 await sb.from("releases").update({ version_code: Number(metadata.versionCode) }).eq("id", row.id);
               }
-              if (sourceUpdatedAt && (Date.parse(sourceUpdatedAt) || 0) > (row.published_at ? Date.parse(row.published_at) : 0)) {
-                row.published_at = sourceUpdatedAt;
-                await sb.from("releases").update({ published_at: sourceUpdatedAt }).eq("id", row.id);
-              }
             } else if (bytes) {
               await save(row, String(asset.name), bytes, kind, `${repo.full_name}/${safeName(name)}/${safeName(String(asset.name))}`, metadata,
                 { sha256: digest, updatedAt: sourceUpdatedAt, releaseName: name });
@@ -793,15 +801,24 @@ Deno.serve(async (request) => {
         }
         for (const file of sourceFiles) {
           const id = `github-file-${file.sha}`;
-          const exists = await sb.from("releases").select("id").eq("application_id", app.id).eq("source_release_id", id).maybeSingle();
-          if (exists.data) continue;
+          const exists = await sb.from("releases").select("id,published_at").eq("application_id", app.id).eq("source_release_id", id).maybeSingle();
+          if (exists.error) throw exists.error;
+          if (exists.data) {
+            // Repository tree binaries have no trustworthy publication timestamp;
+            // older syncs used the sync time, so remove that misleading value.
+            if (exists.data.published_at) {
+              const cleared = await sb.from("releases").update({ published_at: null }).eq("id", exists.data.id);
+              if (cleared.error) throw cleared.error;
+            }
+            continue;
+          }
           const path = String(file.path), kind = artifactKind(path)!;
           const response = await fetch(`https://raw.githubusercontent.com/${repo.full_name}/${repo.default_branch || "main"}/${path.split("/").map(encodeURIComponent).join("/")}`, { headers });
           if (!response.ok) continue;
           const bytes = new Uint8Array(await response.arrayBuffer());
           const metadata = kind === "apk" ? await apkMetadata(bytes) : {};
           if (kind === "apk" && !metadata.packageName) continue;
-          const created = await ensureRelease(id, "Repository binary", "development", path, new Date().toISOString());
+          const created = await ensureRelease(id, "Repository binary", "development", path, null, true);
           await save(created, path.split("/").pop() || `application.${kind}`, bytes, kind,
             `${repo.full_name}/source/${file.sha}/${safeName(path.split("/").pop() || "application")}`, metadata);
         }
@@ -809,7 +826,7 @@ Deno.serve(async (request) => {
           const id = `github-actions-artifact-${item.id}`;
           const runLabel = run.run_number || item.workflow_run?.run_number || item.id;
           const createdAt = item.created_at || run.updated_at || run.created_at;
-          const row = await ensureRelease(id, `workflow-${runLabel}`, "development", String(item.name || "GitHub Actions artifact"), createdAt);
+          const row = await ensureRelease(id, `workflow-${runLabel}`, "development", String(item.name || "GitHub Actions artifact"), createdAt || null);
           for (const binary of binaries) {
             const kind = artifactKind(binary.name);
             if (kind) await save(row, binary.name, binary.bytes, kind,

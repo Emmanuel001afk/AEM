@@ -1,12 +1,29 @@
 import type {Artifact, InstalledApplication, Release} from "./model";
+import {parseCatalogTimestamp} from "./time";
 
 const ANDROID_INSTALLABLE_KINDS = new Set(["apk","apks","xapk","apkm"]);
+
+/** Compare parseable dotted versions, returning newest-first order. */
+export function compareVersionNamesNewestFirst(a?: string, b?: string): number {
+  const parse = (value?: string) => {
+    const match = /^v?(\d+(?:\.\d+){1,3})(?:[-+].*)?$/i.exec(String(value || "").trim());
+    return match ? match[1].split(".").map(Number) : undefined;
+  };
+  const left = parse(a), right = parse(b);
+  if (!left || !right) return 0;
+  for (let index = 0; index < Math.max(left.length, right.length); index++) {
+    const difference = (right[index] || 0) - (left[index] || 0);
+    if (difference) return difference;
+  }
+  return 0;
+}
 
 function selectAndroidArtifact(release: Release, installed: InstalledApplication): Artifact | undefined {
   const android = release.artifacts.filter(
     (artifact) =>
       artifact.platform === "android" &&
-      ANDROID_INSTALLABLE_KINDS.has(String(artifact.kind).toLowerCase()),
+      ANDROID_INSTALLABLE_KINDS.has(String(artifact.kind).toLowerCase()) &&
+      !["pending", "processing", "failed"].includes(String((artifact as any).signingStatus ?? (artifact as any).signing_status ?? "")),
   );
 
   if (!android.length) return undefined;
@@ -48,6 +65,9 @@ export function compareAndroidRelease(
 
   if (releaseCode > installed.versionCode) return "update-available";
   if (releaseCode < installed.versionCode) return "local-newer";
+  const namedVersionOrder = compareVersionNamesNewestFirst(artifact.versionName ?? release.version.name, installed.versionName);
+  if (namedVersionOrder < 0) return "update-available";
+  if (namedVersionOrder > 0) return "local-newer";
   return "installed";
 }
 
@@ -80,8 +100,8 @@ export function selectLatestWindowsRelease(releases: Release[]): Release | undef
   };
   const releaseTs = (r: Release): number => {
     const times = [
-      Date.parse(String(r.publishedAt || "")) || 0,
-      ...(r.artifacts || []).filter(verifiedExe).map((a) => Date.parse(String(a.sourceUpdatedAt || "")) || 0),
+      parseCatalogTimestamp(r.publishedAt),
+      ...(r.artifacts || []).filter(verifiedExe).map((a) => parseCatalogTimestamp(a.sourceUpdatedAt)),
     ];
     return Math.max(0, ...times);
   };

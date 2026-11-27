@@ -1,3 +1,5 @@
+import {isFutureCatalogTimestamp,parseCatalogTimestamp} from "./time";
+
 export type StoreHostPlatform = "android" | "windows" | "other";
 
 export function hostFormatLabel(host: StoreHostPlatform): string {
@@ -22,10 +24,18 @@ function artifactDateLabel(artifact: any, release: any, assetLabel: string): str
   // Catalog timing means the upstream release's publication date. An asset can be
   // replaced/re-uploaded well after a release, so its update timestamp must not
   // silently become the release date shown to users.
-  const published = formatIsoDate(release?.publishedAt ?? release?.published_at);
-  if (published) return `Release published ${published}`;
-  const updated = formatIsoDate(artifact?.sourceUpdatedAt ?? artifact?.source_updated_at);
-  return updated ? `${assetLabel} asset updated ${updated}` : undefined;
+  const publishedValue = release?.publishedAt ?? release?.published_at;
+  const published = formatIsoDate(publishedValue);
+  if (published) {
+    const sourceId=String(release?.sourceReleaseId??release?.source_release_id??"");
+    const actionArtifact=/^github-actions(?:-artifact)?-|^github-file-/i.test(sourceId);
+    if (isFutureCatalogTimestamp(publishedValue)) return `Source timestamp is in the future (${published})`;
+    return actionArtifact ? `Build artifact created ${published}` : `Release published ${published}`;
+  }
+  const updatedValue = artifact?.sourceUpdatedAt ?? artifact?.source_updated_at;
+  const updated = formatIsoDate(updatedValue);
+  if (!updated) return undefined;
+  return isFutureCatalogTimestamp(updatedValue) ? `${assetLabel} asset timestamp is in the future (${updated})` : `${assetLabel} asset updated ${updated}`;
 }
 
 function classifyPlatform(value?: string): StoreHostPlatform | undefined {
@@ -122,8 +132,8 @@ export function androidArtifact(release: any, packageIdentity?: string, options?
     const aRelease = /(^|[-_. ])debug([-. _]|$)/i.test(String(a.filename || "")) ? 0 : 1;
     const bRelease = /(^|[-_. ])debug([-. _]|$)/i.test(String(b.filename || "")) ? 0 : 1;
     if (bRelease !== aRelease) return bRelease - aRelease;
-    const bTime = Date.parse(String(b.sourceUpdatedAt ?? b.source_updated_at ?? "")) || 0;
-    const aTime = Date.parse(String(a.sourceUpdatedAt ?? a.source_updated_at ?? "")) || 0;
+    const bTime = parseCatalogTimestamp(b.sourceUpdatedAt ?? b.source_updated_at);
+    const aTime = parseCatalogTimestamp(a.sourceUpdatedAt ?? a.source_updated_at);
     return bTime - aTime;
   })[0];
 }
