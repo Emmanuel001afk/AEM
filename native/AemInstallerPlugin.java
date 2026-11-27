@@ -151,9 +151,9 @@ public class AemInstallerPlugin extends Plugin {
                 android.content.pm.PackageManager pm = getContext().getPackageManager();
                 List<android.content.pm.PackageInfo> installedPackages;
                 if (Build.VERSION.SDK_INT >= 33) {
-                    installedPackages = pm.getInstalledPackages(android.content.pm.PackageManager.PackageInfoFlags.of(0));
+                    installedPackages = pm.getInstalledPackages(android.content.pm.PackageManager.PackageInfoFlags.of(Build.VERSION.SDK_INT >= 28 ? android.content.pm.PackageManager.GET_SIGNING_CERTIFICATES : android.content.pm.PackageManager.GET_SIGNATURES));
                 } else {
-                    installedPackages = pm.getInstalledPackages(0);
+                    installedPackages = pm.getInstalledPackages(Build.VERSION.SDK_INT >= 28 ? android.content.pm.PackageManager.GET_SIGNING_CERTIFICATES : android.content.pm.PackageManager.GET_SIGNATURES);
                 }
                 for (android.content.pm.PackageInfo p : installedPackages) {
                     JSObject item = new JSObject();
@@ -285,21 +285,16 @@ public class AemInstallerPlugin extends Plugin {
         String id=call.getString("downloadId","");
         if(id.isEmpty()){call.reject("Download ID is required");return;}
         try {
-            SharedPreferences prefs=getContext().getSharedPreferences(PREFS,android.content.Context.MODE_PRIVATE);
-            int sessionId=prefs.getInt("session_"+id,-1);
-            if(sessionId<0){call.reject("No pending installer session found");return;}
-            PackageInstaller installer=getContext().getPackageManager().getPackageInstaller();
-            if(installer.getSessionInfo(sessionId)==null){call.reject("Installer session is no longer available");return;}
-            Intent status=new Intent(getContext(),InstallConfirmationActivity.class);
-            status.setAction("com.aem.store.INSTALL_STATUS");
-            status.putExtra("aem_download_id",id);
-            status.putExtra("aem_download_path",prefs.getString("path_"+id,""));
-            PendingIntent pi=PendingIntent.getActivity(getContext(),INSTALL_RESULT+((id.hashCode() & 0x7fffffff) % 10000),status,PendingIntent.FLAG_UPDATE_CURRENT|PendingIntent.FLAG_MUTABLE);
-            PackageInstaller.Session session=installer.openSession(sessionId);
-            try{session.commit(pi.getIntentSender());}finally{session.close();}
-            notifyDownload(id,"Installation ready","Tap to continue installing",-1,false);
+            Intent confirm = InstallConfirmationActivity.pendingConfirmation(id);
+            if (confirm == null) {
+                call.reject("Android's confirmation is no longer available. Check the Android installer; if needed, start the download again.");
+                return;
+            }
+            Intent launch = new Intent(confirm);
+            launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            getContext().startActivity(launch);
             call.resolve();
-        } catch(Exception e){call.reject(e.getMessage()==null?"Unable to reopen installer":e.getMessage(),e);}
+        } catch (Exception e) { call.reject("Could not reopen Android's installer. Start the download again if needed.", e); }
     }
     @PluginMethod
     public void pauseDownload(PluginCall call) {
@@ -407,7 +402,8 @@ public class AemInstallerPlugin extends Plugin {
         if (cancelledDownloads.contains(downloadId)) throw new IOException("Download cancelled");
         if (pausedDownloads.contains(downloadId)) throw new DownloadPausedException();
 
-        File out = new File(dir, filename.replaceAll("[^A-Za-z0-9._-]", "_"));
+        String fileId = java.util.UUID.nameUUIDFromBytes(safeId.getBytes(java.nio.charset.StandardCharsets.UTF_8)).toString();
+        File out = new File(dir, fileId + "-" + filename.replaceAll("[^A-Za-z0-9._-]", "_"));
         if (out.exists()) out.delete();
         if (!partial.renameTo(out)) throw new IOException("Unable to finalize downloaded package");
         notifyDownload(downloadId, "Download complete", filename, 100, false);
@@ -541,8 +537,8 @@ public class AemInstallerPlugin extends Plugin {
                 try {
                     android.content.pm.PackageInfo p = getContext().getPackageManager().getPackageInfo(packageName, android.content.pm.PackageManager.GET_SIGNING_CERTIFICATES);
                     long code = Build.VERSION.SDK_INT >= 28 ? p.getLongVersionCode() : p.versionCode;
-                    boolean sameCodeFresh = code == targetVersionCode && (previousCode < targetVersionCode || p.lastUpdateTime > previousUpdatedTime);
-                    if (code > targetVersionCode || sameCodeFresh) { installed = true; break; }
+                    boolean sameCodeFresh = code == targetVersionCode && (previousCode != targetVersionCode || p.lastUpdateTime > previousUpdatedTime);
+                    if (sameCodeFresh) { installed = true; break; }
                 } catch (Exception ignored) {}
                 try { Thread.sleep(1000L); } catch (InterruptedException e) { Thread.currentThread().interrupt(); break; }
             }

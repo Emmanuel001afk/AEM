@@ -1,5 +1,7 @@
 # AEM
 
+For store users, see the [platform and troubleshooting guide](docs/store/USER_GUIDE.md). For release validation, see the [Android device checklist](docs/store/ANDROID_TEST_CHECKLIST.md).
+
 ## Multi-platform development status
 
 See [implementation and verification ledger](docs/TRANSFORMATION.md), [download/install guide](docs/desktop/DOWNLOADS.md), [native source delivery](docs/native-delivery.md), and [resource policy / Latitude 3190](docs/host-requirements.md). This branch adds real delivery operations and automated tests but is **not a fully verified ecosystem release**. The ledger supersedes older feature-completeness claims below.

@@ -56,39 +56,42 @@ export async function loadSupabaseCatalog():Promise<StoreApp[]>{
   const appMeta={provider:a.provider,project:a.project};
   const releases=Array.isArray(a.releases)?a.releases.map((x:any)=>({...x,artifacts:Array.isArray(x.artifacts)?x.artifacts:[]})).filter((x:any)=>x.status==="published"):[];
   const toRelease=(x:any)=>mapSupabaseRelease(appMeta,x);
-  // The actionable catalog release must have a ready Android artifact.
-  // A newer published release with signing_status=pending/processing must not
-  // block installation/update from the newest already-ready APK.
-  const readyAndroidCandidates=releases.filter((x:any)=>x.status==="published"&&(x.artifacts||[]).some(isReadyAndroidArtifact));
-  const preferredAndroidChannel=["stable","beta","development"].find(channel=>readyAndroidCandidates.some((release:any)=>String(release.channel||"").toLowerCase()===channel))||String(readyAndroidCandidates[0]?.channel||"").toLowerCase();
-  const readyAndroidRaw=readyAndroidCandidates.filter((release:any)=>String(release.channel||"").toLowerCase()===preferredAndroidChannel).sort((x:any,y:any)=>{
-   const yReady=(y.artifacts||[]).filter(isReadyAndroidArtifact);
-   const xReady=(x.artifacts||[]).filter(isReadyAndroidArtifact);
-   const yc=Math.max(Number(y.version_code??0),...yReady.map((z:any)=>Number(z.version_code??0)));
-   const xc=Math.max(Number(x.version_code??0),...xReady.map((z:any)=>Number(z.version_code??0)));
+  // A configured package identity is authoritative. Never replace a launcher
+  // with another APK merely because it appeared first in a repository release.
+  const packageIdentity=String(a.package_identity||"");
+  const matchesIdentity=(z:any)=>!packageIdentity||String(z.package_identity??z.packageIdentity??"")===packageIdentity;
+  const ready=(r:any)=>(r.artifacts||[]).filter((z:any)=>isReadyAndroidArtifact(z)&&matchesIdentity(z));
+  const isDebug=(z:any)=>/(^|[-_. ])debug([-. _]|$)/i.test(String(z.filename||""));
+  const preferMobileAbi=typeof navigator!=="undefined"&&/android/i.test(navigator.userAgent||"")&&!/x86_64|amd64/i.test(navigator.userAgent||"");
+  const mobileCompatible=(z:any)=>!/(^|[-_.])(x86_64|amd64|x86)([-. _]|$)/i.test(String(z.filename||""));
+  let candidates=releases.filter((r:any)=>ready(r).length>0);
+  if(preferMobileAbi){
+   // Do not choose an explicitly x86-only APK for an ARM phone.
+   candidates=candidates.filter((r:any)=>ready(r).some(mobileCompatible));
+  }
+  const suitable=(r:any)=>preferMobileAbi?ready(r).filter(mobileCompatible):ready(r);
+  const hasRelease=(r:any)=>suitable(r).some((z:any)=>!isDebug(z));
+  // Release builds take precedence over debug builds, irrespective of channel.
+  // Within that class select the newest version; at equal version prefer a
+  // published GitHub release over a workflow copy, then the freshest source.
+  const readyAndroidRaw=candidates.sort((x:any,y:any)=>{
+   const releaseDiff=Number(hasRelease(y))-Number(hasRelease(x));if(releaseDiff)return releaseDiff;
+   const chosen=(r:any)=>suitable(r).filter((z:any)=>hasRelease(r)?!isDebug(z):true);
+   const xc=Math.max(0,...chosen(x).map((z:any)=>Number(z.version_code??z.versionCode??0)));
+   const yc=Math.max(0,...chosen(y).map((z:any)=>Number(z.version_code??z.versionCode??0)));
    if(yc!==xc)return yc-xc;
-   const namedVersion=compareVersionNamesNewestFirst(String(x.version_name??x.version?.name??""),String(y.version_name??y.version?.name??""));
-   if(namedVersion)return namedVersion;
-   const yt=releaseFreshnessMs(y),xt=releaseFreshnessMs(x);
-   const yHasRelease=yReady.some((z:any)=>!/(^|[-_. ])debug([-. _]|$)/i.test(String(z.filename||"")))?1:0;
-   const xHasRelease=xReady.some((z:any)=>!/(^|[-_. ])debug([-. _]|$)/i.test(String(z.filename||"")))?1:0;
-   if(yHasRelease!==xHasRelease)return yHasRelease-xHasRelease;
-   return yt-xt;
+   const named=compareVersionNamesNewestFirst(String(x.version_name??x.version?.name??""),String(y.version_name??y.version?.name??""));if(named)return named;
+   const source=(r:any)=>String(r.source_release_id??r.sourceReleaseId??"").startsWith("github-release-")?1:0;
+   const sourceDiff=source(y)-source(x);if(sourceDiff)return sourceDiff;
+   return releaseFreshnessMs(y)-releaseFreshnessMs(x);
   });
   const androidReleases=readyAndroidRaw.map(toRelease);
-  const preferMobileAbi=typeof navigator!=="undefined"&&/android/i.test(navigator.userAgent||"")&&!/x86_64|amd64/i.test(navigator.userAgent||"");
-  const isX86Only=(rel:any)=>{
-   const arts=(rel?.artifacts||[]).filter((z:any)=>z.platform==="android"&&ANDROID_KINDS.has(String(z.kind||"").toLowerCase())&&z.signingStatus==="ready");
-   return arts.length>0&&arts.every((z:any)=>/x86_64|amd64/i.test(String(z.filename||"")));
-  };
-  const topCode=androidReleases[0]?Math.max(Number(androidReleases[0].version?.code??0),...(androidReleases[0].artifacts||[]).map((z:any)=>Number(z.versionCode??0))):0;
-  const latestRelease=(preferMobileAbi&&androidReleases.length>1&&isX86Only(androidReleases[0])
-   ?androidReleases.find((rel:any)=>Math.max(Number(rel.version?.code??0),...(rel.artifacts||[]).map((z:any)=>Number(z.versionCode??0)))===topCode&&!isX86Only(rel))||androidReleases[0]
-   :androidReleases[0]);
-  const latestReadyVersionName=readyAndroidRaw[0]?.artifacts?.find((z:any)=>isReadyAndroidArtifact(z)&&(!a.package_identity||z.package_identity===a.package_identity))?.artifact_version_name||readyAndroidRaw[0]?.version_name||undefined;
-  const pendingAndroidUpdate=selectPendingAndroidUpdate(releases,a.package_identity,topCode,latestReadyVersionName,preferredAndroidChannel);
+  const latestRelease=androidReleases[0];
+  const topCode=latestRelease?Math.max(0,...(latestRelease.artifacts||[]).filter((z:any)=>!packageIdentity||z.packageIdentity===packageIdentity).map((z:any)=>Number(z.versionCode??0))):0;
+  const latestReadyVersionName=readyAndroidRaw[0]?.artifacts?.find((z:any)=>isReadyAndroidArtifact(z)&&matchesIdentity(z))?.artifact_version_name||readyAndroidRaw[0]?.version_name||undefined;
+  const pendingAndroidUpdate=selectPendingAndroidUpdate(releases,packageIdentity,topCode,latestReadyVersionName);
   const windowsLatest=selectLatestWindowsRelease(releases.map(toRelease));
-  const catalogPackageIdentity=latestRelease?.artifacts?.find((z:any)=>z.platform==="android"&&z.packageIdentity)?.packageIdentity||a.package_identity||releases.flatMap((x:any)=>x.artifacts||[]).map((z:any)=>z.package_identity).find(Boolean);
+  const catalogPackageIdentity=a.package_identity||latestRelease?.artifacts?.find((z:any)=>z.platform==="android"&&z.packageIdentity)?.packageIdentity||releases.flatMap((x:any)=>x.artifacts||[]).map((z:any)=>z.package_identity).find(Boolean);
   return {databaseId:Number(a.id),id:{provider:a.provider,project:a.project},packageIdentity:catalogPackageIdentity,name:a.name,description:a.description,sourceUrl:a.source_url,iconUrl:a.icon_url,platforms:a.platforms??[],category:a.category??"Other",functionality:a.functionality??[],screenshots:a.screenshots??[],permissions:a.permissions??[],latest:latestRelease,androidReleases,windowsLatest,pendingAndroidUpdate};
  });
 }
