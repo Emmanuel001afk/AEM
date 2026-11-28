@@ -1,4 +1,5 @@
 import {compareVersionNamesNewestFirst,selectLatestWindowsRelease} from "../../domain/version";
+import {windowsArchives} from "../../domain/platform";
 import {parseCatalogTimestamp} from "../../domain/time";
 import {selectPendingAndroidUpdate,type StoreApp} from "../../domain/catalog";
 import {supabaseRequest} from "../supabase/client";
@@ -28,6 +29,7 @@ export function mapSupabaseRelease(appMeta:{provider:string;project:string},x:an
    versionCode:z.version_code??z.versionCode,
    versionName:z.artifact_version_name??z.versionName,
    sourceUpdatedAt:z.source_updated_at??z.sourceUpdatedAt,
+   sourceExpiresAt:z.source_expires_at??z.sourceExpiresAt,
    signingStatus:z.signing_status??z.signingStatus,
    signingAuthority:z.signing_authority??z.signingAuthority,
    signingError:z.signing_error??z.signingError
@@ -54,7 +56,13 @@ export async function loadSupabaseCatalog():Promise<StoreApp[]>{
  const rows=await r.json();
  return rows.map((a:any)=>{
   const appMeta={provider:a.provider,project:a.project};
-  const releases=Array.isArray(a.releases)?a.releases.map((x:any)=>({...x,artifacts:Array.isArray(x.artifacts)?x.artifacts:[]})).filter((x:any)=>x.status==="published"):[];
+  // This historical EMA Actions import contains only two onedir executables,
+  // not the supporting files required to run either of them. Keep the rows in
+  // the database, but do not advertise them as complete Windows installers.
+  const isIncompleteEmaRelease=(x:any)=>String(a.project||"").toLowerCase()==="emmanuel001afk/ema"&&String(x.source_release_id||"")==="github-actions-artifact-14909777427";
+  const rawReleases=Array.isArray(a.releases)?a.releases:[];
+  const windowsPackageIncomplete=rawReleases.some((x:any)=>x.status==="published"&&isIncompleteEmaRelease(x)&&(x.artifacts||[]).some((z:any)=>z.platform==="windows"&&z.kind==="exe"));
+  const releases=rawReleases.map((x:any)=>({...x,artifacts:Array.isArray(x.artifacts)?x.artifacts.filter((z:any)=>!(isIncompleteEmaRelease(x)&&z.platform==="windows"&&z.kind==="exe")):[]})).filter((x:any)=>x.status==="published");
   const toRelease=(x:any)=>mapSupabaseRelease(appMeta,x);
   // A configured package identity is authoritative. Never replace a launcher
   // with another APK merely because it appeared first in a repository release.
@@ -91,7 +99,11 @@ export async function loadSupabaseCatalog():Promise<StoreApp[]>{
   const latestReadyVersionName=readyAndroidRaw[0]?.artifacts?.find((z:any)=>isReadyAndroidArtifact(z)&&matchesIdentity(z))?.artifact_version_name||readyAndroidRaw[0]?.version_name||undefined;
   const pendingAndroidUpdate=selectPendingAndroidUpdate(releases,packageIdentity,topCode,latestReadyVersionName);
   const windowsLatest=selectLatestWindowsRelease(releases.map(toRelease));
+  const windowsArchiveLatest=releases.map(toRelease).filter((r:any)=>windowsArchives(r).length).sort((a:any,b:any)=>{
+   const timestamp=(r:any)=>Math.max(parseCatalogTimestamp(r.publishedAt),...windowsArchives(r).map((z:any)=>parseCatalogTimestamp(z.sourceUpdatedAt)));
+   return timestamp(b)-timestamp(a);
+  })[0];
   const catalogPackageIdentity=a.package_identity||latestRelease?.artifacts?.find((z:any)=>z.platform==="android"&&z.packageIdentity)?.packageIdentity||releases.flatMap((x:any)=>x.artifacts||[]).map((z:any)=>z.package_identity).find(Boolean);
-  return {databaseId:Number(a.id),id:{provider:a.provider,project:a.project},packageIdentity:catalogPackageIdentity,name:a.name,description:a.description,sourceUrl:a.source_url,iconUrl:a.icon_url,platforms:a.platforms??[],category:a.category??"Other",functionality:a.functionality??[],screenshots:a.screenshots??[],permissions:a.permissions??[],latest:latestRelease,androidReleases,windowsLatest,pendingAndroidUpdate};
+  return {databaseId:Number(a.id),id:{provider:a.provider,project:a.project},packageIdentity:catalogPackageIdentity,name:a.name,description:a.description,sourceUrl:a.source_url,iconUrl:a.icon_url,platforms:a.platforms??[],category:a.category??"Other",functionality:a.functionality??[],screenshots:a.screenshots??[],permissions:a.permissions??[],latest:latestRelease,androidReleases,windowsLatest,windowsArchiveLatest,windowsPackageIncomplete,pendingAndroidUpdate};
  });
 }

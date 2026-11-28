@@ -158,10 +158,21 @@ export function windowsArtifacts(release: any) {
   ).sort((a: any, b: any) => windowsArtifactPriority(b.filename) - windowsArtifactPriority(a.filename));
 }
 
+/** Manual downloads, never passed to the native EXE installer. */
+export function windowsArchives(release: any) {
+  return (release?.artifacts || []).filter((artifact: any) =>
+    artifact.platform === "windows" && String(artifact.kind || "").toLowerCase() === "zip" &&
+    (!artifact.sourceExpiresAt || (Number.isFinite(Date.parse(artifact.sourceExpiresAt)) && Date.parse(artifact.sourceExpiresAt)>Date.now())) &&
+    (!artifact.signingStatus || artifact.signingStatus === "ready") &&
+    /^[a-f0-9]{64}$/i.test(String(artifact.sha256 || "")) &&
+    /^https:\/\//i.test(String(artifact.downloadUrl || ""))
+  );
+}
+
 export function platformSummary(app: any, host: StoreHostPlatform): string {
   const available: string[] = [];
   if (androidArtifact(app?.latest, app?.packageIdentity)) available.push("android");
-  if (windowsArtifacts(app?.windowsLatest).length) available.push("windows");
+  if (windowsArtifacts(app?.windowsLatest).length || windowsArchives(app?.windowsArchiveLatest).length) available.push("windows");
   const preferred = host === "windows" ? "windows" : "android";
   available.sort((a, b) => a === preferred ? -1 : b === preferred ? 1 : a.localeCompare(b));
   const labels: Record<string, string> = { android: "Android APK", windows: "Windows EXE" };

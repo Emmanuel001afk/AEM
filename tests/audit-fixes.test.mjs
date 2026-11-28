@@ -48,6 +48,7 @@ async function loadTs(relPath, supabaseMockJson) {
       : 'const supabaseRequest = async () => { throw new Error("stub"); };';
     source = source
       .replace('import {compareVersionNamesNewestFirst,selectLatestWindowsRelease} from "../../domain/version";', 'const compareVersionNamesNewestFirst = () => 0;')
+      .replace('import {windowsArchives} from "../../domain/platform";', fss.readFileSync('src/domain/platform.ts','utf8').slice(fss.readFileSync('src/domain/platform.ts','utf8').indexOf('export function windowsArchives'),fss.readFileSync('src/domain/platform.ts','utf8').indexOf('export function platformSummary')).replace('export function','function'))
       .replace('import {parseCatalogTimestamp} from "../../domain/time";', 'const parseCatalogTimestamp = value => Date.parse(String(value||"")) || 0;')
       .replace('import {parseCatalogTimestamp} from "./time";', 'const parseCatalogTimestamp = value => Date.parse(String(value||"")) || 0;')
       .replace('import {isFutureCatalogTimestamp,parseCatalogTimestamp} from "./time";', 'const parseCatalogTimestamp=value=>Date.parse(String(value||""))||0; const isFutureCatalogTimestamp=value=>parseCatalogTimestamp(value)>Date.now()+300000;')
@@ -574,4 +575,20 @@ test('installer reopens Android confirmation instead of recommitting a sealed se
  assert.doesNotMatch(reopen,/session\.commit/);
  assert.match(activity,/pendingConfirmations\.put\(downloadId/);
  assert.match(activity,/clearConfirmation\(intent\.getStringExtra/);
+});
+
+test('catalog exposes a separate Windows setup ZIP without turning it into a native EXE',async()=>{
+ const data=[{id:5,provider:'github',project:'Emmanuel001afk/OEA',name:'OEA',platforms:['android'],releases:[{id:8,status:'published',version_name:'oea-laptop-latest',source_release_id:'github-release-452695921',published_at:'2026-11-20T12:57:24Z',artifacts:[{id:1,platform:'windows',kind:'zip',filename:'OEA-laptop-windows.zip',download_url:'https://github.com/example.zip',sha256:'a'.repeat(64),source_updated_at:'2026-11-27T07:32:10Z'}]}]}];
+ const {loadSupabaseCatalog}=await loadTs('src/services/catalog/supabase.ts',data);
+ const [app]=await loadSupabaseCatalog();
+ assert.equal(app.windowsArchiveLatest.artifacts[0].filename,'OEA-laptop-windows.zip');
+});
+
+test('known incomplete EMA workflow executables are not offered as standalone installers',async()=>{
+ const exe={id:99,platform:'windows',kind:'exe',filename:'EMA.exe',download_url:'https://example.test/ema.exe',package_identity:'org.ema',sha256:'a'.repeat(64)};
+ const rows=[{id:2,provider:'github',project:'Emmanuel001afk/EMA',name:'EMA',releases:[{id:1,status:'published',source_release_id:'github-actions-artifact-14909777427',artifacts:[exe]}]}];
+ const {loadSupabaseCatalog}=await loadTs('src/services/catalog/supabase.ts',rows);
+ const [app]=await loadSupabaseCatalog();
+ assert.equal(app.windowsPackageIncomplete,true);
+ assert.equal(app.windowsLatest?.artifacts?.length||0,0);
 });
