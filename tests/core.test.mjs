@@ -181,3 +181,40 @@ test('install confirmation never mistakes another version or missing timestamps 
  assert.equal(isRecoveredInstallConfirmed(5,6,100,101),false);
  assert.equal(isRecoveredInstallConfirmed(5,5,100,101),true);
 });
+
+test('native Windows assessment uses the separate Windows release even if declared platforms are stale',async()=>{
+ const {assessNativeWindows}=await domain('nativeWindows.ts');
+ const exe={platform:'windows',kind:'exe',packageIdentity:'org.example.app',sha256:'a'.repeat(64),downloadUrl:'https://example.org/app.exe'};
+ const app={id:{provider:'github',project:'example/app'},platforms:['android'],latest:{artifacts:[]},windowsLatest:{artifacts:[exe]}};
+ assert.equal(assessNativeWindows(app).variant.available,true);
+ assert.equal(assessNativeWindows({...app,windowsLatest:{artifacts:[{...exe,sha256:''}]}}).variant.available,false);
+});
+
+test('Windows ZIPs are manual downloads and are never treated as native EXE installers',async()=>{
+ const {windowsArchives,windowsArtifacts,platformSummary}=await domain('platform.ts');
+ const zip={platform:'windows',kind:'zip',filename:'app-windows.zip',sha256:'a'.repeat(64),downloadUrl:'https://example.org/app.zip'};
+ assert.deepEqual(windowsArchives({artifacts:[zip]}),[zip]);
+ assert.deepEqual(windowsArtifacts({artifacts:[zip]}),[]);
+ assert.deepEqual(windowsArchives({artifacts:[{...zip,sha256:''},{...zip,downloadUrl:'http://example.org/app.zip'}]}),[]);
+ assert.match(platformSummary({windowsArchiveLatest:{artifacts:[zip]}},'windows'),/Windows/i);
+});
+
+test('download times are distinct local events and estimates require usable speed',async()=>{
+ const {formatDownloadTime,downloadTimeRemaining}=await domain('time.ts');
+ assert.equal(formatDownloadTime(null),undefined);
+ assert.equal(formatDownloadTime('invalid'),undefined);
+ assert.notEqual(formatDownloadTime('2026-11-27T12:00:00Z','UTC'),formatDownloadTime('2026-11-27T12:30:00Z','UTC'));
+ assert.equal(downloadTimeRemaining(0,1000,100),'About 10 sec left');
+ assert.equal(downloadTimeRemaining(0,10000,100),'About 2 min left');
+ assert.equal(downloadTimeRemaining(0,1000,0),undefined);
+ assert.equal(downloadTimeRemaining(1000,1000,100),undefined);
+});
+
+test('expired and unready Windows archives do not appear as downloadable',async()=>{
+ const {windowsArchives}=await domain('platform.ts');
+ const zip={platform:'windows',kind:'zip',sha256:'a'.repeat(64),downloadUrl:'https://example.org/app.zip'};
+ assert.equal(windowsArchives({artifacts:[{...zip,sourceExpiresAt:'2000-01-01T00:00:00Z'}]}).length,0);
+ assert.equal(windowsArchives({artifacts:[{...zip,sourceExpiresAt:'not-a-date'}]}).length,0);
+ assert.equal(windowsArchives({artifacts:[{...zip,signingStatus:'pending'}]}).length,0);
+ assert.equal(windowsArchives({artifacts:[{...zip,sourceExpiresAt:'2099-01-01T00:00:00Z',signingStatus:'ready'}]}).length,1);
+});

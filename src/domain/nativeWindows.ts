@@ -37,12 +37,13 @@ export function assessNativeWindows(app: {
   id: { provider: string; project: string };
   platforms: string[];
   latest?: { artifacts: Array<{ platform: string; kind: string; packageIdentity?: string;sha256?:string;downloadUrl?:string }> };
+  windowsLatest?: { artifacts: Array<{ platform: string; kind: string; packageIdentity?: string;sha256?:string;downloadUrl?:string }> };
   packageIdentity?: string;
 }): NativeWindowsAssessment {
   const appId = `${app.id.provider}/${app.id.project}`;
   const hasWindowsPlatform = app.platforms.includes("windows");
 
-  const windowsArtifacts = (app.latest?.artifacts || []).filter(
+  const windowsArtifacts = (app.windowsLatest?.artifacts || app.latest?.artifacts || []).filter(
     (a) => a.platform === "windows" && WINDOWS_ARTIFACT_KINDS.has(String(a.kind).toLowerCase()) && !!a.packageIdentity && /^[a-f0-9]{64}$/i.test(a.sha256||'') && /^https:\/\//.test(a.downloadUrl||''),
   );
 
@@ -52,7 +53,7 @@ export function assessNativeWindows(app: {
     sourceAvailable: false,
   };
 
-  if (!hasWindowsPlatform) {
+  if (!hasWindowsPlatform && !windowsArtifacts.length) {
     variant.cannotConvertReason =
       "Application does not declare a Windows platform — no native Windows build is published.";
     return {

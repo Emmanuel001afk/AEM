@@ -1,0 +1,148 @@
+name: AEM source Windows EXE builds
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '19 3 * * *'
+  pull_request:
+    paths:
+      - '.github/workflows/aem-source-windows-exe.yml'
+      - 'scripts/package-ema.mjs'
+      - 'electron/native-delivery.ts'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: aem-source-windows-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  build:
+    name: Build ${{ matrix.app }} Windows EXE
+    strategy:
+      fail-fast: false
+      matrix:
+        app: [EMA, OEA]
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: aem
+      - name: Checkout reviewed source from its default branch
+        uses: actions/checkout@v4
+        with:
+          repository: Emmanuel001afk/${{ matrix.app }}
+          ref: main
+          path: source
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with: {node-version: '22'}
+      - uses: actions/setup-python@v5
+        if: matrix.app == 'EMA'
+        with: {python-version: '3.11', architecture: 'x64'}
+      - name: Prepare AEM packaging tools
+        working-directory: aem
+        run: npm ci
+      - name: Build AEM packaging helpers
+        working-directory: aem
+        run: npm run build:electron
+      - name: Build and verify complete EMA source distribution
+        if: matrix.app == 'EMA'
+        shell: pwsh
+        working-directory: source
+        run: |
+          $ErrorActionPreference = 'Stop'
+          python -m pip install -r desktop/windows/requirements.txt pyinstaller==6.11.1
+          if ($LASTEXITCODE -ne 0) { throw 'EMA dependency installation failed' }
+          python -m unittest discover -s desktop/windows/tests -v
+          if ($LASTEXITCODE -ne 0) { throw 'EMA tests failed' }
+          ./desktop/windows/build.ps1
+          if ($LASTEXITCODE -ne 0) { throw 'EMA source build or smoke tests failed' }
+      - name: Package and smoke-test EMA installer
+        if: matrix.app == 'EMA'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $makensis = 'C:\Program Files (x86)\NSIS\makensis.exe'
+          if (!(Test-Path $makensis)) { choco install nsis -y --no-progress; if ($LASTEXITCODE -ne 0) { throw 'NSIS installation failed' } }
+          if (!(Test-Path $makensis)) { throw 'NSIS not found' }
+          $version = python -c "import sys;sys.path.insert(0,'source/desktop/windows');import ema_windows;print(ema_windows.__version__)"
+          if ($LASTEXITCODE -ne 0 -or $version -notmatch '^\d+\.\d+\.\d+$') { throw 'Invalid EMA source version' }
+          New-Item -ItemType Directory -Force release | Out-Null
+          node aem/scripts/package-ema.mjs source/desktop/windows/dist/EMA $version $makensis release
+          if ($LASTEXITCODE -ne 0) { throw 'EMA installer packaging failed' }
+          $exe = @(Get-ChildItem release/EMA-Setup-*-x64.exe)
+          if ($exe.Count -ne 1) { throw 'Missing EMA installer' }
+          $dest = Join-Path $env:RUNNER_TEMP 'ema-installer-smoke'
+          $p = Start-Process $exe[0].FullName -ArgumentList @('/S', "/D=$dest") -Wait -PassThru
+          if ($p.ExitCode -ne 0 -or !(Test-Path "$dest/EMA.exe") -or !(Test-Path "$dest/worker/EMA-worker.exe")) { throw 'EMA installer did not install the complete distribution' }
+          $p = Start-Process "$dest/EMA.exe" -ArgumentList '--self-test' -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw 'Installed EMA self-test failed' }
+          $p = Start-Process "$dest/worker/EMA-worker.exe" -ArgumentList '--self-test' -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw 'Installed EMA worker self-test failed' }
+      - name: Build and test OEA desktop EXEs
+        if: matrix.app == 'OEA'
+        shell: pwsh
+        working-directory: source/desktop
+        run: |
+          $ErrorActionPreference = 'Stop'
+          npm ci
+          if ($LASTEXITCODE -ne 0) { throw 'OEA dependency installation failed' }
+          npm test
+          if ($LASTEXITCODE -ne 0) { throw 'OEA desktop tests failed' }
+          npm run dist:win
+          if ($LASTEXITCODE -ne 0) { throw 'OEA packaging failed' }
+          New-Item -ItemType Directory -Force ../../release | Out-Null
+          Copy-Item ../dist/desktop-installer/*.exe ../../release/
+          if (@(Get-ChildItem ../../release/*.exe).Count -lt 2) { throw 'OEA setup and portable executables are required' }
+      - name: Validate output PE files and record source revision
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          node --input-type=module -e "import {verifyPE} from './aem/scripts/verify-release.mjs'; import fs from 'node:fs'; const files=fs.readdirSync('release').filter(f=>f.endsWith('.exe')); if(!files.length)throw new Error('No EXE files'); for(const f of files)verifyPE('release/'+f)"
+          if ($LASTEXITCODE -ne 0) { throw 'PE verification failed' }
+          $commit = git -C source rev-parse HEAD
+          if ($LASTEXITCODE -ne 0 -or $commit -notmatch '^[0-9a-f]{40}$') { throw 'Source commit unavailable' }
+          Set-Content -NoNewline -Encoding ascii release/source-revision.txt $commit
+      - uses: actions/upload-artifact@v4
+        with:
+          name: source-windows-${{ matrix.app }}
+          path: release/*
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    name: Publish direct Windows EXEs
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with: {name: source-windows-EMA, path: ema}
+      - uses: actions/download-artifact@v4
+        with: {name: source-windows-OEA, path: oea}
+      - name: Publish EXEs to GitHub Releases, not Supabase Storage
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          for project in ema oea; do
+            test -s "$project/source-revision.txt"
+            shopt -s nullglob
+            files=("$project"/*.exe)
+            test "${#files[@]}" -gt 0
+            source_repo="Emmanuel001afk/${project^^}"
+            revision="$(cat "$project/source-revision.txt")"
+            [[ "$revision" =~ ^[a-f0-9]{40}$ ]]
+            tag="aem-exe-$project-$revision-${GITHUB_SHA:0:12}"
+            if gh release view "$tag" --repo "$GH_REPO" >/dev/null 2>&1; then
+              echo "Release for this source and AEM revision already exists: $tag"
+              continue
+            fi
+            gh release create "$tag" "${files[@]}" --repo "$GH_REPO" --target main --latest=false --title "${project^^} Windows build" --notes "Built and tested from $source_repo at commit $revision by AEM run $GITHUB_RUN_ID. This is a source-derived Windows build; check Windows signature details before installing."
+          done

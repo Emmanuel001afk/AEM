@@ -1,7 +1,7 @@
 import type {Application,Release,ReleaseChannel,Platform} from "./model";
 import {compareVersionNamesNewestFirst} from "./version";
 import {parseCatalogTimestamp} from "./time";
-export interface StoreApp extends Application { category:string; featured?:boolean; functionality:string[]; screenshots:string[]; permissions:string[]; latest?: Release; androidReleases?: Release[]; windowsLatest?: Release; pendingAndroidUpdate?: {versionName:string;versionCode:number;status:"pending"|"processing"|"failed";packageIdentity?:string}; }
+export interface StoreApp extends Application { category:string; featured?:boolean; functionality:string[]; screenshots:string[]; permissions:string[]; latest?: Release; androidReleases?: Release[]; windowsLatest?: Release; windowsArchiveLatest?: Release; windowsPackageIncomplete?: boolean; pendingAndroidUpdate?: {versionName:string;versionCode:number;status:"pending"|"processing"|"failed";packageIdentity?:string}; }
 export interface CatalogFilter { query?:string; category?:string; platform?:Platform; channel?:ReleaseChannel; }
 export function selectPendingAndroidUpdate(releases:any[],packageIdentity?:string,latestReadyCode=0,latestReadyVersionName?:string,preferredChannel?:string){
  const candidates=(Array.isArray(releases)?releases:[]).filter((release:any)=>release?.status==="published"&&(!preferredChannel||String(release.channel||"").toLowerCase()===preferredChannel.toLowerCase())).flatMap((release:any)=>(Array.isArray(release.artifacts)?release.artifacts:[])

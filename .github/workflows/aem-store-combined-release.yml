@@ -1,265 +1,148 @@
-name: AEM Store Combined Release
+name: AEM source Windows EXE builds
 
 on:
-  push:
-    branches: [main, arena/2c90229b-aem]
-  pull_request:
-    branches: [main]
   workflow_dispatch:
+  schedule:
+    - cron: '19 3 * * *'
+  pull_request:
+    paths:
+      - '.github/workflows/aem-source-windows-exe.yml'
+      - 'scripts/package-ema.mjs'
+      - 'electron/native-delivery.ts'
 
 permissions:
   contents: read
-  actions: read
 
 concurrency:
-  group: aem-store-combined-release-${{ github.ref }}
+  group: aem-source-windows-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  android:
-    name: Build and sign Android APK
-    uses: ./.github/workflows/aem-android-final.yml
-    secrets: inherit
-
-  windows:
-    if: github.ref == 'refs/heads/main' || github.event_name == 'pull_request'
-    name: Build and verify Windows EXEs
-    uses: ./.github/workflows/aem-desktop.yml
-    secrets: inherit
-
-  android-smoke:
-    if: github.ref == 'refs/heads/main' || github.event_name == 'pull_request'
-    name: Signed APK installation and launch on Android AVD
-    needs: android
-    runs-on: ubuntu-24.04
-    timeout-minutes: 20
+  build:
+    name: Build ${{ matrix.app }} Windows EXE
+    strategy:
+      fail-fast: false
+      matrix:
+        app: [EMA, OEA]
+    runs-on: windows-latest
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
-        with: { distribution: temurin, java-version: "21" }
-      - uses: actions/download-artifact@v4
         with:
-          name: aem-store-release-apk
-          path: release
-      - name: Enable KVM on disposable CI runner
-        run: sudo chmod 666 /dev/kvm
-      - uses: reactivecircus/android-emulator-runner@v2
+          path: aem
+      - name: Checkout reviewed source from its default branch
+        uses: actions/checkout@v4
         with:
-          api-level: 29
-          arch: x86_64
-          target: default
-          ram-size: 2048M
-          heap-size: 256M
-          disable-animations: true
-          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
-          script: bash scripts/android-smoke.sh
-      - name: Runtime smoke diagnostics
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: aem-android-runtime-diagnostics
-          path: |
-            android-launch.txt
-            android-relaunch.txt
-            android-window.xml
-            android-runtime.log
-          if-no-files-found: warn
-
-  managed-emulator-smoke:
-    if: github.ref == 'refs/heads/main' || github.event_name == 'pull_request'
-    name: AEM-managed API 34 emulator lifecycle
-    needs: android
-    runs-on: ubuntu-24.04
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@v4
+          repository: Emmanuel001afk/${{ matrix.app }}
+          ref: main
+          path: source
+          persist-credentials: false
       - uses: actions/setup-node@v4
-        with: { node-version: 22 }
-      - uses: actions/setup-java@v4
-        with: { distribution: temurin, java-version: "21" }
-      - uses: actions/download-artifact@v4
-        with:
-          name: aem-store-release-apk
-          path: release
-      - name: Install real emulator tools and API 34 image
+        with: {node-version: '22'}
+      - uses: actions/setup-python@v5
+        if: matrix.app == 'EMA'
+        with: {python-version: '3.11', architecture: 'x64'}
+      - name: Prepare AEM packaging tools
+        working-directory: aem
+        run: npm ci
+      - name: Build AEM packaging helpers
+        working-directory: aem
+        run: npm run build:electron
+      - name: Build and verify complete EMA source distribution
+        if: matrix.app == 'EMA'
+        shell: pwsh
+        working-directory: source
         run: |
-          set -euo pipefail
-          sdkmanager="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
-          test -x "$sdkmanager"
-          if ! "$sdkmanager" "emulator" "platform-tools" "build-tools;34.0.0" "system-images;android-34;google_apis;x86_64" > sdk-setup.log 2>&1; then
-            node -e "const fs=require('fs');console.log('::error title=Runtime SDK setup::'+fs.readFileSync('sdk-setup.log','utf8').slice(-6000).replaceAll('%','%25').replaceAll('\\r','%0D').replaceAll('\\n','%0A'))"
-            exit 1
-          fi
-          sudo chmod 666 /dev/kvm
-      - run: npm ci
-      - run: npm run build:electron
-      - name: Configure Electron sandbox helper on disposable Linux runner
+          $ErrorActionPreference = 'Stop'
+          python -m pip install -r desktop/windows/requirements.txt pyinstaller==6.11.1
+          if ($LASTEXITCODE -ne 0) { throw 'EMA dependency installation failed' }
+          python -m unittest discover -s desktop/windows/tests -v
+          if ($LASTEXITCODE -ne 0) { throw 'EMA tests failed' }
+          ./desktop/windows/build.ps1
+          if ($LASTEXITCODE -ne 0) { throw 'EMA source build or smoke tests failed' }
+      - name: Package and smoke-test EMA installer
+        if: matrix.app == 'EMA'
+        shell: pwsh
         run: |
-          node node_modules/electron/install.js
-          sudo chown root:root node_modules/electron/dist/chrome-sandbox
-          sudo chmod 4755 node_modules/electron/dist/chrome-sandbox
-      - name: Real Chromium LAN companion upload and download
+          $ErrorActionPreference = 'Stop'
+          $makensis = 'C:\Program Files (x86)\NSIS\makensis.exe'
+          if (!(Test-Path $makensis)) { choco install nsis -y --no-progress; if ($LASTEXITCODE -ne 0) { throw 'NSIS installation failed' } }
+          if (!(Test-Path $makensis)) { throw 'NSIS not found' }
+          $version = python -c "import sys;sys.path.insert(0,'source/desktop/windows');import ema_windows;print(ema_windows.__version__)"
+          if ($LASTEXITCODE -ne 0 -or $version -notmatch '^\d+\.\d+\.\d+$') { throw 'Invalid EMA source version' }
+          New-Item -ItemType Directory -Force release | Out-Null
+          node aem/scripts/package-ema.mjs source/desktop/windows/dist/EMA $version $makensis release
+          if ($LASTEXITCODE -ne 0) { throw 'EMA installer packaging failed' }
+          $exe = @(Get-ChildItem release/EMA-Setup-*-x64.exe)
+          if ($exe.Count -ne 1) { throw 'Missing EMA installer' }
+          $dest = Join-Path $env:RUNNER_TEMP 'ema-installer-smoke'
+          $p = Start-Process $exe[0].FullName -ArgumentList @('/S', "/D=$dest") -Wait -PassThru
+          if ($p.ExitCode -ne 0 -or !(Test-Path "$dest/EMA.exe") -or !(Test-Path "$dest/worker/EMA-worker.exe")) { throw 'EMA installer did not install the complete distribution' }
+          $p = Start-Process "$dest/EMA.exe" -ArgumentList '--self-test' -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw 'Installed EMA self-test failed' }
+          $p = Start-Process "$dest/worker/EMA-worker.exe" -ArgumentList '--self-test' -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw 'Installed EMA worker self-test failed' }
+      - name: Build and test OEA desktop EXEs
+        if: matrix.app == 'OEA'
+        shell: pwsh
+        working-directory: source/desktop
         run: |
-          if ! xvfb-run -a node_modules/.bin/electron scripts/lan-browser-smoke.cjs > aem-lan-browser.log 2>&1; then
-            node -e "const fs=require('fs');console.log('::error title=LAN browser runtime::'+(fs.existsSync('aem-lan-browser-failure.txt')?fs.readFileSync('aem-lan-browser-failure.txt','utf8'):fs.readFileSync('aem-lan-browser.log','utf8')).slice(-6000).replaceAll('%','%25').replaceAll('\\r','%0D').replaceAll('\\n','%0A'))"
-            exit 1
-          fi
-          test ! -f aem-lan-browser-failure.txt
-          test -f aem-lan-browser-success.json
-          cat aem-lan-browser.log
-          node -e "const r=require('./aem-lan-browser-success.json');if(!r.paired||r.uploadedBytes!==1234567||r.downloadedBytes!==54321)process.exit(1);console.log('::notice title=Verified LAN browser bytes::Paired Chromium transferred '+r.uploadedBytes+' bytes to PC and verified '+r.downloadedBytes+' bytes from PC, SHA-256 '+r.downloadSha256)"
-      - name: Exercise AEM diagnostics, AVD creation, install, launch and teardown
+          $ErrorActionPreference = 'Stop'
+          npm ci
+          if ($LASTEXITCODE -ne 0) { throw 'OEA dependency installation failed' }
+          npm test
+          if ($LASTEXITCODE -ne 0) { throw 'OEA desktop tests failed' }
+          npm run dist:win
+          if ($LASTEXITCODE -ne 0) { throw 'OEA packaging failed' }
+          New-Item -ItemType Directory -Force ../../release | Out-Null
+          Copy-Item ../dist/desktop-installer/*.exe ../../release/
+          if (@(Get-ChildItem ../../release/*.exe).Count -lt 2) { throw 'OEA setup and portable executables are required' }
+      - name: Validate output PE files and record source revision
+        shell: pwsh
         run: |
-          if ! xvfb-run -a node_modules/.bin/electron scripts/emulator-runtime-smoke.cjs > aem-electron-runtime.log 2>&1; then
-            node -e "const fs=require('fs');console.log('::error title=AEM Electron runtime::'+(fs.existsSync('aem-runtime-failure.txt')?fs.readFileSync('aem-runtime-failure.txt','utf8'):fs.readFileSync('aem-electron-runtime.log','utf8')).slice(-6000).replaceAll('%','%25').replaceAll('\\r','%0D').replaceAll('\\n','%0A'))"
-            exit 1
-          fi
-          cat aem-electron-runtime.log
-      - name: Managed emulator diagnostics
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: aem-managed-emulator-diagnostics
-          path: |
-            aem-lan-browser-success.json
-            aem-lan-browser.log
-            aem-lan-browser-failure.txt
-            aem-runtime-failure.txt
-            aem-runtime-manager.log
-            aem-electron-runtime.log
-            sdk-setup.log
-            aem-runtime-diagnostics.json
-            aem-managed-window.xml
-            ${{ runner.temp }}/aem-managed-emulator-smoke/logs/*.log
-          if-no-files-found: warn
-
-  verify-and-package:
-    if: github.ref == 'refs/heads/main' || github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
-    needs: [android, android-smoke, managed-emulator-smoke, windows]
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with: { node-version: 22 }
-      - uses: actions/download-artifact@v4
-        with:
-          name: aem-store-release-apk
-          path: release
-      - uses: actions/download-artifact@v4
-        with:
-          name: aem-store-windows
-          path: release
-      - name: Validate complete deliverable set and checksums
-        run: |
-          set -euo pipefail
-          node scripts/verify-release.mjs release
-          node scripts/stamp-version.mjs
-          node --input-type=module -e "import fs from 'node:fs'; const p=JSON.parse(fs.readFileSync('package.json')); fs.writeFileSync('release/release.json',JSON.stringify({family:'com.aem.store',version:p.version,androidVersionCode:1810000000+Number(process.env.GITHUB_RUN_NUMBER),source:process.env.GITHUB_SHA,run:process.env.GITHUB_RUN_ID},null,2))"
-          cp docs/desktop/DOWNLOADS.md release/INSTALL.md
-          (cd release && sha256sum -c SHA256SUMS.txt)
-          node --input-type=module -e "import fs from 'node:fs'; console.log('::notice title=Verified deliverable checksums::'+fs.readFileSync('release/SHA256SUMS.txt','utf8').trim().replaceAll('\n','%0A'))"
+          $ErrorActionPreference = 'Stop'
+          node --input-type=module -e "import {verifyPE} from './aem/scripts/verify-release.mjs'; import fs from 'node:fs'; const files=fs.readdirSync('release').filter(f=>f.endsWith('.exe')); if(!files.length)throw new Error('No EXE files'); for(const f of files)verifyPE('release/'+f)"
+          if ($LASTEXITCODE -ne 0) { throw 'PE verification failed' }
+          $commit = git -C source rev-parse HEAD
+          if ($LASTEXITCODE -ne 0 -or $commit -notmatch '^[0-9a-f]{40}$') { throw 'Source commit unavailable' }
+          Set-Content -NoNewline -Encoding ascii release/source-revision.txt $commit
       - uses: actions/upload-artifact@v4
         with:
-          name: aem-store-complete-release
-          path: release/**
+          name: source-windows-${{ matrix.app }}
+          path: release/*
           if-no-files-found: error
-          retention-days: 30
+          retention-days: 7
 
   publish:
-    needs: verify-and-package
+    name: Publish direct Windows EXEs
     if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    needs: build
     runs-on: ubuntu-latest
     permissions:
       contents: write
-      actions: read
     steps:
       - uses: actions/download-artifact@v4
-        with:
-          name: aem-store-complete-release
-          path: release
-      - name: Publish only after verifying downloadable draft assets
+        with: {name: source-windows-EMA, path: ema}
+      - uses: actions/download-artifact@v4
+        with: {name: source-windows-OEA, path: oea}
+      - name: Publish EXEs to GitHub Releases, not Supabase Storage
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-          SOURCE_SHA: ${{ github.sha }}
-        shell: bash
         run: |
           set -euo pipefail
-          version="$(jq -r .version release/release.json)"
-          tag="v$version"
-          (cd release && zip -q "AEM-Store-$version-Complete.zip" app-release.apk *.exe SHA256SUMS.txt INSTALL.md release.json)
-          (cd release && sha256sum "AEM-Store-$version-Complete.zip" >> SHA256SUMS.txt)
-          if gh release view "$tag" --json isDraft --jq .isDraft > is-draft.txt; then
-            test "$(cat is-draft.txt)" = true || { echo "Refusing to overwrite a published release"; exit 1; }
-          else
-            gh release create "$tag" --target "$SOURCE_SHA" --draft --title "AEM Store $version" --notes-file release/INSTALL.md
-          fi
-          gh release upload "$tag" release/* --clobber
-          mkdir downloaded
-          gh release download "$tag" --dir downloaded --pattern '*.exe' --pattern '*.apk' --pattern SHA256SUMS.txt --pattern '*-Complete.zip'
-          (cd downloaded && sha256sum -c SHA256SUMS.txt && unzip -t "AEM-Store-$version-Complete.zip")
-          # This is deliberately last: any failed build/download leaves a draft, never a latest release.
-          gh release edit "$tag" --draft=false --latest
-
-  publish-catalog-refresh:
-    name: Publish current-source Android app to AEM catalog
-    if: github.ref == 'refs/heads/arena/2c90229b-aem'
-    needs: android
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      actions: read
-      id-token: write
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.sha }}
-      - uses: actions/download-artifact@v4
-        with:
-          name: aem-store-release-apk
-          path: release
-      - name: Publish rebuilt APK to the destination Supabase catalog
-        env:
-          RUN_ID: ${{ github.run_id }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          APK=release/app-release.apk
-          test -s "$APK"
-          SDK="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
-          APKSIGNER="$(find "$SDK" -type f -name apksigner 2>/dev/null | sort -V | tail -n 1)"
-          AAPT="$(find "$SDK" -type f -name aapt 2>/dev/null | sort -V | tail -n 1)"
-          test -x "$APKSIGNER" && test -x "$AAPT"
-          badging="$("$AAPT" dump badging "$APK")"
-          package="$(sed -n "s/.*package: name='\\([^']*\\)'.*/\\1/p" <<<"$badging" | head -n 1)"
-          version_code="$(sed -n "s/.*package:.*versionCode='\\([^']*\\)'.*/\\1/p" <<<"$badging" | head -n 1)"
-          version_name="$(sed -n "s/.*package:.*versionName='\\([^']*\\)'.*/\\1/p" <<<"$badging" | head -n 1)"
-          test "$package" = "com.aem.store"
-          expected_version="0.2.${GITHUB_RUN_NUMBER}"
-          expected_code="$((1810000000 + GITHUB_RUN_NUMBER))"
-          test "$version_name" = "$expected_version"
-          test "$version_code" = "$expected_code"
-          cert="$("$APKSIGNER" verify --print-certs "$APK" | grep -i 'Signer #1 certificate SHA-256 digest:' | head -n 1 | grep -Eio '[0-9a-f]{64}' | head -n 1 | tr '[:upper:]' '[:lower:]')"
-          test -n "$cert"
-          SUPABASE_KEY="$(awk -F '"' '/DEFAULT_PUBLISHABLE_KEY=/ { print $2; exit }' src/services/supabase/client.ts)"
-          test -n "$SUPABASE_KEY"
-          PUBLISH_URL="https://zaaauldrktvytskerpmc.supabase.co/functions/v1/aem-publish-github-artifact"
-          OIDC_TOKEN="$(curl -fsSL -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=$PUBLISH_URL" | jq -er '.value')"
-          echo "::add-mask::$OIDC_TOKEN"
-          run="$RUN_ID"
-          source_release_id="github-actions-$run"
-          sha256="$(sha256sum "$APK" | awk '{print $1}')"
-          size_bytes="$(stat -c '%s' "$APK")"
-          app_name="AEM Store"
-          channel="development"
-          if [ "${GITHUB_REF:-}" = "refs/heads/main" ]; then channel="stable"; fi
-          PREPARE="$(jq -nc --arg action prepare --arg repo 'Emmanuel001afk/AEM' --argjson run_id "$run" --arg filename 'app-release.apk' --arg application_name "$app_name" --arg version_name "$version_name" --argjson version_code "$version_code" --arg channel "$channel" --arg package_identity "$package" --arg title 'AEM Store Android migration rebuild' --arg source_release_id "$source_release_id" --arg signing_certificate_sha256 "$cert" '{action:$action,repo:$repo,run_id:$run_id,filename:$filename,application_name:$application_name,version_name:$version_name,version_code:$version_code,channel:$channel,package_identity:$package_identity,title:$title,source_release_id:$source_release_id,signing_certificate_sha256:$signing_certificate_sha256}')"
-          status="$(curl -sS --connect-timeout 20 --max-time 60 -o prepare.json -w '%{http_code}' -X POST "$PUBLISH_URL" -H "apikey: $SUPABASE_KEY" -H "Authorization: Bearer $SUPABASE_KEY" -H 'Content-Type: application/json' -H "x-aem-oidc: $OIDC_TOKEN" --data "$PREPARE")"
-          if [[ ! "$status" =~ ^2[0-9][0-9]$ ]]; then cat prepare.json; exit 1; fi
-          upload_url="$(jq -er '.upload_url' prepare.json)"
-          object_path="$(jq -er '.path' prepare.json)"
-          curl -fsSL --connect-timeout 20 --max-time 300 -X PUT "$upload_url" -H 'Content-Type: application/vnd.android.package-archive' -H "Content-Length: $size_bytes" -H 'x-upsert: true' --upload-file "$APK" >/dev/null
-          FINALIZE="$(jq -nc --arg action finalize --arg repo 'Emmanuel001afk/AEM' --argjson run_id "$run" --arg filename 'app-release.apk' --arg application_name "$app_name" --arg version_name "$version_name" --argjson version_code "$version_code" --arg channel "$channel" --arg package_identity "$package" --arg title 'AEM Store Android migration rebuild' --arg source_release_id "$source_release_id" --arg signing_certificate_sha256 "$cert" --arg object_path "$object_path" --arg path "$object_path" --argjson size_bytes "$size_bytes" --arg sha256 "$sha256" '{action:$action,repo:$repo,run_id:$run_id,filename:$filename,application_name:$application_name,version_name:$version_name,version_code:$version_code,channel:$channel,package_identity:$package_identity,title:$title,source_release_id:$source_release_id,signing_certificate_sha256:$signing_certificate_sha256,object_path:$object_path,path:$path,size_bytes:$size_bytes,sha256:$sha256}')"
-          status="$(curl -sS --connect-timeout 20 --max-time 120 -o finalize.json -w '%{http_code}' -X POST "$PUBLISH_URL" -H "apikey: $SUPABASE_KEY" -H "Authorization: Bearer $SUPABASE_KEY" -H 'Content-Type: application/json' -H "x-aem-oidc: $OIDC_TOKEN" --data "$FINALIZE")"
-          if [[ ! "$status" =~ ^2[0-9][0-9]$ ]]; then cat finalize.json; exit 1; fi
-          cat finalize.json
+          for project in ema oea; do
+            test -s "$project/source-revision.txt"
+            shopt -s nullglob
+            files=("$project"/*.exe)
+            test "${#files[@]}" -gt 0
+            source_repo="Emmanuel001afk/${project^^}"
+            revision="$(cat "$project/source-revision.txt")"
+            [[ "$revision" =~ ^[a-f0-9]{40}$ ]]
+            tag="aem-exe-$project-$revision-${GITHUB_SHA:0:12}"
+            if gh release view "$tag" --repo "$GH_REPO" >/dev/null 2>&1; then
+              echo "Release for this source and AEM revision already exists: $tag"
+              continue
+            fi
+            gh release create "$tag" "${files[@]}" --repo "$GH_REPO" --target main --latest=false --title "${project^^} Windows build" --notes "Built and tested from $source_repo at commit $revision by AEM run $GITHUB_RUN_ID. This is a source-derived Windows build; check Windows signature details before installing."
+          done
